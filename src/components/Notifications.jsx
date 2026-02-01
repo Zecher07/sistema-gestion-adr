@@ -20,14 +20,18 @@ const Notifications = ({ user, orders, archivedIds = [], onArchive, onViewOrder 
     return () => document.removeEventListener('mousedown', handleClickOutside);
   }, []);
 
-  // Filtrar notificaciones según rol
+  // Filtrar notificaciones según rol - Sincronizado con WorkAreaList
   const getNotifications = () => {
     if (!user || !orders) return [];
 
     return orders.filter(order => {
+      // Excluir órdenes anuladas o ya archivadas para todos
+      if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return false;
+
       // Admin: Finalizadas (para archivar)
       if (user.role === 'Administrador') {
-        return order.status === 'FINALIZADA' && !archivedIds.includes(order.id);
+        // En WorkAreaList para admin es: status === 'FINALIZADA'
+        return order.status === 'FINALIZADA';
       }
       
       // Vendedor: Paso 1 (Ventas) y Paso 3 (Por Retirar)
@@ -95,7 +99,7 @@ const Notifications = ({ user, orders, archivedIds = [], onArchive, onViewOrder 
                     <div key={notification.id} className="p-3 hover:bg-slate-50 transition-colors flex items-start gap-3 group">
                        <div className="flex-1 min-w-0">
                           <p className="text-sm font-medium text-slate-700 truncate">
-                             Procesar Orden #{notification.id.toString().slice(-8)}
+                             Procesar Orden #{notification.orderNumber?.toString().padStart(7, '0')}
                           </p>
                           <p className="text-xs text-slate-500 truncate">
                              {notification.cliente} • {notification.status}
@@ -109,19 +113,6 @@ const Notifications = ({ user, orders, archivedIds = [], onArchive, onViewOrder 
                           >
                             <ExternalLink className="h-3.5 w-3.5" />
                           </Button>
-                          
-                          {user.role === 'Administrador' && (
-                             <Button 
-                               variant="ghost" size="icon" className="h-7 w-7 text-slate-400 hover:text-green-600 hover:bg-green-50"
-                               onClick={(e) => {
-                                 e.stopPropagation();
-                                 onArchive(notification.id);
-                               }}
-                               title="Archivar notificación"
-                             >
-                               <Archive className="h-3.5 w-3.5" />
-                             </Button>
-                          )}
                        </div>
                     </div>
                   ))}

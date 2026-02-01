@@ -1,18 +1,16 @@
-import { useEffect, useState } from 'react'
+import React, { useEffect, useState } from 'react'
 import { supabase } from '../supabaseClient'
-import { useNavigate } from 'react-router-dom'
 import { Search, Plus, FileDown, Printer, Pencil, Trash2 } from 'lucide-react'
-import { Button } from './ui/button'
-import { Input } from './ui/Text'
-import { useToast } from './ui/use-toast'
-import { ClientForm } from './ClientForm'
+import { Button } from '@/components/ui/button'
+import { Input } from '@/components/ui/Text'
+import { useToast } from '@/components/ui/use-toast'
+import ClientForm from './ClientForm'
 
 export function ClientsPanel() {
   const [clientes, setClientes] = useState([])
   const [searchTerm, setSearchTerm] = useState("")  
   const [loading, setLoading] = useState(true)
   const [clienteEditando, setClienteEditando] = useState(null)
-  const navigate = useNavigate()
   const { toast } = useToast()
 
   useEffect(() => {
@@ -86,13 +84,13 @@ export function ClientsPanel() {
         )}
       </div>
 
-      {/* --- HEADER NORMAL (Se oculta al imprimir con 'no-print') --- */}
+      {/* --- HEADER NORMAL --- */}
       <div className="bg-white p-6 rounded-lg border border-slate-200 shadow-sm no-print">
         <h1 className="text-2xl font-bold text-slate-800">Gestión de Clientes</h1>
         <p className="text-sm text-slate-500 mt-1">Administra la base de datos de clientes.</p>
       </div>
 
-      {/* --- TOOLBAR (Botones y Buscador - Se oculta al imprimir) --- */}
+      {/* --- TOOLBAR --- */}
       <div className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm space-y-4 no-print">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4">
           <Button 
@@ -134,7 +132,6 @@ export function ClientsPanel() {
                 <th className="px-6 py-4">Ced / RUC</th>
                 <th className="px-6 py-4">Dirección</th>
                 <th className="px-6 py-4">Celular</th>
-                {/* Ocultamos columna acciones al imprimir */}
                 <th className="px-6 py-4 text-center no-print">Acciones</th>
               </tr>
             </thead>
@@ -153,7 +150,6 @@ export function ClientsPanel() {
                       {cliente.direccion || '-'}
                     </td>
                     <td className="px-6 py-4 text-slate-600">{cliente.telefono || '-'}</td>
-                    {/* Ocultamos botones al imprimir */}
                     <td className="px-6 py-4 text-center no-print">
                       <div className="flex justify-center gap-2">
                         <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600" onClick={() => setClienteEditando(cliente)}>
@@ -175,7 +171,7 @@ export function ClientsPanel() {
         </div>
       </div>
 
-      {/* MODAL (Oculto al imprimir automáticamente por estar fuera del #printable-area o por CSS) */}
+      {/* MODAL */}
       {clienteEditando && (
         <div className="fixed inset-0 bg-black/50 z-50 flex items-center justify-center p-4 no-print">
           <div className="w-full max-w-3xl animate-in zoom-in duration-200">
@@ -190,3 +186,6 @@ export function ClientsPanel() {
     </div>
   )
 }
+
+// ESTO ES IMPORTANTE PARA EVITAR EL ERROR DE IMPORTACIÓN
+export default ClientsPanel;

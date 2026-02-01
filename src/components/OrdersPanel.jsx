@@ -3,10 +3,11 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Eye, Edit, Trash2, CreditCard, 
   ArrowLeft, ArrowRight,
-  Search, Download, Printer, Plus,
+  Search,
+  Printer, Plus,
   ChevronLeft, ChevronRight, RotateCcw,
   FileSpreadsheet, Calendar as CalendarIcon,
-  Archive, RotateCw
+  Archive, RotateCw, Copy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
@@ -21,11 +22,8 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Definimos el flujo normal de trabajo para los botones de avance/retroceso
-const WORKFLOW_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
-
 // Definimos todos los estados posibles para el filtro
-const FILTER_STATUSES = [...WORKFLOW_STATUSES, 'ANULADA', 'ARCHIVADA'];
+const FILTER_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA', 'ANULADA', 'ARCHIVADA'];
 
 const OrdersPanel = ({ 
   orders = [], 
@@ -34,9 +32,11 @@ const OrdersPanel = ({
   onDeleteOrder, 
   onUpdateOrder, 
   onEditOrder, 
+  onCloneOrder,
   onPaymentOrder,
   onCreateOrder,
-  onViewOrder
+  onViewOrder,
+  currentView
 }) => {
   // --- Estados de UI ---
   const [deleteConfirm, setDeleteConfirm] = useState(null);
@@ -51,7 +51,7 @@ const OrdersPanel = ({
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  // --- Helpers de Formato ---
+  // --- Helpers de Formato y Lógica ---
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -70,13 +70,81 @@ const OrdersPanel = ({
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   };
 
-  const formatOrderId = (id) => id.toString().slice(-8).padStart(8, '0');
+  const formatOrderId = (order) => (order.orderNumber || order.id).toString().padStart(7, '0');
+
+  const getOrderTypeLabel = (typeString) => {
+    if (!typeString) return 'VPVC';
+    if (typeString.includes('(VC)')) return 'VC';
+    return 'VPVC';
+  };
+
+  // --- Check Roles ---
+  const isAdmin = user.role === 'Administrador';
+  
+  // --- Configuración de Acciones según Vista Actual ---
+  const actionConfig = useMemo(() => {
+    const config = {
+      showView: true,
+      showClone: false,
+      showEdit: false,
+      showDelete: false, // Anular
+      showPayment: false, 
+      showArchive: false,
+      showUnarchive: false
+    };
+
+    // Base capability check - Strict Role Based Access Control
+    // Non-admins can strictly ONLY view in this panel
+    const allowModify = isAdmin;
+
+    switch (currentView) {
+      case 'ordenes-todas':
+        config.showClone = allowModify;
+        config.showEdit = allowModify;
+        config.showPayment = allowModify; 
+        break;
+      
+      case 'ordenes-activas':
+        config.showClone = allowModify;
+        config.showEdit = allowModify;
+        config.showDelete = allowModify;
+        config.showPayment = allowModify;
+        break;
+        
+      case 'ordenes-sin-factura':
+      case 'ordenes-con-factura':
+      case 'ordenes-credito':
+      case 'ordenes-finalizadas':
+      case 'ordenes-anuladas':
+        // Solo ver detalles
+        break;
+        
+      case 'ordenes-archivadas':
+        config.showClone = allowModify;
+        config.showUnarchive = allowModify;
+        break;
+
+      default:
+        config.showClone = allowModify;
+        config.showEdit = allowModify;
+        config.showDelete = allowModify;
+        config.showPayment = allowModify;
+        config.showArchive = allowModify;
+        config.showUnarchive = allowModify;
+        break;
+    }
+    return config;
+  }, [currentView, isAdmin]);
+
 
   // --- Filtrado Principal ---
   const roleFilteredOrders = useMemo(() => {
     return orders.filter(order => {
       if (user.role === 'Administrador' || user.role === 'Vendedor' || user.role === 'Contabilidad') return true;
-      if (user.role === 'Producción') return order.status === 'PRODUCCION';
+      if (user.role === 'Producción') {
+        // Producción solo ve órdenes que están en PRODUCCION
+        return order.status === 'PRODUCCION';
+      }
       return false;
     });
   }, [orders, user.role]);
@@ -86,7 +154,7 @@ const OrdersPanel = ({
       // 1. Text Search
       const searchLower = searchTerm.toLowerCase();
       const matchesSearch = 
-        order.id.toLowerCase().includes(searchLower) ||
+        (order.orderNumber ? order.orderNumber.toString() : order.id).toLowerCase().includes(searchLower) ||
         order.cliente.toLowerCase().includes(searchLower) ||
         order.tipoLetrero.toLowerCase().includes(searchLower) ||
         (order.vendedor && order.vendedor.toLowerCase().includes(searchLower));
@@ -137,17 +205,32 @@ const OrdersPanel = ({
     setCurrentPage(1);
   }, [searchTerm, statusFilter, clientFilter, vendorFilter, startDate, endDate, itemsPerPage]);
 
-  const handleStatusChange = (orderId, currentStatus, direction, e) => {
+  const handleStatusChange = (order, direction, e) => {
     e.stopPropagation();
-    // Solo permitimos avanzar en el flujo normal, no hacia/desde ANULADA con flechas
-    const currentIndex = WORKFLOW_STATUSES.indexOf(currentStatus);
-    if (currentIndex === -1) return; // Si es ANULADA u otro, no hacemos nada
+    // Only Admin can move status from Panel arrows
+    if (!isAdmin) return;
+
+    if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return;
+
+    // Define workflows inside or import them. Here simplistic logic for Admin override
+    // We rely on parent's handling or standard flow
+    // For simplicity, we just pass the request to parent if we had logic there, 
+    // but here we used to have logic. Let's restore basic logic just for Admin utility.
+    
+    const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
+    const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
+    
+    const workflow = (order.tipoOrden && order.tipoOrden.includes('(VC)')) ? WORKFLOW_VC : WORKFLOW_VPVC;
+    const currentIndex = workflow.indexOf(order.status);
+    
+    if (currentIndex === -1) return;
 
     let newIndex;
-    if (direction === 'next' && currentIndex < WORKFLOW_STATUSES.length - 1) newIndex = currentIndex + 1;
+    if (direction === 'next' && currentIndex < workflow.length - 1) newIndex = currentIndex + 1;
     else if (direction === 'prev' && currentIndex > 0) newIndex = currentIndex - 1;
     else return;
-    onUpdateStatus(orderId, WORKFLOW_STATUSES[newIndex]);
+    
+    onUpdateStatus(order.id, workflow[newIndex]);
   };
 
   const handleResetFilters = () => {
@@ -164,10 +247,11 @@ const OrdersPanel = ({
   };
 
   const handleExportCSV = () => {
-    const headers = ['ID', 'Fecha', 'Cliente', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
+    const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
     const rows = filteredOrders.map(o => [
-      formatOrderId(o.id),
+      formatOrderId(o),
       formatDate(o.createdAt),
+      getOrderTypeLabel(o.tipoOrden),
       `"${o.cliente}"`,
       `"${o.tipoLetrero}"`,
       o.status,
@@ -189,7 +273,6 @@ const OrdersPanel = ({
     document.body.removeChild(link);
   };
 
-  // Helper para obtener la orden actual a borrar/anular
   const getOrderToDelete = () => {
     if (!deleteConfirm) return null;
     return orders.find(o => o.id === deleteConfirm);
@@ -198,24 +281,14 @@ const OrdersPanel = ({
   const deleteOrderData = getOrderToDelete();
   const isPermanentDelete = deleteOrderData?.status === 'ANULADA';
 
-  const canDelete = user.role === 'Administrador';
-  const canEdit = (status) => user.role === 'Administrador' || (user.role === 'Vendedor' && status === 'VENTAS');
-  const canRegisterPayment = () => ['Administrador', 'Vendedor', 'Contabilidad'].includes(user.role);
-  const canCreate = user.role === 'Administrador' || user.role === 'Vendedor';
-  const canArchive = (status) => user.role === 'Administrador' && status === 'FINALIZADA';
-  const canUnarchive = (status) => user.role === 'Administrador' && status === 'ARCHIVADA';
-
-  const canMoveStatus = (status, direction) => {
-    if (status === 'ANULADA' || status === 'ARCHIVADA') return false; 
-    if (user.role === 'Administrador') return true;
-    if (user.role === 'Vendedor') {
-      if (status === 'VENTAS' && direction === 'next') return true;
-      if (status === 'PRODUCCION' && direction === 'next') return true;
-      if (status === 'VENTAS POR RETIRAR' && direction === 'next') return true;
-    }
-    if (user.role === 'Contabilidad' && status === 'CONTABILIDAD' && direction === 'next') return true;
-    return false;
-  };
+  // Strict Permission Helpers
+  const canDelete = isAdmin;
+  const canEdit = (status) => isAdmin;
+  const canRegisterPayment = () => isAdmin;
+  const canCreate = isAdmin || user.role === 'Vendedor'; // Vendedores still create
+  const canArchive = (status) => isAdmin && status === 'FINALIZADA';
+  const canUnarchive = (status) => isAdmin && status === 'ARCHIVADA';
+  const canMoveStatus = (order, direction) => isAdmin; // Arrows only for Admin
 
   return (
     <div className="space-y-4">
@@ -386,11 +459,13 @@ const OrdersPanel = ({
               <tr>
                 <th className="px-4 py-3 font-bold">Orden</th>
                 <th className="px-4 py-3 font-bold">Creación</th>
+                <th className="px-4 py-3 font-bold text-center">Tipo</th>
                 <th className="px-4 py-3 font-bold">Título</th>
                 <th className="px-4 py-3 font-bold">Cliente</th>
                 <th className="px-4 py-3 font-bold text-right">Abono</th>
                 <th className="px-4 py-3 font-bold text-right">Saldo</th>
                 <th className="px-4 py-3 font-bold text-right">Total</th>
+                <th className="px-4 py-3 font-bold">Proforma Origen</th>
                 <th className="px-4 py-3 font-bold">Responsable</th>
                 <th className="px-4 py-3 font-bold">Entrega</th>
                 <th className="px-4 py-3 font-bold text-center">Estado</th>
@@ -403,17 +478,23 @@ const OrdersPanel = ({
                   const financials = order.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0 };
                   const isAnulada = order.status === 'ANULADA';
                   const isArchivada = order.status === 'ARCHIVADA';
+                  const typeLabel = getOrderTypeLabel(order.tipoOrden);
                   
                   return (
                     <tr key={order.id} className={`transition-colors ${isAnulada ? 'bg-red-50 hover:bg-red-100' : isArchivada ? 'bg-slate-100 opacity-75' : 'hover:bg-slate-50'}`}>
                       <td className="px-4 py-3 font-mono text-slate-500">
-                        {formatOrderId(order.id)}
+                        {formatOrderId(order)}
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
                           <span className="font-medium text-slate-700">{formatDate(order.createdAt)}</span>
                           <span className="text-xs text-slate-400">{formatTime(order.createdAt)}</span>
                         </div>
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${typeLabel === 'VC' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+                          {typeLabel}
+                        </span>
                       </td>
                       <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate" title={order.tipoLetrero}>
                         {order.tipoLetrero}
@@ -429,6 +510,15 @@ const OrdersPanel = ({
                       </td>
                       <td className="px-4 py-3 text-right font-semibold text-slate-800">
                         {formatCurrency(financials.total)}
+                      </td>
+                      <td className="px-4 py-3 text-center">
+                        {order.origenProformaId ? (
+                           <span className="text-xs font-mono bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100">
+                              #{String(order.origenProformaId).padStart(7,'0')}
+                           </span>
+                        ) : (
+                           <span className="text-slate-400 text-xs">-</span>
+                        )}
                       </td>
                       <td className="px-4 py-3 text-slate-600 text-xs">
                         {order.vendedor || 'N/A'}
@@ -451,98 +541,93 @@ const OrdersPanel = ({
                            </div>
                         ) : (
                           <div className="flex items-center justify-center gap-1">
-                            <button 
-                              onClick={(e) => handleStatusChange(order.id, order.status, 'prev', e)}
-                              disabled={!canMoveStatus(order.status, 'prev')}
-                              className={`p-1 rounded-full hover:bg-slate-200 text-slate-400 print:hidden ${!canMoveStatus(order.status, 'prev') ? 'opacity-0 pointer-events-none' : ''}`}
-                            >
-                              <ArrowLeft className="h-3 w-3" />
-                            </button>
-                            
-                            <div className="scale-90">
-                              <StatusBadge status={order.status} />
-                            </div>
-
-                            <button 
-                              onClick={(e) => handleStatusChange(order.id, order.status, 'next', e)}
-                              disabled={!canMoveStatus(order.status, 'next')}
-                              className={`p-1 rounded-full hover:bg-slate-200 text-slate-400 print:hidden ${!canMoveStatus(order.status, 'next') ? 'opacity-0 pointer-events-none' : ''}`}
-                            >
-                              <ArrowRight className="h-3 w-3" />
-                            </button>
+                            {/* Arrows ONLY for Admin */}
+                            {canMoveStatus(order, 'prev') && (
+                              <button 
+                                onClick={(e) => handleStatusChange(order, 'prev', e)}
+                                className="p-1 rounded-full hover:bg-slate-200 text-slate-600 print:hidden"
+                                title="Estado anterior"
+                              >
+                                <ArrowLeft className="h-4 w-4" />
+                              </button>
+                            )}
+                            <StatusBadge status={order.status} />
+                            {canMoveStatus(order, 'next') && (
+                              <button 
+                                onClick={(e) => handleStatusChange(order, 'next', e)}
+                                className="p-1 rounded-full hover:bg-slate-200 text-slate-600 print:hidden"
+                                title="Estado siguiente"
+                              >
+                                <ArrowRight className="h-4 w-4" />
+                              </button>
+                            )}
                           </div>
                         )}
                       </td>
                       <td className="px-4 py-3 print:hidden">
                         <div className="flex items-center justify-center gap-1">
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
-                            onClick={() => onViewOrder(order)}
-                            title="Ver Detalles"
-                          >
-                            <Eye className="h-4 w-4" />
-                          </Button>
-
-                          {!isAnulada && !isArchivada && canRegisterPayment() && order.status !== 'FINALIZADA' && (
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-slate-500 hover:text-green-600 hover:bg-green-50"
-                              onClick={() => onPaymentOrder(order)}
-                              title="Registrar Pago"
+                          {actionConfig.showView && (
+                            <button 
+                              onClick={() => onViewOrder(order)}
+                              className="p-1.5 rounded-lg hover:bg-blue-50 text-blue-600 hover:text-blue-700 transition-colors"
+                              title="Ver detalles"
                             >
-                              <CreditCard className="h-4 w-4" />
-                            </Button>
+                              <Eye className="h-4 w-4" />
+                            </button>
                           )}
-                          
-                          {!isAnulada && !isArchivada && canEdit(order.status) && order.status !== 'FINALIZADA' && (
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-slate-500 hover:text-orange-600 hover:bg-orange-50"
+                          {actionConfig.showEdit && canEdit(order.status) && (
+                            <button 
                               onClick={() => onEditOrder(order)}
-                              title="Editar"
+                              className="p-1.5 rounded-lg hover:bg-amber-50 text-amber-600 hover:text-amber-700 transition-colors"
+                              title="Editar orden"
                             >
                               <Edit className="h-4 w-4" />
-                            </Button>
+                            </button>
                           )}
-
-                          {canArchive(order.status) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-slate-500 hover:text-purple-600 hover:bg-purple-50"
+                          {actionConfig.showClone && (
+                            <button 
+                              onClick={() => onCloneOrder(order)}
+                              className="p-1.5 rounded-lg hover:bg-purple-50 text-purple-600 hover:text-purple-700 transition-colors"
+                              title="Clonar orden"
+                            >
+                              <Copy className="h-4 w-4" />
+                            </button>
+                          )}
+                          {actionConfig.showPayment && canRegisterPayment() && (
+                            <button 
+                              onClick={() => onPaymentOrder(order)}
+                              className="p-1.5 rounded-lg hover:bg-green-50 text-green-600 hover:text-green-700 transition-colors"
+                              title="Registrar pago"
+                            >
+                              <CreditCard className="h-4 w-4" />
+                            </button>
+                          )}
+                          {actionConfig.showArchive && canArchive(order.status) && (
+                            <button 
                               onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')}
-                              title="Archivar"
+                              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-700 transition-colors"
+                              title="Archivar orden"
                             >
                               <Archive className="h-4 w-4" />
-                            </Button>
+                            </button>
                           )}
-
-                          {canUnarchive(order.status) && (
-                            <Button
-                              variant="ghost"
-                              size="icon"
-                              className="h-8 w-8 text-slate-500 hover:text-blue-600 hover:bg-blue-50"
+                          {actionConfig.showUnarchive && canUnarchive(order.status) && (
+                            <button 
                               onClick={() => onUpdateStatus(order.id, 'FINALIZADA')}
-                              title="Desarchivar"
+                              className="p-1.5 rounded-lg hover:bg-slate-100 text-slate-600 hover:text-slate-700 transition-colors"
+                              title="Desarchivar orden"
                             >
                               <RotateCw className="h-4 w-4" />
-                            </Button>
+                            </button>
                           )}
-                          
-                          {canDelete && (
-                            <Button 
-                              variant="ghost" 
-                              size="icon" 
-                              className="h-8 w-8 text-slate-500 hover:text-red-600 hover:bg-red-50"
+                          {actionConfig.showDelete && canDelete && (
+                            <button 
                               onClick={() => setDeleteConfirm(order.id)}
-                              title={isAnulada ? "Eliminar Permanentemente" : "Anular Orden"}
+                              className="p-1.5 rounded-lg hover:bg-red-50 text-red-600 hover:text-red-700 transition-colors"
+                              title="Anular orden"
                             >
                               <Trash2 className="h-4 w-4" />
-                            </Button>
+                            </button>
                           )}
                         </div>
                       </td>
@@ -551,46 +636,71 @@ const OrdersPanel = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan="11" className="px-4 py-8 text-center text-slate-500">
-                    No se encontraron órdenes con los filtros aplicados.
+                  <td colSpan="13" className="px-4 py-8 text-center text-slate-500">
+                    No hay órdenes que coincidan con los filtros aplicados.
                   </td>
                 </tr>
               )}
             </tbody>
           </table>
         </div>
-        
-        <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 text-center print:hidden">
-           Mostrando {paginatedOrders.length} de {filteredOrders.length} registros (Total Global: {orders.length})
+
+        {/* Paginación Inferior */}
+        <div className="flex flex-col sm:flex-row justify-between items-center p-4 border-t border-slate-100 bg-slate-50/50 gap-4 print:hidden">
+           <div className="text-sm text-slate-600">
+             Mostrando <span className="font-semibold">{paginatedOrders.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> a <span className="font-semibold">{Math.min(currentPage * itemsPerPage, filteredOrders.length)}</span> de <span className="font-semibold">{filteredOrders.length}</span> órdenes
+           </div>
+           
+           <div className="flex items-center gap-2">
+              <Button 
+                variant="outline" size="icon" className="h-8 w-8" 
+                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                disabled={currentPage === 1}
+              >
+                <ChevronLeft className="h-4 w-4" />
+              </Button>
+              <span className="text-sm font-medium text-slate-600">
+                Página <span className="text-slate-900">{currentPage}</span> de {totalPages || 1}
+              </span>
+              <Button 
+                variant="outline" size="icon" className="h-8 w-8" 
+                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                disabled={currentPage >= totalPages}
+              >
+                <ChevronRight className="h-4 w-4" />
+              </Button>
+           </div>
         </div>
       </div>
 
+      {/* --- DIÁLOGO DE CONFIRMACIÓN DE ELIMINACIÓN --- */}
       <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
             <AlertDialogTitle>
-               {isPermanentDelete ? "¿Eliminar orden permanentemente?" : "¿Anular orden de trabajo?"}
+              {isPermanentDelete ? 'Eliminar Orden Anulada' : 'Anular Orden'}
             </AlertDialogTitle>
             <AlertDialogDescription>
-               {isPermanentDelete 
-                 ? "Esta acción no se puede deshacer. La orden será eliminada del sistema." 
-                 : "La orden se moverá a la sección 'Anuladas' y no aparecerá en el flujo de trabajo activo."}
+              {isPermanentDelete 
+                ? `¿Está seguro de que desea eliminar permanentemente la orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}? Esta acción no se puede deshacer.`
+                : `¿Está seguro de que desea anular la orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}? Se cambiará el estado a ANULADA.`
+              }
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction 
-               onClick={() => { 
-                  if (isPermanentDelete) {
-                    onDeleteOrder(deleteConfirm);
-                  } else {
-                    onUpdateStatus(deleteConfirm, 'ANULADA');
-                  }
-                  setDeleteConfirm(null); 
-               }} 
-               className="bg-red-600 hover:bg-red-700"
+              onClick={() => {
+                if (isPermanentDelete) {
+                  onDeleteOrder(deleteConfirm);
+                } else {
+                  onUpdateStatus(deleteConfirm, 'ANULADA');
+                }
+                setDeleteConfirm(null);
+              }}
+              className="bg-red-600 hover:bg-red-700"
             >
-               {isPermanentDelete ? "Eliminar" : "Anular"}
+              {isPermanentDelete ? 'Eliminar' : 'Anular'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

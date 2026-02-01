@@ -1,24 +1,36 @@
 
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { motion } from 'framer-motion';
-import { X, Plus, Trash2, Calendar, Upload, FileImage, Calculator } from 'lucide-react';
+import { X, Plus, Trash2, Calendar, Upload, FileImage, Calculator, Link } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
+import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 
 const IVA_RATE = 0.15; 
 const PAYMENT_METHODS = ['No aplica', 'Efectivo', 'Cheque', 'Transferencia', 'Depósito', 'Tarjeta', 'Crédito'];
+
+// Updated order types
 const ORDER_TYPES = [
   'VENTA CON PRODUCCION (VPVC) (4 pasos)',
-  'SOLO DISEÑO',
-  'SOLO IMPRESIÓN',
-  'INSTALACIÓN',
-  'MANTENIMIENTO'
+  'VENTA CORTA (VC) (2 pasos)'
 ];
+
+// Generate 15-min time slots from 8:00 AM to 8:00 PM
+const TIME_SLOTS = [];
+for (let h = 8; h <= 20; h++) {
+  const hour = h.toString().padStart(2, '0');
+  if (h === 20) {
+    TIME_SLOTS.push(`${hour}:00`);
+    continue;
+  }
+  ['00', '15', '30', '45'].forEach(m => TIME_SLOTS.push(`${hour}:${m}`));
+}
 
 const OrderForm = ({ 
   currentUser, 
   clients = [], 
+  staffUsers = [],
   onSubmit, 
   onCancel, 
   initialData = null, 
@@ -29,6 +41,7 @@ const OrderForm = ({
 }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
+  const isAdmin = currentUser?.role === 'Administrador';
 
   const [formData, setFormData] = useState(initialData || {
     orderNumber: nextOrderNumber,
@@ -37,25 +50,24 @@ const OrderForm = ({
     tipoLetrero: '',
     tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)',
     fechaEntrega: '',
-    productos: Array(5).fill({ descripcion: '', precio: 0, cantidad: 0, completed: false }), // Initial empty rows
+    productos: Array(5).fill({ descripcion: '', precio: 0, cantidad: 0, completed: false }), 
     
     // Contable
-    factura: '',
-    cotizacion: '',
     anticipo: 0,
     retencion: 0,
     formaPagoAnticipo: 'No aplica',
     creditoVenceAnticipo: '',
     notaAnticipo: '',
     
-    saldo: 0, // Calculated but stored for reference
+    saldo: 0,
     formaPagoSaldo: 'No aplica',
     creditoVenceSaldo: '',
     notaSaldo: '',
 
     // Config
     descuentoPorcentaje: 0,
-    aplicarIva: true, // Default checked in image implies active
+    aplicarIva: true,
+    origenProformaId: '',
     
     // Archivos
     imagenes: [],
@@ -71,7 +83,35 @@ const OrderForm = ({
     saldoPendiente: 0
   });
 
-  // Ensure products array has at least some rows for the table feel
+  // Determine valid responsables
+  const isSeller = currentUser?.role === 'Vendedor';
+  
+  const validSellers = useMemo(() => {
+    const sellers = getValidSellers(staffUsers);
+    return removeDuplicateUsers(sellers);
+  }, [staffUsers]);
+
+  // Auto-assign if seller and creating
+  useEffect(() => {
+    if (mode === 'create' && isSeller) {
+       setFormData(prev => ({ ...prev, vendedor: currentUser.name }));
+    }
+  }, [mode, isSeller, currentUser]);
+
+  // Derived Date/Time parts for inputs
+  const currentDatePart = formData.fechaEntrega ? formData.fechaEntrega.split('T')[0] : '';
+  const currentTimePart = formData.fechaEntrega ? new Date(formData.fechaEntrega).toTimeString().slice(0,5) : '12:00';
+
+  const handleDateTimeChange = (date, time) => {
+    if (!date) {
+      setFormData(prev => ({ ...prev, fechaEntrega: '' }));
+      return;
+    }
+    const t = time || '12:00';
+    setFormData(prev => ({ ...prev, fechaEntrega: `${date}T${t}:00` }));
+  };
+
+  // Ensure products array has at least some rows
   useEffect(() => {
     if (formData.productos.length === 0) {
       setFormData(prev => ({ ...prev, productos: Array(5).fill({ descripcion: '', precio: 0, cantidad: 0 }) }));
@@ -147,12 +187,18 @@ const OrderForm = ({
 
   const handleSubmit = (e) => {
     e.preventDefault();
+    
+    // Strict Role Validation for Editing
+    if (mode === 'edit' && !isAdmin) {
+       toast({ title: "⛔ Permiso denegado", description: "No tienes permiso para editar órdenes existentes.", variant: "destructive" });
+       return;
+    }
+
     if (!formData.cliente) {
       toast({ title: "⚠️ Campo requerido", description: "Seleccione un cliente", variant: "destructive" });
       return;
     }
     
-    // Filter out empty product rows
     const validProducts = formData.productos.filter(p => p.descripcion && p.descripcion.trim() !== '');
     
     if (validProducts.length === 0) {
@@ -174,6 +220,10 @@ const OrderForm = ({
     onSubmit(submissionData);
   };
 
+  const getDisplayedOrderNumber = () => {
+     return (formData.orderNumber || '').toString().padStart(7, '0');
+  };
+
   return (
     <motion.div
       initial={{ opacity: 0, scale: 0.98 }}
@@ -184,8 +234,8 @@ const OrderForm = ({
       <div className="bg-slate-100 border-b border-slate-300 px-6 py-3 flex justify-between items-center">
         <h2 className="text-lg font-bold text-slate-800 uppercase">
           {mode === 'create' 
-            ? `Orden de Producción NUEVA (${formData.orderNumber || '?'})` 
-            : `Editar Orden #${formData.orderNumber || ''}`
+            ? `Orden de Producción NUEVA (${getDisplayedOrderNumber()})` 
+            : `Editar Orden #${getDisplayedOrderNumber()}`
           }
         </h2>
         <div className="flex items-center gap-2">
@@ -206,6 +256,7 @@ const OrderForm = ({
              <h3 className="font-bold text-slate-700 text-sm border-b border-blue-500 pb-1 mb-3 inline-block">NUEVA Orden</h3>
              
              <div className="grid grid-cols-12 gap-4 items-center">
+                {/* Row 1 */}
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Titulo / Referencia:</label>
                 <div className="col-span-12 md:col-span-10">
                    <input 
@@ -218,10 +269,11 @@ const OrderForm = ({
                    />
                 </div>
 
+                {/* Row 2 */}
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tipo de Orden:</label>
-                <div className="col-span-12 md:col-span-10">
+                <div className="col-span-12 md:col-span-4">
                    <select 
-                      className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm bg-white"
+                      className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white"
                       value={formData.tipoOrden}
                       onChange={e => setFormData({...formData, tipoOrden: e.target.value})}
                       disabled={isReadOnly}
@@ -230,6 +282,30 @@ const OrderForm = ({
                    </select>
                 </div>
 
+                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Responsable:</label>
+                <div className="col-span-12 md:col-span-4">
+                   {isAdmin && !isReadOnly ? (
+                      <select 
+                        className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white"
+                        value={formData.vendedor}
+                        onChange={e => setFormData({...formData, vendedor: e.target.value})}
+                      >
+                         <option value="">Seleccionar...</option>
+                         {validSellers.map(u => (
+                            <option key={u.id} value={u.name}>{formatResponsableName(u)}</option>
+                         ))}
+                      </select>
+                   ) : (
+                      <input 
+                        type="text" 
+                        className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-slate-100"
+                        value={formData.vendedor}
+                        readOnly
+                      />
+                   )}
+                </div>
+
+                {/* Row 3 */}
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Cliente:</label>
                 <div className="col-span-12 md:col-span-10 flex gap-2 items-center">
                    <input 
@@ -253,23 +329,47 @@ const OrderForm = ({
                    )}
                 </div>
 
+                {/* Row 4 */}
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Fecha entrega:</label>
-                <div className="col-span-12 md:col-span-10 flex items-center gap-3">
+                <div className="col-span-12 md:col-span-4 flex items-center gap-2">
                    <input 
-                      type="datetime-local" 
-                      className="border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none"
-                      value={formData.fechaEntrega}
-                      onChange={e => setFormData({...formData, fechaEntrega: e.target.value})}
+                      type="date" 
+                      className="border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none flex-1"
+                      value={currentDatePart}
+                      onChange={e => handleDateTimeChange(e.target.value, currentTimePart)}
                       readOnly={isReadOnly}
                       required
                    />
+                   <select
+                      className="border border-slate-300 rounded px-2 py-1 text-sm bg-white w-24"
+                      value={currentTimePart}
+                      onChange={e => handleDateTimeChange(currentDatePart, e.target.value)}
+                      disabled={isReadOnly}
+                   >
+                     {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
+                   </select>
                    <button 
                      type="button" 
                      onClick={onCheckAvailability}
                      className="text-blue-600 hover:underline text-xs flex items-center gap-1"
                    >
-                      ver Disponibilidad <Calendar className="h-3 w-3" />
+                      <Calendar className="h-3 w-3" />
                    </button>
+                </div>
+                
+                {/* Proforma Link */}
+                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Proforma:</label>
+                <div className="col-span-12 md:col-span-4">
+                   {formData.origenProformaId ? (
+                      <div className="flex items-center gap-2 text-blue-600 bg-blue-50 px-3 py-1.5 rounded border border-blue-200">
+                         <Link className="h-3 w-3" />
+                         <span className="text-sm font-semibold">#{String(formData.origenProformaId).padStart(7,'0')}</span>
+                      </div>
+                   ) : (
+                      <div className="text-slate-400 text-sm italic px-3 py-1.5 bg-slate-50 border border-slate-200 rounded">
+                         N/A
+                      </div>
+                   )}
                 </div>
              </div>
           </div>
@@ -347,11 +447,27 @@ const OrderForm = ({
                       </tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
-                            <span>Dscto (%)</span>
+                            <span>Dscto ($)</span>
                             <input 
                               type="number" 
+                              step="0.01"
+                              className="w-16 text-right border border-slate-300 rounded px-1 text-xs"
+                              value={financials.descuentoVal > 0 ? financials.descuentoVal.toFixed(2) : ''}
+                              placeholder="0.00"
+                              onChange={e => {
+                                 const val = parseFloat(e.target.value) || 0;
+                                 const percent = financials.subtotal > 0 ? (val / financials.subtotal) * 100 : 0;
+                                 setFormData({...formData, descuentoPorcentaje: percent});
+                              }}
+                              readOnly={isReadOnly}
+                            />
+                            <span>(%)</span>
+                            <input 
+                              type="number" 
+                              step="0.01"
                               className="w-12 text-right border border-slate-300 rounded px-1 text-xs"
-                              value={formData.descuentoPorcentaje}
+                              value={formData.descuentoPorcentaje > 0 ? formData.descuentoPorcentaje.toFixed(2) : ''}
+                              placeholder="0"
                               onChange={e => setFormData({...formData, descuentoPorcentaje: parseFloat(e.target.value) || 0})}
                               readOnly={isReadOnly}
                             />
@@ -361,10 +477,9 @@ const OrderForm = ({
                       </tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
-                             <input 
-                               type="checkbox" 
+                             <Checkbox 
                                checked={formData.aplicarIva} 
-                               onChange={e => setFormData({...formData, aplicarIva: e.target.checked})}
+                               onCheckedChange={(checked) => setFormData({...formData, aplicarIva: checked})}
                                disabled={isReadOnly && mode !== 'payment_only'}
                              />
                              <span>IVA ({IVA_RATE * 100}%)</span>
@@ -386,30 +501,6 @@ const OrderForm = ({
           <div className="space-y-4 pt-2">
              <div className="text-xs text-slate-500 italic border-b border-slate-200 pb-1">Info contable</div>
              
-             {/* Factura / Cotizacion */}
-             <div className="grid grid-cols-2 gap-8">
-                <div className="flex items-center gap-2">
-                   <label className="text-xs font-bold w-20">Factura:</label>
-                   <input 
-                      type="text" 
-                      className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
-                      value={formData.factura}
-                      onChange={e => setFormData({...formData, factura: e.target.value})}
-                      readOnly={isReadOnly && mode !== 'payment_only'}
-                   />
-                </div>
-                <div className="flex items-center gap-2">
-                   <label className="text-xs font-bold w-20 text-right">Cotización:</label>
-                   <input 
-                      type="text" 
-                      className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
-                      value={formData.cotizacion}
-                      onChange={e => setFormData({...formData, cotizacion: e.target.value})}
-                      readOnly={isReadOnly && mode !== 'payment_only'}
-                   />
-                </div>
-             </div>
-
              <div className="border border-slate-300 rounded p-4 bg-slate-50/50 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4">
                 {/* Left Col: Anticipo */}
                 <div className="space-y-2">
@@ -442,23 +533,32 @@ const OrderForm = ({
                       <select 
                          className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white"
                          value={formData.formaPagoAnticipo}
-                         onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})}
+                         onChange={e => {
+                             const val = e.target.value;
+                             setFormData(prev => ({
+                               ...prev, 
+                               formaPagoAnticipo: val,
+                               creditoVenceAnticipo: val === 'Crédito' ? prev.creditoVenceAnticipo : ''
+                             }));
+                         }}
                          disabled={mode === 'read_only'}
                       >
                          {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                    </div>
 
-                   <div className="flex items-center gap-2">
-                      <label className="text-xs font-bold w-16 whitespace-nowrap">Crédito Vence:</label>
-                      <input 
-                         type="date"
-                         className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
-                         value={formData.creditoVenceAnticipo}
-                         onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})}
-                         readOnly={mode === 'read_only'}
-                      />
-                   </div>
+                   {formData.formaPagoAnticipo === 'Crédito' && (
+                     <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold w-16 whitespace-nowrap">Crédito Vence:</label>
+                        <input 
+                           type="date"
+                           className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
+                           value={formData.creditoVenceAnticipo}
+                           onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})}
+                           readOnly={mode === 'read_only'}
+                        />
+                     </div>
+                   )}
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-16">Nota:</label>
@@ -492,23 +592,32 @@ const OrderForm = ({
                       <select 
                          className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white"
                          value={formData.formaPagoSaldo}
-                         onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})}
+                         onChange={e => {
+                             const val = e.target.value;
+                             setFormData(prev => ({
+                               ...prev, 
+                               formaPagoSaldo: val,
+                               creditoVenceSaldo: val === 'Crédito' ? prev.creditoVenceSaldo : ''
+                             }));
+                         }}
                          disabled={mode === 'read_only'}
                       >
                          {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
                       </select>
                    </div>
 
-                   <div className="flex items-center gap-2">
-                      <label className="text-xs font-bold w-16 whitespace-nowrap">Crédito Vence:</label>
-                      <input 
-                         type="date"
-                         className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
-                         value={formData.creditoVenceSaldo}
-                         onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})}
-                         readOnly={mode === 'read_only'}
-                      />
-                   </div>
+                   {formData.formaPagoSaldo === 'Crédito' && (
+                     <div className="flex items-center gap-2">
+                        <label className="text-xs font-bold w-16 whitespace-nowrap">Crédito Vence:</label>
+                        <input 
+                           type="date"
+                           className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm"
+                           value={formData.creditoVenceSaldo}
+                           onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})}
+                           readOnly={mode === 'read_only'}
+                        />
+                     </div>
+                   )}
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-16">Nota:</label>

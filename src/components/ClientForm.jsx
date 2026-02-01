@@ -1,16 +1,15 @@
 import React, { useState, useEffect } from 'react';
 import { Save, X, User, Mail, MapPin, Phone, FileText } from 'lucide-react';
-import { Button } from './ui/button';
+import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabaseClient';
-import { useNavigate } from 'react-router-dom';
-import { useToast } from './ui/use-toast';
+// BORRADO: import { useNavigate } from 'react-router-dom'; (Causaba el error)
+import { useToast } from '@/components/ui/use-toast';
 
 export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
-  const navigate = useNavigate();
+  // BORRADO: const navigate = useNavigate(); (Causaba el error)
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
-
 
   const [formData, setFormData] = useState({
     razonSocial: '',
@@ -20,21 +19,21 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
     celular: ''
   });
 
-
   useEffect(() => {
     if (clienteAEditar) {
       setFormData({
         razonSocial: clienteAEditar.nombre || '',
         email: clienteAEditar.email || '',
-        cedulaRuc: clienteAEditar.empresa || '', 
+        cedulaRuc: clienteAEditar.empresa || '', // Mapeamos 'empresa' a 'cedulaRuc'
         direccion: clienteAEditar.direccion || '',
-        celular: clienteAEditar.telefono || ''
+        celular: clienteAEditar.telefono || ''   // Mapeamos 'telefono' a 'celular'
       });
     }
   }, [clienteAEditar]);
 
   const handleChange = (e) => {
     const { name, value } = e.target;
+    // Validación numérica simple para RUC y Celular
     if (name === 'cedulaRuc' || name === 'celular') {
       if (!/^\d*$/.test(value)) return;
     }
@@ -46,6 +45,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
     setLoading(true);
 
     try {
+      // Preparamos los datos coincidiendo con tu tabla de Supabase (nombre, empresa, telefono...)
       const datosParaEnviar = {
         nombre: formData.razonSocial,
         email: formData.email,
@@ -63,6 +63,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
           .eq('id', clienteAEditar.id); 
         error = updateError;
       } else {
+        // Validación de duplicados antes de insertar
         const { data: existentes } = await supabase
           .from('clientes')
           .select('id')
@@ -81,15 +82,15 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
       if (error) throw error;
 
       toast({
-        title: clienteAEditar ? " Cliente Actualizado" : " Cliente Registrado",
+        title: clienteAEditar ? "✅ Cliente Actualizado" : "✅ Cliente Registrado",
         description: `Los datos de ${formData.razonSocial} se guardaron correctamente.`,
         duration: 3000,
       });
 
+      // Lógica de navegación segura (sin router)
       if (onSuccess) onSuccess(); 
       if (onCancel) onCancel();
-      else navigate('/clientes');
-
+      
     } catch (error) {
       console.error('Error:', error);
       toast({
@@ -134,6 +135,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
               value={formData.razonSocial}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="Ej: Juan Pérez o Empresa S.A."
             />
           </div>
 
@@ -148,6 +150,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
               onChange={handleChange}
               maxLength={13}
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="Ej: 0991234567001"
             />
           </div>
 
@@ -162,6 +165,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
               onChange={handleChange}
               maxLength={10}
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="Ej: 0991234567"
             />
           </div>
 
@@ -175,6 +179,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
               value={formData.email}
               onChange={handleChange}
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
+              placeholder="cliente@ejemplo.com"
             />
           </div>
 
@@ -188,6 +193,7 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
               onChange={handleChange}
               rows="3"
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none resize-none"
+              placeholder="Dirección completa..."
             />
           </div>
         </div>

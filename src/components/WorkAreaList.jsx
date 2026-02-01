@@ -1,152 +1,334 @@
 
-import React, { useState } from 'react';
-import { Search, Eye, ExternalLink } from 'lucide-react';
+import React, { useState, useEffect, useMemo } from 'react';
+import { LayoutList, Kanban as KanbanIcon, CheckCircle2, Search, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import StatusBadge from '@/components/StatusBadge';
+import KanbanBoard from './KanbanBoard';
+import CompletedTasksList from './CompletedTasksList';
+import { cn } from '@/lib/utils';
 
-const WorkAreaList = ({ orders = [], user, onViewOrder }) => {
+const WorkAreaList = ({ 
+  orders, 
+  user, 
+  staffUsers, 
+  kanbanTasks, 
+  onKanbanUpdate, 
+  onKanbanCreate, 
+  onKanbanDelete, 
+  onViewOrder, 
+  initialMode = 'list'
+}) => {
+  const [viewMode, setViewMode] = useState(initialMode); // 'list' | 'board' | 'completed'
+  
+  // States for Search & Pagination
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [currentPage, setCurrentPage] = useState(1);
 
-  // Lógica de filtrado idéntica a Notificaciones
-  const getRelevantOrders = () => {
-    if (!user || !orders) return [];
+  useEffect(() => {
+     if(initialMode) setViewMode(initialMode);
+  }, [initialMode]);
 
+  useEffect(() => {
+    // Reset page on search
+    setCurrentPage(1);
+  }, [searchTerm, itemsPerPage]);
+
+  // --- Filtering Logic ---
+  const rawFilteredOrders = useMemo(() => {
     return orders.filter(order => {
-      // Admin: Finalizadas (para archivar) - o todas las activas?
-      // El prompt dice "mostrando órdenes según notificaciones del rol"
-      if (user.role === 'Administrador') {
-        return order.status === 'FINALIZADA'; 
-      }
+      // Basic Status Filters
+      if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return false;
+      if (user.role === 'Administrador') return order.status === 'FINALIZADA';
+      if (order.status === 'FINALIZADA') return false;
       
-      // Vendedor: Paso 1 (Ventas) y Paso 3 (Por Retirar) + deben ser SUYAS
-      if (user.role === 'Vendedor') {
-        const isMyOrder = order.vendedor === user.name;
-        const isRelevantStatus = order.status === 'VENTAS' || order.status === 'VENTAS POR RETIRAR';
-        return isMyOrder && isRelevantStatus;
-      }
-
-      // Contabilidad: Paso 4
-      if (user.role === 'Contabilidad') {
-        return order.status === 'CONTABILIDAD';
-      }
-
-      // Producción: Paso 2
-      if (user.role === 'Producción') {
-        return order.status === 'PRODUCCION';
-      }
-
+      // Role-based visibility
+      if (user.role === 'Producción') return order.status === 'PRODUCCION';
+      if (user.role === 'Contabilidad') return order.status === 'CONTABILIDAD';
+      if (user.role === 'Vendedor') return ['VENTAS', 'VENTAS POR RETIRAR'].includes(order.status);
+      
       return false;
     });
+  }, [orders, user.role]);
+
+  // --- Search Logic ---
+  const searchFilteredOrders = useMemo(() => {
+    if (!searchTerm) return rawFilteredOrders;
+    
+    const lowerTerm = searchTerm.toLowerCase();
+    
+    return rawFilteredOrders.filter(order => {
+      const orderId = (order.orderNumber || order.id || '').toString();
+      const client = (order.cliente || '').toLowerCase();
+      const title = (order.tipoLetrero || '').toLowerCase();
+      const date = (order.fechaEntrega || '').toLowerCase();
+      
+      return orderId.includes(lowerTerm) || 
+             client.includes(lowerTerm) || 
+             title.includes(lowerTerm) ||
+             date.includes(lowerTerm);
+    });
+  }, [rawFilteredOrders, searchTerm]);
+
+  // --- Pagination Logic ---
+  const totalItems = searchFilteredOrders.length;
+  const totalPages = Math.ceil(totalItems / itemsPerPage);
+  const startIndex = (currentPage - 1) * itemsPerPage;
+  const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
+  const paginatedOrders = searchFilteredOrders.slice(startIndex, endIndex);
+
+  // --- Formatters ---
+  const formatDate = (dateString) => {
+    if (!dateString) return '-';
+    // Format: YYYY-MM-DD HH:MM:SS
+    const d = new Date(dateString);
+    const year = d.getFullYear();
+    const month = String(d.getMonth() + 1).padStart(2, '0');
+    const day = String(d.getDate()).padStart(2, '0');
+    const hours = String(d.getHours()).padStart(2, '0');
+    const minutes = String(d.getMinutes()).padStart(2, '0');
+    const seconds = String(d.getSeconds()).padStart(2, '0');
+    return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}`;
   };
 
-  const filteredOrders = getRelevantOrders().filter(order => 
-    order.cliente.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    order.tipoLetrero.toLowerCase().includes(searchTerm.toLowerCase()) ||
-    order.id.toString().includes(searchTerm)
-  );
-
-  const formatOrderId = (id) => id.toString().slice(-8).padStart(8, '0');
-  
-  const formatDateTime = (dateString) => {
-    if (!dateString) return '0000-00-00 00:00:00';
-    try {
-        const d = new Date(dateString);
-        return d.toLocaleString('es-ES', { 
-           year: 'numeric', month: '2-digit', day: '2-digit',
-           hour: '2-digit', minute: '2-digit', second: '2-digit'
-        });
-    } catch { return '0000-00-00 00:00:00'; }
+  const formatOrderId = (order) => {
+    if (order.orderNumber) {
+        return order.orderNumber.toString().padStart(7, '0');
+    }
+    return (order.id || '').toString().slice(-7).padStart(7, '0');
   };
+
+  const calculateProductStats = (order) => {
+    const products = order.productos || [];
+    const total = products.length;
+    // Assuming 'completed' flag exists or implied by status logic if items have statuses
+    // For now, based on provided logic, we might not have granular item status in order object 
+    // unless 'completed' prop exists on product items (which is updated in handleProductToggle in App.jsx)
+    const completed = products.filter(p => p.completed).length;
+    
+    // Started items: Logic depends on implementation. 
+    // If order is in PRODUCCION, we assume it's started. 
+    // Or we count items that are completed.
+    // Based on user request "Ítems iniciados (items)", let's assume it counts items with some progress or just count of items if order started
+    // The screenshot shows "(1)" suggesting a count.
+    
+    return {
+        total,
+        completed,
+        startedCount: products.length // Simplified for now: if order is here, items are "started" generally
+    };
+  };
+
+  // Filter tasks for Completed View
+  const completedTasks = kanbanTasks.filter(t => t.status === 'Completada');
 
   return (
     <div className="space-y-4">
-        <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4">
-            <h2 className="text-lg font-bold text-slate-800">Tareas Pendientes</h2>
-            <div className="flex flex-col md:flex-row justify-between gap-4">
-                 <div className="flex items-center gap-2 text-sm text-slate-600">
-                     <span>Mostrar</span>
-                     <select 
-                       className="border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-                       value={itemsPerPage}
-                       onChange={(e) => setItemsPerPage(Number(e.target.value))}
-                     >
-                       <option value={10}>10</option>
-                       <option value={25}>25</option>
-                       <option value={50}>50</option>
-                     </select>
-                     <span>registros</span>
-                 </div>
-                 <div className="relative max-w-md w-full">
-                   <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
-                   <input 
-                     type="text" 
-                     placeholder="Buscar..." 
-                     className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-                     value={searchTerm}
-                     onChange={(e) => setSearchTerm(e.target.value)}
-                   />
-                   <span className="absolute right-3 top-2.5 text-xs text-slate-400 font-semibold">
-                      Buscar:
-                   </span>
-                 </div>
-            </div>
-        </div>
+       {/* Tab Switcher - Main Control for this View */}
+       <div className="flex flex-wrap gap-1 bg-slate-200 p-1.5 rounded-lg w-fit border border-slate-300 shadow-inner">
+          <button
+             onClick={() => setViewMode('list')}
+             className={cn(
+                "px-4 py-2 text-sm font-bold rounded-md flex items-center gap-2 transition-all",
+                viewMode === 'list' 
+                ? 'bg-white text-blue-600 shadow-sm' 
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-300/50'
+             )}
+          >
+             <LayoutList className="h-4 w-4" />
+             LISTADO
+          </button>
+          <button
+             onClick={() => setViewMode('board')}
+             className={cn(
+                "px-4 py-2 text-sm font-bold rounded-md flex items-center gap-2 transition-all",
+                viewMode === 'board' 
+                ? 'bg-slate-800 text-white shadow-md' 
+                : 'text-slate-500 hover:text-slate-700 hover:bg-slate-300/50'
+             )}
+          >
+             <KanbanIcon className="h-4 w-4" />
+             TABLERO KANBAN
+          </button>
+          <button
+             onClick={() => setViewMode('completed')}
+             className={cn(
+                "px-4 py-2 text-sm font-bold rounded-md flex items-center gap-2 transition-all",
+                viewMode === 'completed' 
+                ? 'bg-green-600 text-white shadow-md' 
+                : 'text-slate-500 hover:text-green-700 hover:bg-slate-300/50'
+             )}
+          >
+             <CheckCircle2 className="h-4 w-4" />
+             TAREAS COMPLETADAS
+             <span className="ml-1 bg-black/10 px-1.5 py-0.5 rounded-full text-[10px]">
+                {completedTasks.length}
+             </span>
+          </button>
+       </div>
 
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
-                    <thead className="text-xs text-slate-700 uppercase bg-slate-100 border-b border-slate-200">
-                        <tr>
-                            <th className="px-6 py-3 font-bold cursor-pointer hover:bg-slate-200">Orden</th>
-                            <th className="px-6 py-3 font-bold cursor-pointer hover:bg-slate-200">Fecha ENTREGA</th>
-                            <th className="px-6 py-3 font-bold cursor-pointer hover:bg-slate-200">Cliente</th>
-                            <th className="px-6 py-3 font-bold cursor-pointer hover:bg-slate-200">Titulo</th>
-                            <th className="px-6 py-3 font-bold text-center">Detalles</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-slate-100">
-                        {filteredOrders.length > 0 ? (
-                             filteredOrders.slice(0, itemsPerPage).map(order => (
-                                 <tr key={order.id} className="hover:bg-slate-50 transition-colors">
-                                     <td className="px-6 py-4 font-mono text-blue-600 font-medium">
-                                         {formatOrderId(order.id)}
-                                     </td>
-                                     <td className="px-6 py-4 text-slate-600 whitespace-nowrap">
-                                         {formatDateTime(order.fechaEntrega)}
-                                     </td>
-                                     <td className="px-6 py-4 font-medium text-slate-800 uppercase">
-                                         {order.cliente}
-                                     </td>
-                                     <td className="px-6 py-4 text-slate-600 uppercase">
-                                         {order.tipoLetrero}
-                                     </td>
-                                     <td className="px-6 py-4 text-center">
-                                         <Button 
-                                            variant="ghost" 
-                                            size="sm" 
-                                            className="h-8 w-8 p-0"
-                                            onClick={() => onViewOrder(order)}
-                                         >
-                                             <Eye className="h-4 w-4 text-slate-500 hover:text-blue-600" />
-                                         </Button>
-                                     </td>
-                                 </tr>
-                             ))
-                        ) : (
-                            <tr>
-                                <td colSpan="5" className="px-6 py-8 text-center text-slate-500">
-                                    No hay tareas pendientes para tu rol.
-                                </td>
+       <div>
+         {viewMode === 'list' && (
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in duration-300 min-h-[600px]">
+               
+               {/* Controls Bar */}
+               <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
+                   {/* Left: Page Size */}
+                   <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
+                       <span>Mostrar</span>
+                       <select 
+                          className="border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-blue-500 text-slate-800"
+                          value={itemsPerPage}
+                          onChange={(e) => setItemsPerPage(Number(e.target.value))}
+                       >
+                           <option value={10}>10</option>
+                           <option value={25}>25</option>
+                           <option value={50}>50</option>
+                           <option value={100}>100</option>
+                       </select>
+                       <span>registros</span>
+                   </div>
+
+                   {/* Right: Search */}
+                   <div className="flex items-center gap-2 w-full md:w-auto">
+                       <span className="text-sm font-bold text-slate-700">Buscar:</span>
+                       <div className="relative">
+                          <input 
+                             type="text"
+                             className="border border-slate-300 rounded px-3 py-1 text-sm w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                             value={searchTerm}
+                             onChange={(e) => setSearchTerm(e.target.value)}
+                          />
+                       </div>
+                   </div>
+               </div>
+
+               {/* Table */}
+               <div className="overflow-x-auto">
+               <table className="w-full text-sm text-left">
+                  <thead className="text-xs text-slate-700 font-bold border-b border-slate-200 bg-white">
+                     <tr>
+                        <th className="px-6 py-3 whitespace-nowrap">Orden</th>
+                        <th className="px-6 py-3 whitespace-nowrap">Iniciada (items)</th>
+                        <th className="px-6 py-3 whitespace-nowrap">Producidos / TOTAL</th>
+                        <th className="px-6 py-3 whitespace-nowrap">Fecha ENTREGA</th>
+                        <th className="px-6 py-3 whitespace-nowrap">Cliente</th>
+                        <th className="px-6 py-3 whitespace-nowrap">Titulo</th>
+                     </tr>
+                  </thead>
+                  <tbody className="divide-y divide-slate-100">
+                     {paginatedOrders.length > 0 ? (
+                        paginatedOrders.map(order => {
+                          const stats = calculateProductStats(order);
+                          return (
+                            <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group">
+                               <td className="px-6 py-3">
+                                  <button 
+                                     onClick={() => onViewOrder(order)}
+                                     className="text-blue-500 hover:text-blue-700 font-medium hover:underline"
+                                  >
+                                     {formatOrderId(order)}
+                                  </button>
+                               </td>
+                               <td className="px-6 py-3 text-slate-600">
+                                   <div className="flex items-center gap-2">
+                                     <Settings className="h-4 w-4 text-slate-400" />
+                                     <span>({stats.startedCount})</span>
+                                   </div>
+                               </td>
+                               <td className="px-6 py-3 text-slate-700 font-medium">
+                                   {stats.completed} / {stats.total}
+                               </td>
+                               <td className="px-6 py-3 text-slate-600">
+                                  {formatDate(order.fechaEntrega)}
+                               </td>
+                               <td className="px-6 py-3 text-slate-800 uppercase text-xs font-semibold">
+                                  {order.cliente}
+                               </td>
+                               <td className="px-6 py-3 text-slate-600 uppercase text-xs">
+                                  {order.tipoLetrero}
+                               </td>
                             </tr>
-                        )}
-                    </tbody>
-                </table>
+                          );
+                        })
+                     ) : (
+                        <tr>
+                           <td colSpan="6" className="px-6 py-12 text-center text-slate-500 italic">
+                              <div className="flex flex-col items-center gap-2">
+                                 <span className="text-lg font-medium text-slate-400">Sin resultados</span>
+                                 <span>No se encontraron registros que coincidan con la búsqueda.</span>
+                              </div>
+                           </td>
+                        </tr>
+                     )}
+                  </tbody>
+               </table>
+               </div>
+               
+               {/* Pagination Footer */}
+               <div className="px-6 py-3 border-t border-slate-200 bg-white text-xs text-slate-600 flex flex-col sm:flex-row justify-between items-center gap-4">
+                  <div>
+                      Mostrando registros del <span className="font-semibold">{totalItems > 0 ? startIndex + 1 : 0}</span> al <span className="font-semibold">{endIndex}</span> de un total de <span className="font-semibold">{totalItems}</span> registros
+                  </div>
+                  
+                  <div className="flex items-center gap-1">
+                      <span className="mr-2 text-slate-500">
+                         {currentPage > 1 ? 'Anterior' : 'Anterior'}
+                      </span>
+                      <Button 
+                         variant="outline" 
+                         size="sm" 
+                         className="h-8 px-2 border-slate-300"
+                         onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+                         disabled={currentPage === 1}
+                      >
+                         <ChevronLeft className="h-4 w-4" />
+                      </Button>
+                      
+                      <div className="px-3 py-1 bg-slate-100 border border-slate-200 rounded text-slate-700 font-medium min-w-[32px] text-center">
+                          {currentPage}
+                      </div>
+
+                      <Button 
+                         variant="outline" 
+                         size="sm" 
+                         className="h-8 px-2 border-slate-300"
+                         onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+                         disabled={currentPage >= totalPages}
+                      >
+                         <ChevronRight className="h-4 w-4" />
+                      </Button>
+                      <span className="ml-2 text-slate-500">
+                         {currentPage < totalPages ? 'Siguiente' : 'Siguiente'}
+                      </span>
+                  </div>
+               </div>
             </div>
-            <div className="bg-slate-50 px-6 py-3 border-t border-slate-200 text-xs text-slate-500">
-                 Mostrando {Math.min(itemsPerPage, filteredOrders.length)} de {filteredOrders.length} registros
+         )}
+
+         {viewMode === 'board' && (
+            <div className="animate-in fade-in duration-300">
+               <KanbanBoard 
+                  tasks={kanbanTasks || []}
+                  orders={orders}
+                  staffUsers={staffUsers}
+                  onTaskUpdate={onKanbanUpdate}
+                  onTaskCreate={onKanbanCreate}
+                  onTaskDelete={onKanbanDelete}
+                  onViewOrder={onViewOrder}
+               />
             </div>
-        </div>
+         )}
+
+         {viewMode === 'completed' && (
+            <div className="animate-in fade-in duration-300">
+               <CompletedTasksList 
+                  tasks={completedTasks}
+                  orders={orders}
+                  onViewOrder={onViewOrder}
+               />
+            </div>
+         )}
+       </div>
     </div>
   );
 };
