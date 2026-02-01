@@ -1,10 +1,17 @@
-
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Save, X, User, Mail, MapPin, Phone, FileText } from 'lucide-react';
-import { Button } from '@/components/ui/button';
+import { Button } from './ui/button';
 import { motion } from 'framer-motion';
+import { supabase } from '../supabaseClient';
+import { useNavigate } from 'react-router-dom';
+import { useToast } from './ui/use-toast';
 
-const ClientForm = ({ onSubmit, onCancel }) => {
+export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
+  const navigate = useNavigate();
+  const { toast } = useToast();
+  const [loading, setLoading] = useState(false);
+
+
   const [formData, setFormData] = useState({
     razonSocial: '',
     email: '',
@@ -13,26 +20,102 @@ const ClientForm = ({ onSubmit, onCancel }) => {
     celular: ''
   });
 
+
+  useEffect(() => {
+    if (clienteAEditar) {
+      setFormData({
+        razonSocial: clienteAEditar.nombre || '',
+        email: clienteAEditar.email || '',
+        cedulaRuc: clienteAEditar.empresa || '', 
+        direccion: clienteAEditar.direccion || '',
+        celular: clienteAEditar.telefono || ''
+      });
+    }
+  }, [clienteAEditar]);
+
   const handleChange = (e) => {
     const { name, value } = e.target;
+    if (name === 'cedulaRuc' || name === 'celular') {
+      if (!/^\d*$/.test(value)) return;
+    }
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleSubmit = (e) => {
+  const handleSubmit = async (e) => {
     e.preventDefault();
-    onSubmit(formData);
+    setLoading(true);
+
+    try {
+      const datosParaEnviar = {
+        nombre: formData.razonSocial,
+        email: formData.email,
+        telefono: formData.celular,
+        direccion: formData.direccion,
+        empresa: formData.cedulaRuc
+      };
+
+      let error;
+
+      if (clienteAEditar) {
+        const { error: updateError } = await supabase
+          .from('clientes')
+          .update(datosParaEnviar)
+          .eq('id', clienteAEditar.id); 
+        error = updateError;
+      } else {
+        const { data: existentes } = await supabase
+          .from('clientes')
+          .select('id')
+          .or(`nombre.eq.${formData.razonSocial},empresa.eq.${formData.cedulaRuc}`);
+          
+        if (existentes && existentes.length > 0) {
+           throw new Error("Ya existe un cliente con ese Nombre o RUC.");
+        }
+
+        const { error: insertError } = await supabase
+          .from('clientes')
+          .insert([datosParaEnviar]);
+        error = insertError;
+      }
+
+      if (error) throw error;
+
+      toast({
+        title: clienteAEditar ? " Cliente Actualizado" : " Cliente Registrado",
+        description: `Los datos de ${formData.razonSocial} se guardaron correctamente.`,
+        duration: 3000,
+      });
+
+      if (onSuccess) onSuccess(); 
+      if (onCancel) onCancel();
+      else navigate('/clientes');
+
+    } catch (error) {
+      console.error('Error:', error);
+      toast({
+        variant: "destructive",
+        title: "Error al guardar",
+        description: error.message || "Ocurrió un error inesperado.",
+      });
+    } finally {
+      setLoading(false);
+    }
   };
 
   return (
     <motion.div 
       initial={{ opacity: 0, y: 20 }}
       animate={{ opacity: 1, y: 0 }}
-      className="max-w-3xl mx-auto bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden"
+      className="bg-white rounded-xl shadow-lg border border-slate-200 overflow-hidden w-full max-w-3xl mx-auto"
     >
       <div className="bg-slate-50 px-6 py-4 border-b border-slate-200 flex justify-between items-center">
         <div>
-          <h2 className="text-lg font-bold text-slate-800">Nuevo Cliente</h2>
-          <p className="text-sm text-slate-500">Ingrese la información del cliente para registrarlo en el sistema.</p>
+          <h2 className="text-lg font-bold text-slate-800">
+            {clienteAEditar ? 'Editar Cliente' : 'Nuevo Cliente'}
+          </h2>
+          <p className="text-sm text-slate-500">
+            {clienteAEditar ? 'Modifique los datos necesarios.' : 'Ingrese la información del nuevo cliente.'}
+          </p>
         </div>
         <Button variant="ghost" size="icon" onClick={onCancel}>
           <X className="h-5 w-5 text-slate-400" />
@@ -41,22 +124,19 @@ const ClientForm = ({ onSubmit, onCancel }) => {
 
       <form onSubmit={handleSubmit} className="p-6 space-y-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          {/* Razón Social */}
           <div className="space-y-2 md:col-span-2">
             <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-              <User className="h-4 w-4 text-slate-400" /> Razón Social / Nombre Completo
+              <User className="h-4 w-4 text-slate-400" /> Razón Social / Nombre
             </label>
             <input
               required
               name="razonSocial"
               value={formData.razonSocial}
               onChange={handleChange}
-              placeholder="Ej: Empresa S.A. o Juan Pérez"
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
 
-          {/* CED/RUC */}
           <div className="space-y-2">
             <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
               <FileText className="h-4 w-4 text-slate-400" /> Cédula o RUC
@@ -66,12 +146,11 @@ const ClientForm = ({ onSubmit, onCancel }) => {
               name="cedulaRuc"
               value={formData.cedulaRuc}
               onChange={handleChange}
-              placeholder="Ej: 1712345678001"
+              maxLength={13}
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
 
-          {/* Celular */}
           <div className="space-y-2">
             <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
               <Phone className="h-4 w-4 text-slate-400" /> Celular / Teléfono
@@ -81,12 +160,11 @@ const ClientForm = ({ onSubmit, onCancel }) => {
               name="celular"
               value={formData.celular}
               onChange={handleChange}
-              placeholder="Ej: 0991234567"
+              maxLength={10}
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
 
-          {/* Email */}
           <div className="space-y-2 md:col-span-2">
             <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
               <Mail className="h-4 w-4 text-slate-400" /> Correo Electrónico
@@ -96,12 +174,10 @@ const ClientForm = ({ onSubmit, onCancel }) => {
               name="email"
               value={formData.email}
               onChange={handleChange}
-              placeholder="correo@ejemplo.com"
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
             />
           </div>
 
-          {/* Dirección */}
           <div className="space-y-2 md:col-span-2">
             <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
               <MapPin className="h-4 w-4 text-slate-400" /> Dirección
@@ -110,7 +186,6 @@ const ClientForm = ({ onSubmit, onCancel }) => {
               name="direccion"
               value={formData.direccion}
               onChange={handleChange}
-              placeholder="Dirección completa del cliente..."
               rows="3"
               className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none resize-none"
             />
@@ -118,16 +193,17 @@ const ClientForm = ({ onSubmit, onCancel }) => {
         </div>
 
         <div className="flex justify-end gap-3 pt-4 border-t border-slate-100">
-          <Button type="button" variant="outline" onClick={onCancel}>
+          <Button type="button" variant="outline" onClick={onCancel} disabled={loading}>
             Cancelar
           </Button>
-          <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
-            <Save className="h-4 w-4" /> Guardar Cliente
+          <Button type="submit" className="bg-blue-600 hover:bg-blue-700 text-white gap-2" disabled={loading}>
+            <Save className="h-4 w-4" /> 
+            {loading ? 'Guardando...' : (clienteAEditar ? 'Actualizar Cliente' : 'Guardar Cliente')}
           </Button>
         </div>
       </form>
     </motion.div>
   );
-};
+}
 
 export default ClientForm;
