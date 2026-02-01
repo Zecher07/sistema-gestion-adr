@@ -1,4 +1,3 @@
-
 @tailwind base;
 @tailwind components;
 @tailwind utilities;
@@ -73,33 +72,5 @@
   }
   body {
     @apply bg-background text-foreground;
-  }
-}
-
-@media print {
-  body * {
-    visibility: hidden;
-  }
-
-  #printable-area, #printable-area * {
-    visibility: visible;
-  }
-
-  #printable-area {
-    position: absolute;
-    left: 0;
-    top: 0;
-    width: 100%;
-    margin: 0;
-    padding: 0;
-    background: white;
-  }
-
-  .no-print {
-    display: none !important;
-  }
-
-  table {
-    width: 100% !important;
   }
 }

@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield } from 'lucide-react';
+// Importamos iconos nuevos del cliente
+import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet } from 'lucide-react';
 import { cn } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 
@@ -11,59 +12,25 @@ const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
   const isChildActive = hasSubmenu && item.submenu.some(sub => sub.id === currentView);
   const [isSubmenuOpen, setIsSubmenuOpen] = useState(isChildActive);
 
-  React.useEffect(() => {
-    if (isChildActive) setIsSubmenuOpen(true);
-  }, [isChildActive]);
+  React.useEffect(() => { if (isChildActive) setIsSubmenuOpen(true); }, [isChildActive]);
 
   const handleClick = () => {
-    if (hasSubmenu) {
-      setIsSubmenuOpen(!isSubmenuOpen);
-    } else {
-      onClick(item);
-      if (item.action) item.action();
-      else if (!item.id) {
-        toast({ title: "🚧 En construcción", description: "Pronto..." });
-      }
-    }
+    if (hasSubmenu) { setIsSubmenuOpen(!isSubmenuOpen); } 
+    else { onClick(item); if (item.action) item.action(); }
   };
 
   return (
     <div className="mb-1">
-      <button 
-        onClick={handleClick} 
-        className={cn(
-          "w-full flex items-center justify-between px-4 py-3 text-sm font-medium transition-all duration-200 group relative", 
-          isActive ? "text-blue-400 bg-slate-800 border-l-4 border-blue-500" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 hover:pl-5 border-l-4 border-transparent"
-        )}
-      >
-        <div className="flex items-center gap-3">
-          <Icon className={cn("h-5 w-5", isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-300")} />
-          <span>{item.label}</span>
-        </div>
-        {hasSubmenu && (
-          <div className="text-slate-600">
-            {isSubmenuOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}
-          </div>
-        )}
+      <button onClick={handleClick} className={cn("w-full flex items-center justify-between px-4 py-3 text-sm font-medium transition-all duration-200 group relative", isActive ? "text-blue-400 bg-slate-800 border-l-4 border-blue-500" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 hover:pl-5 border-l-4 border-transparent")}>
+        <div className="flex items-center gap-3"><Icon className={cn("h-5 w-5", isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-300")} /><span>{item.label}</span></div>
+        {hasSubmenu && <div className="text-slate-600">{isSubmenuOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</div>}
       </button>
 
       <AnimatePresence>
         {hasSubmenu && isSubmenuOpen && (
-          <motion.div 
-            initial={{ height: 0, opacity: 0 }}
-            animate={{ height: 'auto', opacity: 1 }}
-            exit={{ height: 0, opacity: 0 }}
-            className="overflow-hidden bg-slate-900/50"
-          >
+          <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden bg-slate-900/50">
             {item.submenu.map((subItem, idx) => (
-                <button 
-                  key={idx} 
-                  onClick={() => onSubItemClick(subItem.id)} 
-                  className={cn(
-                    "w-full text-left pl-12 pr-4 py-2 text-xs transition-colors border-l-2",
-                    currentView === subItem.id ? "text-blue-400 border-blue-500 bg-slate-800/30" : "text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800"
-                  )}
-                >
+                <button key={idx} onClick={() => onSubItemClick(subItem.id)} className={cn("w-full text-left pl-12 pr-4 py-2 text-xs transition-colors border-l-2", currentView === subItem.id ? "text-blue-400 border-blue-500 bg-slate-800/30" : "text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800")}>
                   {subItem.label}
                 </button>
             ))}
@@ -76,69 +43,69 @@ const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
 
 const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] }) => {
   
+  // --- MENÚ FUSIONADO: TUYO + CLIENTE ---
   const allMenuItems = [
     { id: 'inicio', label: 'Inicio', icon: Home }, 
-    {
-      id: 'clientes', label: 'Clientes', icon: Users,
-      submenu: [
+    
+    // Módulo Clientes
+    { id: 'clientes', label: 'Clientes', icon: Users, submenu: [
         { label: 'Lista de Clientes', id: 'clientes-lista' },
         { label: 'Nuevo Cliente', id: 'clientes-nuevo' }
       ]
     }, 
-    {
-      id: 'ordenes', label: 'Órdenes Producción', icon: FileText,
-      submenu: [
+    
+    // Módulo Proformas (NUEVO CLIENTE)
+    { id: 'proformas', label: 'Cotizaciones', icon: FileSpreadsheet },
+
+    // Módulo Órdenes
+    { id: 'ordenes', label: 'Órdenes Producción', icon: FileText, submenu: [
         { label: 'Ver Todas', id: 'ordenes-todas' },
         { label: 'Nueva Orden', id: 'ordenes-nueva' },
         { label: 'Sin Factura', id: 'ordenes-sin-factura' },
         { label: 'Con Factura', id: 'ordenes-con-factura' },
         { label: 'Crédito', id: 'ordenes-credito' },
-        { label: 'Anuladas', id: 'ordenes-anuladas' },
         { label: 'Archivadas', id: 'ordenes-archivadas' }
       ]
     }, 
-    {
-      id: 'trabajo', label: 'Área de Trabajo', icon: Briefcase,
-      submenu: [
-        { label: 'Listado', id: 'trabajo-listado' }, 
-        { label: 'Disponibilidad', id: 'trabajo-disponibilidad' }
+    
+    // Módulo Facturación (NUEVO CLIENTE)
+    { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
+
+    // Módulo Trabajo
+    { id: 'trabajo', label: 'Área de Trabajo', icon: Briefcase, submenu: [
+        { label: 'Lista Tareas', id: 'trabajo-listado' }, 
+        { label: 'Tablero Kanban', id: 'trabajo-mistareas' }, // Nuevo
+        { label: 'Calendario', id: 'trabajo-disponibilidad' }
       ]
     }, 
-    {
-      id: 'usuarios', label: 'Usuarios', icon: Shield,
-      submenu: [
-        { label: 'Gestión de Usuarios', id: 'admin-usuarios' }, 
+
+    // Módulo Usuarios (TUYO)
+    { id: 'usuarios', label: 'Admin Usuarios', icon: Shield, submenu: [
+        { label: 'Gestión Personal', id: 'admin-usuarios' }, 
         { label: 'Roles y Permisos', id: 'roles-permisos' } 
       ]
     }, 
-    {
-      id: 'estadisticas', label: 'Estadísticas', icon: BarChart2,
-      submenu: [
+    
+    { id: 'estadisticas', label: 'Estadísticas', icon: BarChart2, submenu: [
         { label: 'Gráficos', id: 'estadisticas-graficos' }, 
         { label: 'Reporte Diario', id: 'estadisticas-reporte' }
       ]
     }, 
-    {
-      id: 'config', label: 'Configuraciones', icon: Settings,
-      submenu: []
-    }, 
-    {
-      id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle
-    },
+    { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
     { id: 'salir', label: 'Cerrar Sesión', icon: LogOut, action: onLogout }
   ];
 
+  // --- FILTRO DE SEGURIDAD (TU LÓGICA) ---
   const visibleItems = allMenuItems.filter(item => {
     if (item.id === 'salir') return true; 
+    if (user.role === 'Administrador') return true; 
 
-    if (user.role === 'Administrador' && item.id === 'mi-perfil') return false;
-
-    if (!allowedViews.includes(item.id)) return false;
+    if (item.id !== 'inicio' && !allowedViews.includes(item.id)) return false;
 
     if (item.submenu) {
-        item.submenu = item.submenu.filter(sub => allowedViews.includes(sub.id) || !sub.id); 
+        item.submenu = item.submenu.filter(sub => allowedViews.includes(sub.id));
+        if (item.submenu.length === 0) return false; 
     }
-
     return true;
   });
 
@@ -149,29 +116,16 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
           <h2 className="text-lg font-bold text-white truncate">{user?.name}</h2>
           <div className="flex items-center gap-2">
             <span className="h-2.5 w-2.5 rounded-full bg-green-500 animate-pulse"></span>
-            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">
-               {user?.role}
-            </span>
+            <span className="text-xs font-medium text-slate-400 uppercase tracking-wider">{user?.role}</span>
           </div>
         </div>
       </div>
-
       <div className="flex-1 py-4">
         {visibleItems.map(item => (
-          <MenuItem 
-            key={item.label} 
-            item={item} 
-            isActive={currentView === item.id || (item.submenu && item.submenu.some(sub => sub.id === currentView))} 
-            currentView={currentView}
-            onClick={(item) => item.id && !item.submenu && onViewChange(item.id)}
-            onSubItemClick={(subId) => onViewChange(subId)}
-          />
+          <MenuItem key={item.label} item={item} isActive={currentView === item.id || (item.submenu && item.submenu.some(sub => sub.id === currentView))} currentView={currentView} onClick={(item) => item.id && !item.submenu && onViewChange(item.id)} onSubItemClick={(subId) => onViewChange(subId)} />
         ))}
       </div>
-      
-      <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600 text-center">
-        Sistema v1.0 - ADR
-      </div>
+      <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600 text-center">Sistema v2.0 - Fusionado</div>
     </div>
   );
 };
