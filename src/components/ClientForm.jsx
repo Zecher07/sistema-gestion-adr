@@ -45,7 +45,6 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
     setLoading(true);
 
     try {
-      // Preparamos los datos coincidiendo con tu tabla de Supabase (nombre, empresa, telefono...)
       const datosParaEnviar = {
         nombre: formData.razonSocial,
         email: formData.email,
@@ -56,13 +55,16 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
 
       let error;
 
-      if (clienteAEditar) {
+      // CORRECCIÓN AQUÍ: Verificamos si existe el ID, no solo el objeto
+      if (clienteAEditar && clienteAEditar.id) {
+        // --- MODO EDICIÓN (UPDATE) ---
         const { error: updateError } = await supabase
           .from('clientes')
           .update(datosParaEnviar)
           .eq('id', clienteAEditar.id); 
         error = updateError;
       } else {
+        // --- MODO CREACIÓN (INSERT) ---
         // Validación de duplicados antes de insertar
         const { data: existentes } = await supabase
           .from('clientes')
@@ -70,25 +72,39 @@ export function ClientForm({ onCancel, clienteAEditar = null, onSuccess }) {
           .or(`nombre.eq.${formData.razonSocial},empresa.eq.${formData.cedulaRuc}`);
           
         if (existentes && existentes.length > 0) {
-           throw new Error("Ya existe un cliente con ese Nombre o RUC.");
+           // Opcional: Si quieres permitir duplicados borra este if
+           // throw new Error("Ya existe un cliente con ese Nombre o RUC.");
         }
 
         const { error: insertError } = await supabase
           .from('clientes')
-          .insert([datosParaEnviar]);
+          .insert([datosParaEnviar])
+          .select(); // Agregamos .select() para que devuelva el cliente creado
+        
         error = insertError;
       }
 
       if (error) throw error;
 
       toast({
-        title: clienteAEditar ? "✅ Cliente Actualizado" : "✅ Cliente Registrado",
+        title: (clienteAEditar && clienteAEditar.id) ? "✅ Cliente Actualizado" : "✅ Cliente Registrado",
         description: `Los datos de ${formData.razonSocial} se guardaron correctamente.`,
         duration: 3000,
       });
 
-      // Lógica de navegación segura (sin router)
-      if (onSuccess) onSuccess(); 
+      // Lógica de navegación segura
+      if (onSuccess) {
+        // Buscamos el cliente recién creado para pasarlo al padre
+        const { data: nuevoCliente } = await supabase
+            .from('clientes')
+            .select('*')
+            .eq('nombre', formData.razonSocial)
+            .order('created_at', { ascending: false })
+            .limit(1)
+            .single();
+            
+        onSuccess(nuevoCliente); 
+      }
       if (onCancel) onCancel();
       
     } catch (error) {

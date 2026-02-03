@@ -1,4 +1,3 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Eye, Edit, Trash2, CreditCard, 
@@ -70,7 +69,11 @@ const OrdersPanel = ({
     return new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   };
 
-  const formatOrderId = (order) => (order.orderNumber || order.id).toString().padStart(7, '0');
+  const formatOrderId = (order) => {
+      // Manejo seguro para que siempre devuelva string
+      const num = order.orderNumber || order.order_number || order.id || '';
+      return String(num).padStart(7, '0');
+  };
 
   const getOrderTypeLabel = (typeString) => {
     if (!typeString) return 'VPVC';
@@ -93,8 +96,6 @@ const OrdersPanel = ({
       showUnarchive: false
     };
 
-    // Base capability check - Strict Role Based Access Control
-    // Non-admins can strictly ONLY view in this panel
     const allowModify = isAdmin;
 
     switch (currentView) {
@@ -116,7 +117,6 @@ const OrdersPanel = ({
       case 'ordenes-credito':
       case 'ordenes-finalizadas':
       case 'ordenes-anuladas':
-        // Solo ver detalles
         break;
         
       case 'ordenes-archivadas':
@@ -142,39 +142,49 @@ const OrdersPanel = ({
     return orders.filter(order => {
       if (user.role === 'Administrador' || user.role === 'Vendedor' || user.role === 'Contabilidad') return true;
       if (user.role === 'Producción') {
-        // Producción solo ve órdenes que están en PRODUCCION
         return order.status === 'PRODUCCION';
       }
       return false;
     });
   }, [orders, user.role]);
 
+  // --- AQUI ESTA LA CORRECCIÓN CLAVE ---
   const filteredOrders = useMemo(() => {
     return roleFilteredOrders.filter(order => {
-      // 1. Text Search
+      // 1. Text Search (CORREGIDO PARA EVITAR ERRORES)
       const searchLower = searchTerm.toLowerCase();
+      
+      // Convertimos explícitamente a String() antes de buscar
+      // Esto evita el error "toLowerCase is not a function" si el campo es número o null
+      const idStr = String(order.orderNumber || order.order_number || order.id || '');
+      const clienteStr = String(order.cliente || order.cliente_nombre || '');
+      const tituloStr = String(order.tipoLetrero || order.tipo_trabajo || '');
+      const vendedorStr = String(order.vendedor || '');
+
       const matchesSearch = 
-        (order.orderNumber ? order.orderNumber.toString() : order.id).toLowerCase().includes(searchLower) ||
-        order.cliente.toLowerCase().includes(searchLower) ||
-        order.tipoLetrero.toLowerCase().includes(searchLower) ||
-        (order.vendedor && order.vendedor.toLowerCase().includes(searchLower));
+        idStr.toLowerCase().includes(searchLower) ||
+        clienteStr.toLowerCase().includes(searchLower) ||
+        tituloStr.toLowerCase().includes(searchLower) ||
+        vendedorStr.toLowerCase().includes(searchLower);
 
       if (!matchesSearch) return false;
 
       // 2. Dropdown Filters
       if (statusFilter !== 'TODOS' && order.status !== statusFilter) return false;
-      if (clientFilter && !order.cliente.toLowerCase().includes(clientFilter.toLowerCase())) return false;
-      if (vendorFilter && (!order.vendedor || !order.vendedor.toLowerCase().includes(vendorFilter.toLowerCase()))) return false;
+      
+      // Filtros seguros (validando nulls)
+      if (clientFilter && !clienteStr.toLowerCase().includes(clientFilter.toLowerCase())) return false;
+      if (vendorFilter && !vendedorStr.toLowerCase().includes(vendorFilter.toLowerCase())) return false;
 
       // 3. Date Range Filter
       if (startDate) {
-        const orderDate = new Date(order.createdAt);
-        const start = new Date(startDate + 'T00:00:00'); // Local Start of day
+        const orderDate = new Date(order.createdAt || order.created_at);
+        const start = new Date(startDate + 'T00:00:00'); 
         if (orderDate < start) return false;
       }
       if (endDate) {
-        const orderDate = new Date(order.createdAt);
-        const end = new Date(endDate + 'T23:59:59.999'); // Local End of day
+        const orderDate = new Date(order.createdAt || order.created_at);
+        const end = new Date(endDate + 'T23:59:59.999'); 
         if (orderDate > end) return false;
       }
 
@@ -185,11 +195,17 @@ const OrdersPanel = ({
   // --- Totales Dinámicos ---
   const dynamicTotals = useMemo(() => {
     return filteredOrders.reduce((acc, order) => {
-      const financials = order.financials || { total: 0, saldo: 0 };
+      // Mapeamos financials o usamos fallback
+      const financials = order.financials || {};
+      const anticipoVal = parseFloat(order.anticipo) || 0;
+      // Intenta leer saldo de financials, si no del root, si no calcula
+      const totalVal = parseFloat(financials.total) || 0;
+      const saldoVal = financials.saldo !== undefined ? parseFloat(financials.saldo) : (totalVal - anticipoVal);
+
       return {
-        abono: acc.abono + (parseFloat(order.anticipo) || 0),
-        saldo: acc.saldo + (parseFloat(financials.saldo) || 0),
-        total: acc.total + (parseFloat(financials.total) || 0)
+        abono: acc.abono + anticipoVal,
+        saldo: acc.saldo + saldoVal,
+        total: acc.total + totalVal
       };
     }, { abono: 0, saldo: 0, total: 0 });
   }, [filteredOrders]);
@@ -207,20 +223,16 @@ const OrdersPanel = ({
 
   const handleStatusChange = (order, direction, e) => {
     e.stopPropagation();
-    // Only Admin can move status from Panel arrows
     if (!isAdmin) return;
 
     if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return;
 
-    // Define workflows inside or import them. Here simplistic logic for Admin override
-    // We rely on parent's handling or standard flow
-    // For simplicity, we just pass the request to parent if we had logic there, 
-    // but here we used to have logic. Let's restore basic logic just for Admin utility.
-    
     const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
     const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
     
-    const workflow = (order.tipoOrden && order.tipoOrden.includes('(VC)')) ? WORKFLOW_VC : WORKFLOW_VPVC;
+    // Check fields securely
+    const tipo = order.tipoOrden || order.tipo_trabajo || '';
+    const workflow = tipo.includes('(VC)') ? WORKFLOW_VC : WORKFLOW_VPVC;
     const currentIndex = workflow.indexOf(order.status);
     
     if (currentIndex === -1) return;
@@ -248,18 +260,21 @@ const OrdersPanel = ({
 
   const handleExportCSV = () => {
     const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
-    const rows = filteredOrders.map(o => [
-      formatOrderId(o),
-      formatDate(o.createdAt),
-      getOrderTypeLabel(o.tipoOrden),
-      `"${o.cliente}"`,
-      `"${o.tipoLetrero}"`,
-      o.status,
-      o.vendedor || '-',
-      (o.financials?.total || 0).toFixed(2),
-      (o.anticipo || 0).toFixed(2),
-      (o.financials?.saldo || 0).toFixed(2)
-    ]);
+    const rows = filteredOrders.map(o => {
+        const fin = o.financials || {};
+        return [
+          formatOrderId(o),
+          formatDate(o.createdAt || o.created_at),
+          getOrderTypeLabel(o.tipoOrden || o.tipo_trabajo),
+          `"${o.cliente || o.cliente_nombre || ''}"`,
+          `"${o.tipoLetrero || o.tipo_trabajo || ''}"`,
+          o.status,
+          o.vendedor || '-',
+          (fin.total || 0).toFixed(2),
+          (o.anticipo || 0).toFixed(2),
+          (fin.saldo || 0).toFixed(2)
+        ];
+    });
     
     const csvContent = "data:text/csv;charset=utf-8," + 
       ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
@@ -285,10 +300,10 @@ const OrdersPanel = ({
   const canDelete = isAdmin;
   const canEdit = (status) => isAdmin;
   const canRegisterPayment = () => isAdmin;
-  const canCreate = isAdmin || user.role === 'Vendedor'; // Vendedores still create
+  const canCreate = isAdmin || user.role === 'Vendedor';
   const canArchive = (status) => isAdmin && status === 'FINALIZADA';
   const canUnarchive = (status) => isAdmin && status === 'ARCHIVADA';
-  const canMoveStatus = (order, direction) => isAdmin; // Arrows only for Admin
+  const canMoveStatus = (order, direction) => isAdmin; 
 
   return (
     <div className="space-y-4">
@@ -433,23 +448,23 @@ const OrdersPanel = ({
            </div>
            
            <div className="flex items-center gap-2">
-              <Button 
-                variant="outline" size="icon" className="h-8 w-8" 
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm font-medium text-slate-600">
-                Página <span className="text-slate-900">{currentPage}</span> de {totalPages || 1}
-              </span>
-              <Button 
-                variant="outline" size="icon" className="h-8 w-8" 
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                disabled={currentPage >= totalPages}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+             <Button 
+               variant="outline" size="icon" className="h-8 w-8" 
+               onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+               disabled={currentPage === 1}
+             >
+               <ChevronLeft className="h-4 w-4" />
+             </Button>
+             <span className="text-sm font-medium text-slate-600">
+               Página <span className="text-slate-900">{currentPage}</span> de {totalPages || 1}
+             </span>
+             <Button 
+               variant="outline" size="icon" className="h-8 w-8" 
+               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+               disabled={currentPage >= totalPages}
+             >
+               <ChevronRight className="h-4 w-4" />
+             </Button>
            </div>
         </div>
 
@@ -478,7 +493,7 @@ const OrdersPanel = ({
                   const financials = order.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0 };
                   const isAnulada = order.status === 'ANULADA';
                   const isArchivada = order.status === 'ARCHIVADA';
-                  const typeLabel = getOrderTypeLabel(order.tipoOrden);
+                  const typeLabel = getOrderTypeLabel(order.tipoOrden || order.tipo_trabajo);
                   
                   return (
                     <tr key={order.id} className={`transition-colors ${isAnulada ? 'bg-red-50 hover:bg-red-100' : isArchivada ? 'bg-slate-100 opacity-75' : 'hover:bg-slate-50'}`}>
@@ -487,8 +502,8 @@ const OrdersPanel = ({
                       </td>
                       <td className="px-4 py-3">
                         <div className="flex flex-col">
-                          <span className="font-medium text-slate-700">{formatDate(order.createdAt)}</span>
-                          <span className="text-xs text-slate-400">{formatTime(order.createdAt)}</span>
+                          <span className="font-medium text-slate-700">{formatDate(order.createdAt || order.created_at)}</span>
+                          <span className="text-xs text-slate-400">{formatTime(order.createdAt || order.created_at)}</span>
                         </div>
                       </td>
                       <td className="px-4 py-3 text-center">
@@ -496,11 +511,11 @@ const OrdersPanel = ({
                           {typeLabel}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate" title={order.tipoLetrero}>
-                        {order.tipoLetrero}
+                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate" title={order.tipoLetrero || order.tipo_trabajo}>
+                        {order.tipoLetrero || order.tipo_trabajo}
                       </td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente}>
-                        {order.cliente}
+                      <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente || order.cliente_nombre}>
+                        {order.cliente || order.cliente_nombre}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-600">
                         {formatCurrency(order.anticipo)}
@@ -524,7 +539,7 @@ const OrdersPanel = ({
                         {order.vendedor || 'N/A'}
                       </td>
                       <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                        {formatDate(order.fechaEntrega)}
+                        {formatDate(order.fechaEntrega || order.fecha_entrega)}
                       </td>
                       <td className="px-4 py-3">
                         {isAnulada ? (
@@ -541,7 +556,6 @@ const OrdersPanel = ({
                            </div>
                         ) : (
                           <div className="flex items-center justify-center gap-1">
-                            {/* Arrows ONLY for Admin */}
                             {canMoveStatus(order, 'prev') && (
                               <button 
                                 onClick={(e) => handleStatusChange(order, 'prev', e)}
@@ -652,23 +666,23 @@ const OrdersPanel = ({
            </div>
            
            <div className="flex items-center gap-2">
-              <Button 
-                variant="outline" size="icon" className="h-8 w-8" 
-                onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
-                disabled={currentPage === 1}
-              >
-                <ChevronLeft className="h-4 w-4" />
-              </Button>
-              <span className="text-sm font-medium text-slate-600">
-                Página <span className="text-slate-900">{currentPage}</span> de {totalPages || 1}
-              </span>
-              <Button 
-                variant="outline" size="icon" className="h-8 w-8" 
-                onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
-                disabled={currentPage >= totalPages}
-              >
-                <ChevronRight className="h-4 w-4" />
-              </Button>
+             <Button 
+               variant="outline" size="icon" className="h-8 w-8" 
+               onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+               disabled={currentPage === 1}
+             >
+               <ChevronLeft className="h-4 w-4" />
+             </Button>
+             <span className="text-sm font-medium text-slate-600">
+               Página <span className="text-slate-900">{currentPage}</span> de {totalPages || 1}
+             </span>
+             <Button 
+               variant="outline" size="icon" className="h-8 w-8" 
+               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+               disabled={currentPage >= totalPages}
+             >
+               <ChevronRight className="h-4 w-4" />
+             </Button>
            </div>
         </div>
       </div>

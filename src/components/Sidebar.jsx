@@ -64,9 +64,10 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
         { label: 'Sin Factura', id: 'ordenes-sin-factura' },
         { label: 'Con Factura', id: 'ordenes-con-factura' },
         { label: 'Crédito', id: 'ordenes-credito' },
-        { label: 'Archivadas', id: 'ordenes-archivadas' }
+        { label: 'Archivadas', id: 'ordenes-archivadas' },
+        ...(user.role === 'Administrador' ? [{ label: 'Configuración', id: 'configuracion', icon: Settings }] : [])
       ]
-    }, 
+    },
     
     // Módulo Facturación (NUEVO CLIENTE)
     { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
@@ -79,12 +80,12 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
       ]
     }, 
 
-    // Módulo Usuarios (TUYO)
+    // Módulo Usuarios 
     { id: 'usuarios', label: 'Admin Usuarios', icon: Shield, submenu: [
         { label: 'Gestión Personal', id: 'admin-usuarios' }, 
         { label: 'Roles y Permisos', id: 'roles-permisos' } 
       ]
-    }, 
+    },
     
     { id: 'estadisticas', label: 'Estadísticas', icon: BarChart2, submenu: [
         { label: 'Gráficos', id: 'estadisticas-graficos' }, 
@@ -100,6 +101,7 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     if (item.id === 'salir') return true; 
     if (user.role === 'Administrador') return true; 
 
+    // Si no es admin, filtramos:
     if (item.id !== 'inicio' && !allowedViews.includes(item.id)) return false;
 
     if (item.submenu) {
