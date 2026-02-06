@@ -43,8 +43,7 @@ const OrdersPanel = ({
   // --- Estados de Filtros y Paginación ---
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('TODOS');
-  const [clientFilter, setClientFilter] = useState('');
-  const [vendorFilter, setVendorFilter] = useState('');
+  // Eliminados clientFilter y vendorFilter ya que se unifican en searchTerm
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
@@ -148,34 +147,31 @@ const OrdersPanel = ({
     });
   }, [orders, user.role]);
 
-  // --- AQUI ESTA LA CORRECCIÓN CLAVE ---
+  // --- FILTRADO UNIFICADO ---
   const filteredOrders = useMemo(() => {
     return roleFilteredOrders.filter(order => {
-      // 1. Text Search (CORREGIDO PARA EVITAR ERRORES)
+      // 1. Text Search UNIFICADO (ID, Cliente, RUC, Vendedor, Título)
       const searchLower = searchTerm.toLowerCase();
       
-      // Convertimos explícitamente a String() antes de buscar
-      // Esto evita el error "toLowerCase is not a function" si el campo es número o null
+      // Convertimos explícitamente a String() para evitar errores
       const idStr = String(order.orderNumber || order.order_number || order.id || '');
       const clienteStr = String(order.cliente || order.cliente_nombre || '');
+      const rucStr = String(order.ruc || order.cedula || ''); // Busca por RUC/Cedula
       const tituloStr = String(order.tipoLetrero || order.tipo_trabajo || '');
       const vendedorStr = String(order.vendedor || '');
 
       const matchesSearch = 
         idStr.toLowerCase().includes(searchLower) ||
         clienteStr.toLowerCase().includes(searchLower) ||
+        rucStr.toLowerCase().includes(searchLower) ||
         tituloStr.toLowerCase().includes(searchLower) ||
         vendedorStr.toLowerCase().includes(searchLower);
 
       if (!matchesSearch) return false;
 
-      // 2. Dropdown Filters
+      // 2. Dropdown Filters (Solo Estado)
       if (statusFilter !== 'TODOS' && order.status !== statusFilter) return false;
       
-      // Filtros seguros (validando nulls)
-      if (clientFilter && !clienteStr.toLowerCase().includes(clientFilter.toLowerCase())) return false;
-      if (vendorFilter && !vendedorStr.toLowerCase().includes(vendorFilter.toLowerCase())) return false;
-
       // 3. Date Range Filter
       if (startDate) {
         const orderDate = new Date(order.createdAt || order.created_at);
@@ -190,15 +186,13 @@ const OrdersPanel = ({
 
       return true;
     });
-  }, [roleFilteredOrders, searchTerm, statusFilter, clientFilter, vendorFilter, startDate, endDate]);
+  }, [roleFilteredOrders, searchTerm, statusFilter, startDate, endDate]);
 
   // --- Totales Dinámicos ---
   const dynamicTotals = useMemo(() => {
     return filteredOrders.reduce((acc, order) => {
-      // Mapeamos financials o usamos fallback
       const financials = order.financials || {};
       const anticipoVal = parseFloat(order.anticipo) || 0;
-      // Intenta leer saldo de financials, si no del root, si no calcula
       const totalVal = parseFloat(financials.total) || 0;
       const saldoVal = financials.saldo !== undefined ? parseFloat(financials.saldo) : (totalVal - anticipoVal);
 
@@ -219,7 +213,7 @@ const OrdersPanel = ({
 
   useEffect(() => {
     setCurrentPage(1);
-  }, [searchTerm, statusFilter, clientFilter, vendorFilter, startDate, endDate, itemsPerPage]);
+  }, [searchTerm, statusFilter, startDate, endDate, itemsPerPage]);
 
   const handleStatusChange = (order, direction, e) => {
     e.stopPropagation();
@@ -230,7 +224,6 @@ const OrdersPanel = ({
     const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
     const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
     
-    // Check fields securely
     const tipo = order.tipoOrden || order.tipo_trabajo || '';
     const workflow = tipo.includes('(VC)') ? WORKFLOW_VC : WORKFLOW_VPVC;
     const currentIndex = workflow.indexOf(order.status);
@@ -248,8 +241,6 @@ const OrdersPanel = ({
   const handleResetFilters = () => {
     setSearchTerm('');
     setStatusFilter('TODOS');
-    setClientFilter('');
-    setVendorFilter('');
     setStartDate('');
     setEndDate('');
   };
@@ -259,7 +250,7 @@ const OrdersPanel = ({
   };
 
   const handleExportCSV = () => {
-    const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
+    const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'RUC/Cedula', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
     const rows = filteredOrders.map(o => {
         const fin = o.financials || {};
         return [
@@ -267,6 +258,7 @@ const OrdersPanel = ({
           formatDate(o.createdAt || o.created_at),
           getOrderTypeLabel(o.tipoOrden || o.tipo_trabajo),
           `"${o.cliente || o.cliente_nombre || ''}"`,
+          `"${o.ruc || o.cedula || ''}"`,
           `"${o.tipoLetrero || o.tipo_trabajo || ''}"`,
           o.status,
           o.vendedor || '-',
@@ -328,16 +320,17 @@ const OrdersPanel = ({
           </div>
         </div>
 
-        {/* Fila Media: Búsqueda y Filtros */}
+        {/* Fila Media: Búsqueda y Filtros Simplificados */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-          {/* Row 1 */}
-          <div className="md:col-span-4 lg:col-span-3">
-            <label className="text-xs font-semibold text-slate-500 mb-1 block">Buscar</label>
+          
+          {/* 1. BUSCADOR GLOBAL (Más Ancho) */}
+          <div className="md:col-span-12 lg:col-span-4">
+            <label className="text-xs font-semibold text-slate-500 mb-1 block">Buscar (Cliente, RUC, Vendedor...)</label>
             <div className="relative">
               <Search className="absolute left-2.5 top-2.5 h-4 w-4 text-slate-400" />
               <input 
                 type="text" 
-                placeholder="ID, Cliente, Título..." 
+                placeholder="Escribe nombre, RUC/Cédula, ID..." 
                 className="w-full pl-9 pr-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -345,7 +338,8 @@ const OrdersPanel = ({
             </div>
           </div>
           
-          <div className="md:col-span-2">
+          {/* 2. ESTADO */}
+          <div className="md:col-span-4 lg:col-span-2">
             <label className="text-xs font-semibold text-slate-500 mb-1 block">Estado</label>
             <select 
               className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none bg-white"
@@ -357,32 +351,10 @@ const OrdersPanel = ({
             </select>
           </div>
 
-          <div className="md:col-span-3">
-            <label className="text-xs font-semibold text-slate-500 mb-1 block">Cliente</label>
-            <input 
-              type="text" 
-              placeholder="Filtrar cliente..." 
-              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-              value={clientFilter}
-              onChange={(e) => setClientFilter(e.target.value)}
-            />
-          </div>
-
-          <div className="md:col-span-3 lg:col-span-2">
-            <label className="text-xs font-semibold text-slate-500 mb-1 block">Responsable</label>
-            <input 
-              type="text" 
-              placeholder="Vendedor..." 
-              className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none"
-              value={vendorFilter}
-              onChange={(e) => setVendorFilter(e.target.value)}
-            />
-          </div>
-
-          {/* Row 2 (Wraps naturally) */}
-          <div className="md:col-span-2">
+          {/* 3. FECHAS (En línea) */}
+          <div className="md:col-span-4 lg:col-span-2">
             <label className="text-xs font-semibold text-slate-500 mb-1 block flex items-center gap-1">
-              <CalendarIcon className="h-3 w-3" /> Fecha Inicio
+              <CalendarIcon className="h-3 w-3" /> Desde
             </label>
             <input 
               type="date" 
@@ -392,9 +364,9 @@ const OrdersPanel = ({
             />
           </div>
 
-          <div className="md:col-span-2">
+          <div className="md:col-span-4 lg:col-span-2">
             <label className="text-xs font-semibold text-slate-500 mb-1 block flex items-center gap-1">
-              <CalendarIcon className="h-3 w-3" /> Fecha Fin
+              <CalendarIcon className="h-3 w-3" /> Hasta
             </label>
             <input 
               type="date" 
@@ -404,7 +376,8 @@ const OrdersPanel = ({
             />
           </div>
 
-          <div className="md:col-span-2 lg:col-span-1">
+          {/* 4. RESET */}
+          <div className="md:col-span-4 lg:col-span-2">
             <Button variant="ghost" onClick={handleResetFilters} className="w-full text-slate-500 hover:text-red-600 hover:bg-red-50 gap-2 h-[38px] border border-transparent hover:border-red-100">
               <RotateCcw className="h-4 w-4" /> Reset
             </Button>
@@ -515,7 +488,9 @@ const OrdersPanel = ({
                         {order.tipoLetrero || order.tipo_trabajo}
                       </td>
                       <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente || order.cliente_nombre}>
-                        {order.cliente || order.cliente_nombre}
+                        {/* Se muestra Cliente y un pequeño RUC si existe */}
+                        <div>{order.cliente || order.cliente_nombre}</div>
+                        {(order.ruc || order.cedula) && <div className="text-[10px] text-slate-400">{order.ruc || order.cedula}</div>}
                       </td>
                       <td className="px-4 py-3 text-right text-slate-600">
                         {formatCurrency(order.anticipo)}

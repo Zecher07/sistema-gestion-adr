@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; // 🔒 CONEXIÓN DB
-import { Menu, Settings } from 'lucide-react';
+import { Menu, Settings, X } from 'lucide-react'; // Agregué X aquí que faltaba
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
@@ -41,6 +41,15 @@ import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
+// --- LISTA DE EMPLEADOS FIJA (PARA EVITAR ERROR DE DB) ---
+const FIXED_STAFF = [
+  { id: 1, name: 'Administrador Principal', role: 'Administrador' },
+  { id: 2, name: 'Juan Pérez', role: 'Vendedor' },
+  { id: 3, name: 'Ana Gomez', role: 'Vendedor' },
+  { id: 4, name: 'Carlos Producción', role: 'Producción' },
+  { id: 5, name: 'Lucia Contabilidad', role: 'Contabilidad' }
+];
+
 function App() {
   // --- ESTADOS DE SESIÓN ---
   const [user, setUser] = useState(null);
@@ -75,40 +84,57 @@ function App() {
   const [initialInvoiceOrder, setInitialInvoiceOrder] = useState(null);
   const [viewInvoice, setViewInvoice] = useState(null);
   
-  const [staffUsers, setStaffUsers] = useState([]);
+  // Usamos la lista fija por defecto
+  const [staffUsers, setStaffUsers] = useState(FIXED_STAFF);
   const { toast } = useToast();
 
   // ESTADO DE PERMISO DE ANULACIÓN
   const [canUserAnulate, setCanUserAnulate] = useState(false);
 
-  // --- 1. FUNCIÓN MAESTRA DE CARGA DE DATOS ---
+  // --- 1. FUNCIÓN MAESTRA DE CARGA DE DATOS (CON CRUCE DE RUC) ---
   const fetchAllData = async (userOverride = null) => {
     try {
       const currentUser = userOverride || user; 
 
-      // A. Cargar Órdenes
-      const { data: ordenesData } = await supabase.from('ordenes').select('*').order('created_at', { ascending: false });
-      if (ordenesData) setOrders(ordenesData);
-
-      // B. Cargar Clientes
+      // 1. Cargar Clientes PRIMERO (Necesitamos sus datos para cruzar)
       const { data: clientesData } = await supabase.from('clientes').select('*').order('nombre', { ascending: true });
       if (clientesData) setClients(clientesData);
 
-      // C. Cargar Usuarios (Staff)
-      const { data: usersData } = await supabase.from('usuarios_sistema').select('*');
-      if (usersData) {
-         const formattedStaff = usersData.map(u => ({ id: u.id, name: u.nombre, role: u.rol }));
-         setStaffUsers(formattedStaff);
+      // 2. Cargar Órdenes
+      const { data: ordenesData } = await supabase.from('ordenes').select('*').order('created_at', { ascending: false });
+      
+      // 3. ENRIQUECER ÓRDENES (Aquí sucede la magia)
+      // Cruzamos los datos: Buscamos el cliente de la orden y le pegamos su RUC/Cédula a la orden
+      if (ordenesData && clientesData) {
+        const ordenesConRuc = ordenesData.map(orden => {
+          // Buscamos el cliente que coincida con el nombre guardado en la orden
+          // (Si guardas cliente_id, cambia 'nombre' por 'id')
+          const clienteEncontrado = clientesData.find(c => c.nombre === orden.cliente);
+          
+          return {
+            ...orden,
+            // Agregamos los campos del cliente a la orden temporalmente
+            ruc: clienteEncontrado ? (clienteEncontrado.ruc || clienteEncontrado.cedula || '') : '',
+            cedula: clienteEncontrado ? (clienteEncontrado.cedula || '') : '',
+            telefono: clienteEncontrado ? (clienteEncontrado.telefono || '') : ''
+          };
+        });
+        
+        setOrders(ordenesConRuc);
+      } else if (ordenesData) {
+        setOrders(ordenesData);
       }
 
-      // D. VERIFICACIÓN DE PERMISOS (Corregido: lee de role_permissions)
+      // C. Cargar Usuarios (Staff) - Lista Fija
+      setStaffUsers(FIXED_STAFF);
+
+      // D. VERIFICACIÓN DE PERMISOS
       if (currentUser) {
           if (currentUser.role === 'Administrador') {
               setCanUserAnulate(true);
           } else {
-              // AQUÍ ESTABA EL ERROR: Ahora leemos de la tabla correcta
               const { data: roleData } = await supabase
-                  .from('role_permissions') // <--- Tabla correcta
+                  .from('role_permissions')
                   .select('can_anulate')
                   .eq('role', currentUser.role)
                   .maybeSingle();
@@ -118,8 +144,7 @@ function App() {
       }
       
     } catch (error) {
-      console.error("Error:", error);
-      toast({ title: "Error", description: "Fallo al cargar datos.", variant: "destructive" });
+      console.error("Error cargando datos:", error);
     }
   };
 
@@ -153,7 +178,6 @@ function App() {
   useEffect(() => { localStorage.setItem('invoicesDB', JSON.stringify(invoices)); }, [invoices]);
 
   // --- NUEVO: EFECTO REACTIVO PARA PERMISOS ---
-  // Esto asegura que si cambias de usuario, el permiso se recalcula
   useEffect(() => {
     const checkPermissions = async () => {
       if (!user) {
@@ -164,7 +188,7 @@ function App() {
         setCanUserAnulate(true);
       } else {
         const { data } = await supabase
-          .from('role_permissions') // <--- Tabla correcta
+          .from('role_permissions') 
           .select('can_anulate')
           .eq('role', user.role)
           .maybeSingle();
@@ -216,6 +240,16 @@ function App() {
     const nums = orders.map(o => parseInt(o.order_number || o.orderNumber || 0));
     return Math.max(...nums) + 1;
   };
+  
+  // Helpers para proformas y facturas (mocks simples si no usan DB sequence)
+  const getNextProformaNumber = () => {
+      if (proformas.length === 0) return 1;
+      return Math.max(...proformas.map(p => parseInt(p.number || 0))) + 1;
+  };
+  const getNextInvoiceNumber = () => {
+      if (invoices.length === 0) return 1;
+      return Math.max(...invoices.map(i => parseInt(i.number || 0))) + 1;
+  };
 
   // Handlers Locales
   const handleKanbanCreate = (t) => { setKanbanTasks(prev => [...prev, { id: Date.now().toString(), createdAt: new Date().toISOString(), ...t }]); toast({title: "Tarea creada"}); };
@@ -228,6 +262,11 @@ function App() {
   
   const handleCreateInvoice = (d) => { setInvoices(p => [{ ...d, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...p]); setShowInvoiceForm(false); setInitialInvoiceOrder(null); };
   const handleAnulateInvoice = (inv) => { setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: 'ANULADA' } : i)); if(viewInvoice?.id === inv.id) setViewInvoice(prev => ({...prev, status: 'ANULADA'})); };
+
+  const handleConvertProformaToOrder = (proforma) => {
+      // Lógica de conversión simple
+      toast({title: "Convertir", description: "Función de convertir proforma a orden pendiente."});
+  };
 
   const handleViewChange = (v) => { 
     if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } 
@@ -283,7 +322,9 @@ function App() {
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     
+    // REPORTE DIARIO (Actualizado para funcionar con orders y user)
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} />;
+    
     if (currentView === 'clientes-lista') return <ClientsPanel />;
 
     // CONFIGURACIÓN
@@ -464,7 +505,7 @@ function App() {
         onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }}
         
         onAnulateOrder={handleAnulateOrder} 
-        canAnulate={user.role === 'Administrador' || canUserAnulate} // <--- PERMISO CORRECTO
+        canAnulate={user.role === 'Administrador' || canUserAnulate} 
       />
       
       <Toaster />

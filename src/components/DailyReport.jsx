@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Ban, Undo2, Edit2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Ban, Undo2, Edit2, Calculator, Bug, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
@@ -12,8 +12,7 @@ const DailyReport = ({ orders = [], user }) => {
   const { toast } = useToast();
   const isAdmin = user.role === 'Administrador';
 
-  // --- HELPER: FECHA LOCAL (STRING YYYY-MM-DD) ---
-  // Esto elimina el problema de las horas/zonas horarias. Solo nos importa el día.
+  // --- HELPER: FECHA LOCAL ---
   const toLocalDateStr = (isoString) => {
     if (!isoString) return '';
     const date = new Date(isoString);
@@ -28,6 +27,7 @@ const DailyReport = ({ orders = [], user }) => {
   
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [recalculating, setRecalculating] = useState(false);
   
   // ADMIN
   const [targetUserId, setTargetUserId] = useState(user.id);
@@ -45,6 +45,7 @@ const DailyReport = ({ orders = [], user }) => {
     manualTransactions: [] 
   });
   
+  const [debugInfo, setDebugInfo] = useState(null);
   const [editingOpening, setEditingOpening] = useState(false);
   const isEditable = selectedDate === todayStr || isAdmin;
 
@@ -69,7 +70,7 @@ const DailyReport = ({ orders = [], user }) => {
   }, [targetUserId, staffList, isAdmin, user.name]);
 
 
-  // 2. CARGA DE DATOS (LÓGICA BLINDADA DE FECHAS)
+  // 2. CARGA DE DATOS (LÓGICA HÍBRIDA PARA HOY)
   useEffect(() => {
     if (targetUserId && targetUserName) {
         loadDailyData(selectedDate, targetUserId, targetUserName);
@@ -79,9 +80,12 @@ const DailyReport = ({ orders = [], user }) => {
   const loadDailyData = async (date, userId, userName) => {
     setLoading(true);
     setEditingOpening(false);
+    setDebugInfo(null);
+
+    const isToday = date === todayStr;
 
     try {
-      // A. Verificar si YA existe reporte guardado para la fecha seleccionada
+      // A. Verificar si YA existe reporte guardado en DB
       const { data: currentReport, error } = await supabase
         .from('daily_closings')
         .select('*')
@@ -91,86 +95,142 @@ const DailyReport = ({ orders = [], user }) => {
 
       if (error) throw error;
 
-      if (currentReport) {
-        // CASO 1: REPORTE YA GUARDADO. Usamos los datos fijos.
+      // CASO 1: Es un día PASADO y ya tiene reporte cerrado -> Usamos FOTO ESTÁTICA
+      if (currentReport && !isToday) {
+        const opening = Number(currentReport.opening_cash) || 0;
         setLedgerData({
-          openingCash: Number(currentReport.opening_cash) || 0,
+          openingCash: opening,
           amountToAccounting: Number(currentReport.amount_to_accounting) || 0, 
           manualTransactions: currentReport.manual_transactions || []
         });
-      } else {
-        // CASO 2: CALCULAR HISTORIA (Recuperación de saldos)
         
-        // 1. Buscar el ÚLTIMO cierre guardado antes de HOY (o de la fecha seleccionada)
-        const { data: lastReport } = await supabase
-            .from('daily_closings')
-            .select('date, final_balance') 
-            .eq('user_id', userId)
-            .lt('date', date)
-            .order('date', { ascending: false })
-            .limit(1)
-            .maybeSingle();
-
-        let accumulatedCash = 0;
-        let lastReportDateStr = '2000-01-01'; // Fecha base antigua
-        
-        if (lastReport) {
-            accumulatedCash = Number(lastReport.final_balance);
-            lastReportDateStr = lastReport.date; // Ej: "2024-02-04"
-        }
-
-        // 2. Traer TODAS las órdenes recientes del vendedor
-        // No filtramos por fecha en SQL para evitar errores de UTC. Traemos todo y filtramos en JS.
-        // Limitamos a 500 para no saturar, asumiendo que es suficiente historia reciente.
-        const { data: userOrders } = await supabase
-            .from('ordenes')
-            .select('*')
-            .eq('vendedor', userName)
-            .order('created_at', { ascending: false }) 
-            .limit(500);
-
-        if (userOrders) {
-            userOrders.forEach(o => {
-                // Convertimos fechas a String Local (YYYY-MM-DD)
-                const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
-                const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
-
-                // --- LÓGICA DE ORO ---
-                // Una orden pertenece al "limbo" (y se suma al saldo inicial) SI:
-                // 1. Ocurrió DESPUÉS del último reporte guardado.
-                // 2. Y ocurrió ANTES del día que estamos mirando hoy.
-                
-                // A. Sumar Anticipos
-                // (Fecha Creación > Fecha Ultimo Reporte) Y (Fecha Creación < Fecha Seleccionada)
-                if (createdDateStr > lastReportDateStr && createdDateStr < date) {
-                    if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') {
-                        accumulatedCash += Number(o.anticipo);
-                    }
-                }
-
-                // B. Sumar Saldos completados
-                // (Fecha Actualización > Fecha Ultimo Reporte) Y (Fecha Actualización < Fecha Seleccionada)
-                const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR';
-                if (isClosed && Number(o.financials?.saldo) > 0) {
-                    if (updatedDateStr > lastReportDateStr && updatedDateStr < date) {
-                        accumulatedCash += Number(o.financials.saldo);
-                    }
-                }
-            });
-        }
-
-        setLedgerData({
-            openingCash: accumulatedCash, 
-            amountToAccounting: 0,
-            manualTransactions: []
+        setDebugInfo({
+            status: "Reporte Histórico Cerrado",
+            source: "DB (Estático)",
+            baseCash: opening,
+            floatingOrders: 0,
+            floatingSum: 0,
+            totalCalculated: opening,
+            searchWindow: "N/A",
+            isSaved: true
         });
+        return; 
       }
+
+      // CASO 2: Es HOY (o un día pasado sin reporte) -> SIEMPRE RECALCULAMOS EL SALDO INICIAL
+      // Aunque exista un reporte guardado de hoy, ignoramos su 'opening_cash' y lo recalculamos
+      // para que sea dinámico.
+      
+      // 2.1 Buscar el ÚLTIMO cierre guardado ANTERIOR a la fecha seleccionada
+      const { data: lastReport } = await supabase
+          .from('daily_closings')
+          .select('date, final_balance') 
+          .eq('user_id', userId)
+          .lt('date', date)
+          .order('date', { ascending: false })
+          .limit(1)
+          .maybeSingle();
+
+      let baseCash = 0;
+      let lastReportDateStr = '2000-01-01'; 
+      let foundPrevious = false;
+      
+      if (lastReport) {
+          baseCash = Number(lastReport.final_balance);
+          lastReportDateStr = lastReport.date;
+          foundPrevious = true;
+      }
+
+      // 2.2 Calcular flujos "perdidos" (órdenes entre el último cierre y hoy)
+      const { data: userOrders } = await supabase
+          .from('ordenes')
+          .select('*')
+          .eq('vendedor', userName)
+          .order('created_at', { ascending: false })
+          .limit(1000);
+
+      let floatingSum = 0;
+      let floatingCount = 0;
+
+      if (userOrders) {
+          userOrders.forEach(o => {
+              const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
+              const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
+
+              const isAfterLastReport = createdDateStr > lastReportDateStr;
+              const isBeforeToday = createdDateStr < date; // Estrictamente antes de la fecha actual
+
+              // A. Anticipos en el limbo
+              if (isAfterLastReport && isBeforeToday) {
+                  if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') {
+                      floatingSum += Number(o.anticipo);
+                      floatingCount++;
+                  }
+              }
+
+              // B. Saldos cobrados en el limbo
+              const isUpdatedAfterLastReport = updatedDateStr > lastReportDateStr;
+              const isUpdatedBeforeToday = updatedDateStr < date;
+              const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR';
+              
+              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && Number(o.financials?.saldo) > 0) {
+                  floatingSum += Number(o.financials.saldo);
+                  floatingCount++;
+              }
+          });
+      }
+
+      const totalCalculatedOpening = baseCash + floatingSum;
+
+      // 2.3 Mezclar con datos guardados (si existen para hoy)
+      // Si ya guardaste algo hoy, recuperamos tus transacciones manuales y entrega a contabilidad,
+      // pero el Saldo Inicial lo imponemos nosotros con el cálculo fresco.
+      setLedgerData({
+          openingCash: totalCalculatedOpening, // <--- SIEMPRE DINÁMICO HOY
+          amountToAccounting: currentReport ? Number(currentReport.amount_to_accounting) : 0, 
+          manualTransactions: currentReport ? (currentReport.manual_transactions || []) : []
+      });
+
+      setDebugInfo({
+          status: isToday ? "Modo VIVO (Hoy)" : "Calculado por falta de reporte",
+          source: foundPrevious ? `Cierre del ${lastReportDateStr}` : "Inicio de los tiempos",
+          baseCash: baseCash,
+          floatingOrders: floatingCount,
+          floatingSum: floatingSum,
+          totalCalculated: totalCalculatedOpening,
+          searchWindow: `> ${lastReportDateStr} y < ${date}`,
+          isSaved: !!currentReport
+      });
+
     } catch (error) {
-      console.error("Error cargando caja:", error);
-      toast({ title: "Error", description: "No se pudo calcular el saldo histórico.", variant: "destructive" });
+      console.error(error);
+      toast({ title: "Error", description: "Fallo cálculo.", variant: "destructive" });
     } finally {
       setLoading(false);
     }
+  };
+
+  const handleForceRecalculate = async () => {
+      if (!confirm("¿Estás seguro? Esto borrará el cierre guardado de este día y forzará al sistema a recalcular el saldo acumulado histórico.")) return;
+      
+      setRecalculating(true);
+      try {
+          const { error } = await supabase
+            .from('daily_closings')
+            .delete()
+            .match({ date: selectedDate, user_id: targetUserId });
+
+          if (error) throw error;
+
+          toast({ title: "Reporte Reiniciado", description: "Recalculando saldos..." });
+          await loadDailyData(selectedDate, targetUserId, targetUserName);
+
+      } catch (error) {
+          console.error(error);
+          toast({ title: "Error", description: "No se pudo reiniciar el reporte.", variant: "destructive" });
+      } finally {
+          setRecalculating(false);
+      }
   };
 
   // 3. CALENDARIO
@@ -190,6 +250,7 @@ const DailyReport = ({ orders = [], user }) => {
         if (data) data.forEach(item => activityDates.add(item.date));
     } catch (e) {}
 
+    // FILTRO ESTRICTO
     orders.forEach(o => {
         if (o.vendedor === targetUserName) {
             const dateStr = toLocalDateStr(o.created_at || o.createdAt);
@@ -234,7 +295,9 @@ const DailyReport = ({ orders = [], user }) => {
   // 4. TRANSACCIONES DEL DÍA
   const automaticTransactions = useMemo(() => {
     const txs = [];
-    const userOrders = orders.filter(o => isAdmin ? true : o.vendedor === targetUserName);
+    
+    // FILTRO ESTRICTO: Solo mostrar órdenes del usuario seleccionado
+    const userOrders = orders.filter(o => o.vendedor === targetUserName);
 
     // A. VENTAS
     const newSales = userOrders.filter(o => toLocalDateStr(o.createdAt || o.created_at) === selectedDate);
@@ -280,7 +343,7 @@ const DailyReport = ({ orders = [], user }) => {
     });
     
     return txs;
-  }, [orders, selectedDate, targetUserName, isAdmin]);
+  }, [orders, selectedDate, targetUserName]);
 
   const allTransactions = useMemo(() => [...automaticTransactions, ...ledgerData.manualTransactions], [automaticTransactions, ledgerData]);
 
@@ -313,6 +376,10 @@ const DailyReport = ({ orders = [], user }) => {
       if (error) throw error;
       toast({ title: "Guardado Correctamente", description: "El saldo ha sido registrado para mañana." });
       fetchCalendarDots();
+      
+      // Actualizamos estado visual
+      setDebugInfo(prev => ({ ...prev, status: "Guardado ahora mismo", isSaved: true }));
+
     } catch (error) {
       console.error(error);
       toast({ title: "Error", description: "No se pudo guardar.", variant: "destructive" });
@@ -468,6 +535,34 @@ const DailyReport = ({ orders = [], user }) => {
                 </div>
             )}
             {!isEditable && <div className="text-xs text-amber-600 mt-4 print:hidden flex items-center gap-2 justify-center bg-amber-50 p-2 rounded border border-amber-200"><AlertCircle className="h-4 w-4" /> Reporte histórico. No se pueden realizar cambios.</div>}
+            
+            {/* PANEL DE DIAGNÓSTICO (RAYOS X) - SOLO VISIBLE PARA ADMIN */}
+            {isAdmin && debugInfo && (
+                <div className="bg-slate-900 text-slate-300 p-4 rounded-xl mt-8 font-mono text-xs shadow-2xl animate-in slide-in-from-bottom-10 print:hidden relative">
+                    <div className="flex items-center gap-2 mb-2 text-green-400 font-bold uppercase"><Bug className="h-4 w-4"/> Diagnóstico del Cálculo</div>
+                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                        <div className="space-y-1">
+                            <div><span className="text-slate-500">Estado:</span> {debugInfo.status}</div>
+                            <div><span className="text-slate-500">Origen Saldo Base:</span> <span className="text-white font-bold">{debugInfo.source}</span></div>
+                            <div><span className="text-slate-500">Saldo Base ($):</span> <span className="text-green-400">${(debugInfo.baseCash || 0).toFixed(2)}</span></div>
+                        </div>
+                        <div className="space-y-1">
+                            <div><span className="text-slate-500">Ventana de Búsqueda:</span> {debugInfo.searchWindow}</div>
+                            <div><span className="text-slate-500">Órdenes Flotantes:</span> {debugInfo.floatingOrders}</div>
+                            <div><span className="text-slate-500">Suma Flotante ($):</span> <span className="text-yellow-400">${(debugInfo.floatingSum || 0).toFixed(2)}</span></div>
+                            <div className="pt-2 border-t border-slate-700 mt-1"><span className="text-slate-500">TOTAL CALCULADO:</span> <span className="text-white font-bold text-sm">${(debugInfo.totalCalculated || 0).toFixed(2)}</span></div>
+                        </div>
+                    </div>
+                    {/* BOTÓN DE EMERGENCIA PARA RECALCULAR */}
+                    {debugInfo.isSaved && (
+                        <div className="border-t border-slate-700 pt-4 flex justify-end">
+                            <Button variant="destructive" size="sm" onClick={handleForceRecalculate} disabled={recalculating} className="gap-2">
+                                {recalculating ? <Loader2 className="h-4 w-4 animate-spin"/> : <Trash2 className="h-4 w-4"/>} BORRAR REPORTE Y RECALCULAR
+                            </Button>
+                        </div>
+                    )}
+                </div>
+            )}
         </>
       )}
     </div>
