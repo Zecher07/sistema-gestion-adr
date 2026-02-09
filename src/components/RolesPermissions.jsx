@@ -2,23 +2,16 @@ import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { Shield, Save, Check, Loader2 } from 'lucide-react';
+import { Shield, Save, Loader2, Edit2, Ban, Eye } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
 // --- DEFINICIÓN COMPLETA DE TODOS LOS PERMISOS DEL SISTEMA ---
 const ALL_MENU_ITEMS = [
-  // 1. INICIO
   { id: 'inicio', label: 'Inicio / Dashboard (Vista Principal)', category: 'Inicio' },
-
-  // 2. CLIENTES
   { id: 'clientes', label: 'Clientes (Menú Lateral)', category: 'Clientes' },
   { id: 'clientes-lista', label: 'Ver Lista de Clientes', category: 'Clientes' },
   { id: 'clientes-nuevo', label: 'Crear / Editar Clientes', category: 'Clientes' },
-
-  // 3. COTIZACIONES (PROFORMAS)
   { id: 'proformas', label: 'Cotizaciones / Proformas (Panel Completo)', category: 'Cotizaciones' },
-
-  // 4. ÓRDENES DE PRODUCCIÓN
   { id: 'ordenes', label: 'Órdenes (Menú Lateral)', category: 'Producción' },
   { id: 'ordenes-todas', label: 'Ver Todas las Órdenes', category: 'Producción' },
   { id: 'ordenes-nueva', label: 'Crear Nueva Orden', category: 'Producción' },
@@ -26,33 +19,22 @@ const ALL_MENU_ITEMS = [
   { id: 'ordenes-con-factura', label: 'Filtro: Con Factura', category: 'Producción' },
   { id: 'ordenes-credito', label: 'Filtro: Crédito', category: 'Producción' },
   { id: 'ordenes-archivadas', label: 'Ver Archivo Muerto (Papelera)', category: 'Producción' },
-
-  // 5. FACTURACIÓN
   { id: 'facturacion-panel', label: 'Módulo de Facturación', category: 'Facturación' },
-
-  // 6. ÁREA DE TRABAJO (KANBAN)
   { id: 'trabajo', label: 'Área de Trabajo (Menú Lateral)', category: 'Área de Trabajo' },
   { id: 'trabajo-listado', label: 'Vista Lista (Global)', category: 'Área de Trabajo' },
   { id: 'trabajo-mistareas', label: 'Vista Tablero (Kanban)', category: 'Área de Trabajo' },
   { id: 'trabajo-disponibilidad', label: 'Vista Calendario', category: 'Área de Trabajo' },
-
-  // 7. ESTADÍSTICAS Y CAJA
   { id: 'estadisticas', label: 'Estadísticas (Menú Lateral)', category: 'Reportes' },
   { id: 'estadisticas-graficos', label: 'Gráficos de Rendimiento', category: 'Reportes' },
   { id: 'estadisticas-reporte', label: 'Cierre de Caja Diario', category: 'Reportes' },
-
-  // 8. ADMINISTRACIÓN
   { id: 'usuarios', label: 'Admin (Menú Lateral)', category: 'Administración' },
   { id: 'admin-usuarios', label: 'Gestión de Personal (Usuarios)', category: 'Administración' },
   { id: 'roles-permisos', label: 'Configurar Roles y Permisos', category: 'Administración' },
-  
-  // 9. OTROS
   { id: 'mi-perfil', label: 'Mi Perfil', category: 'General' },
 ];
 
 const ROLES = ['Administrador', 'Vendedor', 'Producción', 'Contabilidad'];
 
-// Agrupamos los items por categoría para pintarlos bonitos
 const ITEMS_BY_CATEGORY = ALL_MENU_ITEMS.reduce((acc, item) => {
   if (!acc[item.category]) acc[item.category] = [];
   acc[item.category].push(item);
@@ -71,15 +53,25 @@ const RolesPermissions = () => {
 
   const fetchPermissions = async () => {
     try {
+      // 1. CARGAMOS TODO: VISTAS, EDITAR Y ANULAR
       const { data, error } = await supabase.from('role_permissions').select('*');
       if (error) throw error;
 
-      // Convertir array de DB a objeto { Rol: [vistas...] }
       const permObj = {};
-      data.forEach(row => { permObj[row.role] = row.allowed_views || []; });
       
-      // Asegurar que existan todos los roles aunque sea vacíos
-      ROLES.forEach(r => { if (!permObj[r]) permObj[r] = []; });
+      // Inicializamos por defecto
+      ROLES.forEach(r => { 
+          permObj[r] = { allowed_views: [], can_edit: false, can_anulate: false }; 
+      });
+
+      // Llenamos con lo que viene de la DB
+      data.forEach(row => { 
+          permObj[row.role] = {
+              allowed_views: row.allowed_views || [],
+              can_edit: row.can_edit || false,       // <--- AQUÍ ESTÁ EL PERMISO DE EDITAR
+              can_anulate: row.can_anulate || false  // <--- AQUÍ ESTÁ EL PERMISO DE ANULAR
+          }; 
+      });
 
       setPermissions(permObj);
     } catch (error) {
@@ -90,27 +82,51 @@ const RolesPermissions = () => {
     }
   };
 
-  const togglePermission = (role, viewId) => {
-    if (role === 'Administrador') return; // Admin siempre tiene todo, no dejar quitar
+  // --- LOGICA PARA VISTAS (CHECKBOXES DE LA MATRIZ) ---
+  const toggleViewPermission = (role, viewId) => {
+    if (role === 'Administrador') return; 
 
-    const currentViews = permissions[role] || [];
+    const currentData = permissions[role];
+    const currentViews = currentData.allowed_views || [];
+    
     let newViews;
     if (currentViews.includes(viewId)) {
-      newViews = currentViews.filter(id => id !== viewId); // Quitar
+      newViews = currentViews.filter(id => id !== viewId); 
     } else {
-      newViews = [...currentViews, viewId]; // Poner
+      newViews = [...currentViews, viewId]; 
     }
-    setPermissions({ ...permissions, [role]: newViews });
+    
+    setPermissions({ 
+        ...permissions, 
+        [role]: { ...currentData, allowed_views: newViews } 
+    });
+  };
+
+  // --- LÓGICA PARA ACCIONES (BOTONES EDITAR/ANULAR) ---
+  const toggleActionPermission = (role, field) => {
+      if (role === 'Administrador') return; // Admin siempre true
+
+      setPermissions(prev => ({
+          ...prev,
+          [role]: {
+              ...prev[role],
+              [field]: !prev[role][field]
+          }
+      }));
   };
 
   const handleSave = async () => {
     setSaving(true);
     try {
-      // Preparar actualizaciones para Supabase
       const updates = Object.keys(permissions).map(role => {
         return supabase
           .from('role_permissions')
-          .upsert({ role: role, allowed_views: permissions[role] }, { onConflict: 'role' });
+          .upsert({ 
+              role: role, 
+              allowed_views: permissions[role].allowed_views,
+              can_edit: permissions[role].can_edit,       // GUARDAMOS EDITAR
+              can_anulate: permissions[role].can_anulate  // GUARDAMOS ANULAR
+          }, { onConflict: 'role' });
       });
 
       await Promise.all(updates);
@@ -143,14 +159,63 @@ const RolesPermissions = () => {
         </div>
         <Button onClick={handleSave} disabled={saving} className="bg-green-600 hover:bg-green-700 min-w-[150px] h-11 text-base">
             {saving ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : <Save className="mr-2 h-5 w-5" />}
-            {saving ? 'Guardando...' : 'Guardar Matriz'}
+            {saving ? 'Guardando...' : 'Guardar Todo'}
         </Button>
       </div>
 
-      {/* Matriz de Permisos */}
+      {/* --- SECCIÓN NUEVA: PERMISOS DE ACCIÓN (EDITAR / ANULAR) --- */}
+      <Card className="border-slate-200 shadow-md">
+          <CardHeader className="bg-orange-50 border-b border-orange-100 py-3">
+              <CardTitle className="text-base text-orange-800 flex items-center gap-2">
+                  <Edit2 className="h-4 w-4"/> Permisos de Acción Crítica
+              </CardTitle>
+          </CardHeader>
+          <CardContent className="p-6">
+              <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
+                  {ROLES.map(role => (
+                      <div key={role} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm hover:border-orange-200 transition-colors">
+                          <h3 className="font-bold text-slate-800 mb-3 border-b pb-2 text-center bg-slate-50 rounded-t">{role}</h3>
+                          <div className="space-y-4">
+                              
+                              {/* Switch Editar */}
+                              <label className="flex items-center justify-between cursor-pointer group">
+                                  <span className="text-sm text-slate-600 flex items-center gap-2 group-hover:text-blue-600">
+                                      <Edit2 className="h-4 w-4 text-blue-500"/> Editar Órdenes
+                                  </span>
+                                  <input 
+                                      type="checkbox"
+                                      className="accent-blue-600 w-5 h-5 cursor-pointer"
+                                      checked={role === 'Administrador' ? true : (permissions[role]?.can_edit || false)}
+                                      disabled={role === 'Administrador'}
+                                      onChange={() => toggleActionPermission(role, 'can_edit')}
+                                  />
+                              </label>
+
+                              {/* Switch Anular */}
+                              <label className="flex items-center justify-between cursor-pointer group">
+                                  <span className="text-sm text-slate-600 flex items-center gap-2 group-hover:text-red-600">
+                                      <Ban className="h-4 w-4 text-red-500"/> Anular Órdenes
+                                  </span>
+                                  <input 
+                                      type="checkbox"
+                                      className="accent-red-600 w-5 h-5 cursor-pointer"
+                                      checked={role === 'Administrador' ? true : (permissions[role]?.can_anulate || false)}
+                                      disabled={role === 'Administrador'}
+                                      onChange={() => toggleActionPermission(role, 'can_anulate')}
+                                  />
+                              </label>
+
+                          </div>
+                      </div>
+                  ))}
+              </div>
+          </CardContent>
+      </Card>
+
+      {/* Matriz de Vistas (Tu código original) */}
       <Card className="border-slate-200 shadow-lg overflow-hidden">
         <CardHeader className="bg-slate-50 border-b border-slate-200">
-            <CardTitle className="text-lg text-slate-700">Matriz de Permisos por Rol</CardTitle>
+            <CardTitle className="text-lg text-slate-700 flex items-center gap-2"><Eye className="h-5 w-5"/> Acceso a Pantallas</CardTitle>
         </CardHeader>
         <CardContent className="p-0 overflow-x-auto">
             <table className="w-full text-sm text-left text-slate-600">
@@ -181,7 +246,7 @@ const RolesPermissions = () => {
                                         <div className="text-[10px] text-slate-400 font-mono">{item.id}</div>
                                     </td>
                                     {ROLES.map(role => {
-                                        const isChecked = role === 'Administrador' ? true : (permissions[role]?.includes(item.id) || false);
+                                        const isChecked = role === 'Administrador' ? true : (permissions[role]?.allowed_views?.includes(item.id) || false);
                                         const isAdmin = role === 'Administrador';
                                         
                                         return (
@@ -192,7 +257,7 @@ const RolesPermissions = () => {
                                                         className={`w-5 h-5 rounded border-slate-300 focus:ring-blue-500 cursor-pointer ${isAdmin ? 'opacity-50 cursor-not-allowed accent-blue-600' : 'accent-blue-600'}`}
                                                         checked={isChecked} 
                                                         disabled={isAdmin}
-                                                        onChange={() => togglePermission(role, item.id)} 
+                                                        onChange={() => toggleViewPermission(role, item.id)} 
                                                     />
                                                 </div>
                                             </td>
