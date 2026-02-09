@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient'; // 🔒 CONEXIÓN DB
-import { Menu, Settings, X } from 'lucide-react'; // Agregué X aquí que faltaba
+import { Menu, Settings, X } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
@@ -41,7 +41,7 @@ import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- LISTA DE EMPLEADOS FIJA (PARA EVITAR ERROR DE DB) ---
+// --- LISTA DE EMPLEADOS FIJA ---
 const FIXED_STAFF = [
   { id: 1, name: 'Administrador Principal', role: 'Administrador' },
   { id: 2, name: 'Juan Pérez', role: 'Vendedor' },
@@ -84,145 +84,93 @@ function App() {
   const [initialInvoiceOrder, setInitialInvoiceOrder] = useState(null);
   const [viewInvoice, setViewInvoice] = useState(null);
   
-  // Usamos la lista fija por defecto
+  // ESTADO NUEVO: Para saber qué proforma estamos convirtiendo
+  const [proformaToConvertId, setProformaToConvertId] = useState(null);
+
   const [staffUsers, setStaffUsers] = useState(FIXED_STAFF);
   const { toast } = useToast();
 
-  // ESTADO DE PERMISO DE ANULACIÓN
+  // ESTADO DE PERMISO 
   const [canUserAnulate, setCanUserAnulate] = useState(false);
+  const [canUserEdit, setCanUserEdit] = useState(false);
+  
+  const normalizeText = (text) => {
+    if (!text) return "";
+    return String(text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+  };
 
-  // --- 1. FUNCIÓN MAESTRA DE CARGA DE DATOS (CON CRUCE DE RUC) ---
   const fetchAllData = async (userOverride = null) => {
     try {
       const currentUser = userOverride || user; 
-
-      // 1. Cargar Clientes PRIMERO (Necesitamos sus datos para cruzar)
-      const { data: clientesData } = await supabase.from('clientes').select('*').order('nombre', { ascending: true });
+      const { data: clientesData } = await supabase.from('clientes').select('*');
       if (clientesData) setClients(clientesData);
 
-      // 2. Cargar Órdenes
       const { data: ordenesData } = await supabase.from('ordenes').select('*').order('created_at', { ascending: false });
-      
-      // 3. ENRIQUECER ÓRDENES (Aquí sucede la magia)
-      // Cruzamos los datos: Buscamos el cliente de la orden y le pegamos su RUC/Cédula a la orden
+      const { data: proformasData } = await supabase.from('proformas').select('*').order('created_at', { ascending: false });
+      if (proformasData) setProformas(proformasData);
+
       if (ordenesData && clientesData) {
-        const ordenesConRuc = ordenesData.map(orden => {
-          // Buscamos el cliente que coincida con el nombre guardado en la orden
-          // (Si guardas cliente_id, cambia 'nombre' por 'id')
-          const clienteEncontrado = clientesData.find(c => c.nombre === orden.cliente);
-          
-          return {
-            ...orden,
-            // Agregamos los campos del cliente a la orden temporalmente
-            ruc: clienteEncontrado ? (clienteEncontrado.ruc || clienteEncontrado.cedula || '') : '',
-            cedula: clienteEncontrado ? (clienteEncontrado.cedula || '') : '',
-            telefono: clienteEncontrado ? (clienteEncontrado.telefono || '') : ''
-          };
+        const ordenesEnriquecidas = ordenesData.map(orden => {
+          const nombreOrden = normalizeText(orden.cliente || orden.cliente_nombre);
+          const clienteEncontrado = clientesData.find(c => {
+             const nombreCliente = normalizeText(c.nombre || c.full_name);
+             return nombreCliente === nombreOrden;
+          });
+          const rucEncontrado = clienteEncontrado ? (clienteEncontrado.empresa || clienteEncontrado.ruc || clienteEncontrado.cedula || clienteEncontrado.identificacion || '') : '';
+          return { ...orden, ruc: String(rucEncontrado), cedula: String(rucEncontrado), telefono: clienteEncontrado ? (clienteEncontrado.telefono || '') : '' };
         });
-        
-        setOrders(ordenesConRuc);
+        setOrders(ordenesEnriquecidas);
       } else if (ordenesData) {
         setOrders(ordenesData);
       }
-
-      // C. Cargar Usuarios (Staff) - Lista Fija
       setStaffUsers(FIXED_STAFF);
 
-      // D. VERIFICACIÓN DE PERMISOS
       if (currentUser) {
           if (currentUser.role === 'Administrador') {
-              setCanUserAnulate(true);
+              setCanUserAnulate(true); setCanUserEdit(true);
           } else {
-              const { data: roleData } = await supabase
-                  .from('role_permissions')
-                  .select('can_anulate')
-                  .eq('role', currentUser.role)
-                  .maybeSingle();
-              
-              setCanUserAnulate(!!roleData?.can_anulate);
+              const { data: roleData } = await supabase.from('role_permissions').select('can_anulate, can_edit').eq('role', currentUser.role).maybeSingle();
+              setCanUserAnulate(!!roleData?.can_anulate); setCanUserEdit(!!roleData?.can_edit);
           }
       }
-      
-    } catch (error) {
-      console.error("Error cargando datos:", error);
-    }
+    } catch (error) { console.error("Error cargando datos:", error); }
   };
 
-  // --- 2. EFECTOS ---
   useEffect(() => {
-    document.title = "Sistema de Órdenes de Producción";
-    
     let loadedUser = null;
     const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) {
-        loadedUser = JSON.parse(savedUser);
-        setUser(loadedUser);
-        fetchUserPermissions(loadedUser.role);
-    }
-
+    if (savedUser) { loadedUser = JSON.parse(savedUser); setUser(loadedUser); fetchUserPermissions(loadedUser.role); }
     fetchAllData(loadedUser);
-
-    // Carga de datos locales (legacy)
     try {
       if(localStorage.getItem('archivedNotifications')) setArchivedNotifications(JSON.parse(localStorage.getItem('archivedNotifications')));
-      if(localStorage.getItem('proformasDB')) setProformas(JSON.parse(localStorage.getItem('proformasDB')));
       if(localStorage.getItem('kanbanTasksDB')) setKanbanTasks(JSON.parse(localStorage.getItem('kanbanTasksDB')));
       if(localStorage.getItem('invoicesDB')) setInvoices(JSON.parse(localStorage.getItem('invoicesDB')));
     } catch (e) { console.error(e); }
   }, []);
 
-  // Persistencia local
   useEffect(() => { localStorage.setItem('archivedNotifications', JSON.stringify(archivedNotifications)); }, [archivedNotifications]);
-  useEffect(() => { localStorage.setItem('proformasDB', JSON.stringify(proformas)); }, [proformas]);
   useEffect(() => { localStorage.setItem('kanbanTasksDB', JSON.stringify(kanbanTasks)); }, [kanbanTasks]);
   useEffect(() => { localStorage.setItem('invoicesDB', JSON.stringify(invoices)); }, [invoices]);
 
-  // --- NUEVO: EFECTO REACTIVO PARA PERMISOS ---
-  useEffect(() => {
-    const checkPermissions = async () => {
-      if (!user) {
-        setCanUserAnulate(false);
-        return;
-      }
-      if (user.role === 'Administrador') {
-        setCanUserAnulate(true);
-      } else {
-        const { data } = await supabase
-          .from('role_permissions') 
-          .select('can_anulate')
-          .eq('role', user.role)
-          .maybeSingle();
-        setCanUserAnulate(!!data?.can_anulate);
-      }
-    };
-    checkPermissions();
-  }, [user]);
-
-
-  // --- HELPERS ---
   const fetchUserPermissions = async (role) => {
     if (role === 'Administrador') return; 
-    try {
-        const { data } = await supabase.from('role_permissions').select('allowed_views').eq('role', role).single();
-        if (data) setAllowedViews(data.allowed_views || []);
-    } catch (error) { console.error(error); }
+    try { const { data } = await supabase.from('role_permissions').select('allowed_views').eq('role', role).single(); if (data) setAllowedViews(data.allowed_views || []); } catch (error) { console.error(error); }
   };
 
-  const handleLogin = (userData) => {
-    setUser(userData);
-    localStorage.setItem('currentUser', JSON.stringify(userData));
-    fetchUserPermissions(userData.role);
-    fetchAllData(userData); 
-  };
+  const handleLogin = (userData) => { setUser(userData); localStorage.setItem('currentUser', JSON.stringify(userData)); fetchUserPermissions(userData.role); fetchAllData(userData); };
+  const handleLogout = () => { setUser(null); setAllowedViews([]); localStorage.removeItem('currentUser'); };
 
-  const handleLogout = () => {
-    setUser(null);
-    setAllowedViews([]);
-    localStorage.removeItem('currentUser');
-  };
+  // --- HANDLER DE ÉXITO DE ORDEN (AQUÍ ACTUALIZAMOS LA PROFORMA) ---
+  const handleOrderSuccess = async () => {
+    // Si veníamos de convertir una proforma, ahora la marcamos como aprobada
+    if (proformaToConvertId) {
+        try {
+            await supabase.from('proformas').update({ status: 'APROBADA' }).eq('id', proformaToConvertId);
+            toast({ title: "Proforma Aprobada", description: "Orden generada y estado actualizado." });
+        } catch (error) { console.error(error); }
+        setProformaToConvertId(null);
+    }
 
-  // --- ACTION HANDLERS ---
-  const handleOrderSuccess = () => {
     fetchAllData(); 
     setShowForm(false);
     setEditingOrder(null);
@@ -230,54 +178,66 @@ function App() {
     setCloningOrder(null);
   };
 
-  const handleClientSuccess = () => {
-    fetchAllData();
-    setShowClientFormModal(false);
-  };
+  const handleClientSuccess = () => { fetchAllData(); setShowClientFormModal(false); };
+  const getNextOrderNumber = () => { if (orders.length === 0) return 1; const nums = orders.map(o => parseInt(o.order_number || o.orderNumber || 0)); return Math.max(...nums) + 1; };
+  const getNextProformaNumber = () => { if (proformas.length === 0) return 1; return Math.max(...proformas.map(p => parseInt(p.proformaNumber || p.numero || 0))) + 1; };
+  const getNextInvoiceNumber = () => { if (invoices.length === 0) return 1; return Math.max(...invoices.map(i => parseInt(i.number || 0))) + 1; };
 
-  const getNextOrderNumber = () => {
-    if (orders.length === 0) return 1;
-    const nums = orders.map(o => parseInt(o.order_number || o.orderNumber || 0));
-    return Math.max(...nums) + 1;
-  };
-  
-  // Helpers para proformas y facturas (mocks simples si no usan DB sequence)
-  const getNextProformaNumber = () => {
-      if (proformas.length === 0) return 1;
-      return Math.max(...proformas.map(p => parseInt(p.number || 0))) + 1;
-  };
-  const getNextInvoiceNumber = () => {
-      if (invoices.length === 0) return 1;
-      return Math.max(...invoices.map(i => parseInt(i.number || 0))) + 1;
-  };
-
-  // Handlers Locales
   const handleKanbanCreate = (t) => { setKanbanTasks(prev => [...prev, { id: Date.now().toString(), createdAt: new Date().toISOString(), ...t }]); toast({title: "Tarea creada"}); };
   const handleKanbanUpdate = (id, up) => setKanbanTasks(prev => prev.map(t => t.id === id ? { ...t, ...up } : t));
   const handleKanbanDelete = (id) => setKanbanTasks(prev => prev.filter(t => t.id !== id));
   
-  const handleCreateProforma = (d) => { setProformas(p => [{ ...d, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...p]); setShowProformaForm(false); };
-  const handleUpdateProforma = (d) => { setProformas(p => p.map(x => x.id === d.id ? { ...x, ...d } : x)); setEditingProforma(null); if(viewProforma?.id === d.id) setViewProforma({...viewProforma, ...d}); };
-  const handleDeleteProforma = (id) => setProformas(p => p.filter(x => x.id !== id));
-  
+  const handleDeleteProforma = async (id) => { await supabase.from('proformas').delete().eq('id', id); fetchAllData(); toast({ title: "Eliminado", description: "Proforma eliminada correctamente" }); };
   const handleCreateInvoice = (d) => { setInvoices(p => [{ ...d, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...p]); setShowInvoiceForm(false); setInitialInvoiceOrder(null); };
   const handleAnulateInvoice = (inv) => { setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: 'ANULADA' } : i)); if(viewInvoice?.id === inv.id) setViewInvoice(prev => ({...prev, status: 'ANULADA'})); };
 
+  // --- CONVERSIÓN: ABRE EL MODAL (NO GUARDA DIRECTO) ---
   const handleConvertProformaToOrder = (proforma) => {
-      // Lógica de conversión simple
-      toast({title: "Convertir", description: "Función de convertir proforma a orden pendiente."});
+      // 1. Preparamos los datos
+      const prefilledOrderData = {
+          cliente_nombre: proforma.cliente_nombre,
+          // Usamos nombre plano para el input de búsqueda
+          cliente: proforma.cliente_nombre,
+          // RUC para que el form lo detecte
+          ruc: proforma.cliente_identificacion, 
+          
+          productos: (proforma.items || []).map(item => ({
+              cantidad: item.cantidad,
+              descripcion: item.descripcion,
+              precio: item.precioUnitario, // Cambio de nombre de campo
+              total: item.total
+          })),
+          
+          financials: {
+              subtotal: proforma.subtotal,
+              iva: proforma.iva,
+              total: proforma.total,
+              ivaPercentage: proforma.iva_percentage || 15,
+              saldo: proforma.total // Saldo inicial = total
+          },
+          
+          tipo_trabajo: 'Proforma #' + (proforma.proformaNumber || proforma.numero),
+          notas: proforma.notas,
+          vendedor: proforma.responsable_nombre || user.name,
+      };
+
+      // 2. Guardamos ID para uso posterior
+      setProformaToConvertId(proforma.id);
+
+      // 3. Abrimos el formulario en modo "edición" pero con datos nuevos
+      setEditingOrder(prefilledOrderData);
+      
+      // 4. Gestión de modales
+      setViewProforma(null);
+      setShowForm(true); 
+      
+      toast({ description: "Verifique la orden, agregue anticipo y guarde." });
   };
 
-  const handleViewChange = (v) => { 
-    if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } 
-    else setCurrentView(v); 
-  };
+  const handleViewChange = (v) => { if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } else setCurrentView(v); };
   const handleArchiveNotification = (id) => { setArchivedNotifications(prev => [...prev, id]); };
   const handleViewOrder = (o, src) => { setViewOrder(o); setViewOrderSource(src); };
-  
-  const handleProductToggle = (order, idx) => {
-    if (user.role !== 'Producción') return;
-  };
+  const handleProductToggle = (order, idx) => { if (user.role !== 'Producción') return; };
 
   const handleAdvanceWorkflow = async (order) => {
     const flow = (order.tipo_trabajo?.includes('(VC)') || order.tipoOrden?.includes('(VC)')) ? WORKFLOW_VC : WORKFLOW_VPVC;
@@ -286,34 +246,13 @@ function App() {
     if (idx !== -1 && idx < flow.length - 1) {
         const nextStatus = flow[idx + 1];
         const { error } = await supabase.from('ordenes').update({ status: nextStatus }).eq('id', order.id);
-        if(!error) {
-            fetchAllData();
-            toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` });
-        }
+        if(!error) { fetchAllData(); toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` }); }
     }
   };
 
-  const handleArchiveOrder = async (order) => { 
-      await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id);
-      fetchAllData();
-      setViewOrder(null);
-      toast({ title: "Orden Archivada" });
-  };
+  const handleArchiveOrder = async (order) => { await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id); fetchAllData(); setViewOrder(null); toast({ title: "Orden Archivada" }); };
+  const handleAnulateOrder = async (orderId) => { try { const { error } = await supabase.from('ordenes').update({ status: 'ANULADA' }).eq('id', orderId); if (error) throw error; toast({ title: "Orden Anulada" }); fetchAllData(); setViewOrder(null); } catch (error) { toast({ variant: "destructive", title: "Error" }); } };
 
-  const handleAnulateOrder = async (orderId) => {
-      try {
-          const { error } = await supabase.from('ordenes').update({ status: 'ANULADA' }).eq('id', orderId);
-          if (error) throw error;
-          toast({ title: "Orden Anulada", description: "El estado ha cambiado a ANULADA correctamente." });
-          fetchAllData();
-          setViewOrder(null);
-      } catch (error) {
-          console.error(error);
-          toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
-      }
-  };
-
-  // --- RENDERIZADO ---
   if (!user) return <><Login onLogin={handleLogin} /><Toaster /></>;
 
   const renderContent = () => {
@@ -321,13 +260,8 @@ function App() {
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
-    
-    // REPORTE DIARIO (Actualizado para funcionar con orders y user)
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} />;
-    
     if (currentView === 'clientes-lista') return <ClientsPanel />;
-
-    // CONFIGURACIÓN
     if (currentView === 'configuracion') return <AnulationConfig />;
 
     if (currentView.startsWith('ordenes-')) {
@@ -356,27 +290,7 @@ function App() {
     }
 
     switch (currentView) {
-      case 'inicio':
-        return (
-           <div className="space-y-6 animate-in fade-in">
-             <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start">
-                <div>
-                    <h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2>
-                    <p className="text-slate-500">Panel de Control General</p>
-                </div>
-                {/* BOTÓN CONFIGURACIÓN (Solo Admin) */}
-                {user.role === 'Administrador' && (
-                    <Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2">
-                        <Settings className="h-4 w-4" /> Configurar Permisos
-                    </Button>
-                )}
-             </div>
-             <Stats orders={orders} />
-             <div className="mt-8">
-               <WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' />
-             </div>
-           </div>
-        );
+      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' /></div></div> );
       case 'clientes-nuevo': return <ClientForm onSuccess={handleClientSuccess} onCancel={() => setCurrentView('clientes-lista')}/>;
       case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' /></div>;
       case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' /></div>;
@@ -389,125 +303,66 @@ function App() {
   return (
     <>
       <div className="min-h-screen bg-slate-50 flex">
-        <div className="hidden md:block w-64 flex-shrink-0">
-           <Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={handleViewChange} allowedViews={allowedViews} />
-        </div>
-
-        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden">
-           <span className="font-bold">Sistema Producción</span>
-           <div className="flex items-center gap-3">
-             <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} />
-             <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button>
-           </div>
-        </div>
-
-        {isMobileMenuOpen && (
-           <div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsMobileMenuOpen(false)}>
-              <div className="w-64 bg-slate-900 h-full shadow-2xl" onClick={e => e.stopPropagation()}>
-                <Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} allowedViews={allowedViews} />
-              </div>
-           </div>
-        )}
-
-        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col">
-           <div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden">
-              <div className="flex items-center gap-4">
-                 <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} />
-                 <div className="h-8 w-[1px] bg-slate-200"></div>
-                 <span className="text-sm font-semibold text-slate-700">{user.name}</span>
-              </div>
-           </div>
-           <div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">
-              {renderContent()}
-           </div>
-        </div>
+        <div className="hidden md:block w-64 flex-shrink-0"><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={handleViewChange} allowedViews={allowedViews} /></div>
+        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div></div>
+        {isMobileMenuOpen && (<div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsMobileMenuOpen(false)}><div className="w-64 bg-slate-900 h-full shadow-2xl" onClick={e => e.stopPropagation()}><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} allowedViews={allowedViews} /></div></div>)}
+        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /><div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
-      {/* MODALES */}
+      {/* MODAL ORDEN (Formulario) */}
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
           <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
             <OrderForm 
                 currentUser={user} clients={clients} staffUsers={staffUsers} 
                 onSuccess={handleOrderSuccess} 
-                onCancel={() => { setShowForm(false); setCloningOrder(null); setEditingOrder(null); }} 
+                onCancel={() => { setShowForm(false); setCloningOrder(null); setEditingOrder(null); setProformaToConvertId(null); }} 
                 initialData={editingOrder || cloningOrder} 
                 nextOrderNumber={getNextOrderNumber()} 
                 onCheckAvailability={() => setShowAvailabilityModal(true)} 
-                onReloadClients={fetchAllData}
+                onCreateClient={() => setShowClientFormModal(true)} 
+                // onReloadClients NO es necesario aquí porque ya pasamos clients como prop
             />
           </div>
         </div>
       )}
 
-      {paymentOrder && (
-         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
-                <OrderForm 
-                    currentUser={user} clients={clients} staffUsers={staffUsers} 
-                    initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} 
-                    mode="payment_only"
-                />
-            </div>
-         </div>
-      )}
-
-      {showClientFormModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4">
-            <div className="w-full max-w-md bg-white rounded-xl shadow-2xl p-6 relative">
-                <button onClick={() => setShowClientFormModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button>
-                <h3 className="text-lg font-bold mb-4">Registrar Nuevo Cliente</h3>
-                <ClientForm onSuccess={handleClientSuccess} onCancel={() => setShowClientFormModal(false)} />
-            </div>
-        </div>
-      )}
-
+      {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
+      {showClientFormModal && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-md bg-white rounded-xl shadow-2xl p-6 relative"><button onClick={() => setShowClientFormModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button><h3 className="text-lg font-bold mb-4">Registrar Nuevo Cliente</h3><ClientForm onSuccess={handleClientSuccess} onCancel={() => setShowClientFormModal(false)} /></div></div>)}
+      
+      {/* AQUÍ ESTABA EL PROBLEMA DEL BOTÓN "AGREGAR ITEM" */}
       {(showProformaForm || editingProforma) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
                 <ProformaForm 
-                    currentUser={user} clients={clients} staffUsers={staffUsers} 
+                    user={user} clients={clients} 
                     initialData={editingProforma}
-                    onSubmit={editingProforma ? handleUpdateProforma : handleCreateProforma} 
+                    onSuccess={() => { setShowProformaForm(false); setEditingProforma(null); fetchAllData(); }} 
                     onCancel={() => { setShowProformaForm(false); setEditingProforma(null); }} 
                     nextProformaNumber={getNextProformaNumber()} 
+                    onCreateClient={() => setShowClientFormModal(true)} 
                 />
             </div>
         </div>
       )}
 
-      {showInvoiceForm && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4">
-            <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto h-full">
-                <InvoiceForm 
-                    user={user} initialOrder={initialInvoiceOrder} nextInvoiceNumber={getNextInvoiceNumber()} 
-                    onSubmit={handleCreateInvoice} onCancel={() => { setShowInvoiceForm(false); setInitialInvoiceOrder(null); }} 
-                />
-            </div>
-        </div>
+      {showInvoiceForm && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto h-full"><InvoiceForm user={user} initialOrder={initialInvoiceOrder} nextInvoiceNumber={getNextInvoiceNumber()} onSubmit={handleCreateInvoice} onCancel={() => { setShowInvoiceForm(false); setInitialInvoiceOrder(null); }} /></div></div>)}
+      
+      {/* AQUÍ PASAMOS LA FUNCIÓN QUE ABRE EL MODAL */}
+      {viewProforma && (
+        <ProformaDetailsModal 
+            proforma={viewProforma} 
+            onClose={() => setViewProforma(null)} 
+            onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} 
+            onConvert={(p) => handleConvertProformaToOrder(p)} // Usamos la nueva lógica
+            user={user} 
+            staffUsers={staffUsers} 
+        />
       )}
-
-      {viewProforma && (<ProformaDetailsModal proforma={viewProforma} onClose={() => setViewProforma(null)} onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} onConvert={(p) => handleConvertProformaToOrder(p)} onUpdateProforma={(d) => handleUpdateProforma({ id: viewProforma.id, ...d })} user={user} staffUsers={staffUsers} />)}
+      
       {viewInvoice && (<InvoiceDetailsModal invoice={viewInvoice} onClose={() => setViewInvoice(null)} onAnulate={handleAnulateInvoice} onViewOrder={(id) => { const o = orders.find(x => x.id === id || x.orderNumber == id || x.order_number == id); if(o) { setViewInvoice(null); handleViewOrder(o); } }} />)}
       {showAvailabilityModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4"><div className="w-full max-w-5xl bg-white h-[85vh] rounded-xl shadow-2xl flex flex-col"><div className="p-4 border-b flex justify-between items-center bg-slate-50 rounded-t-xl"><h3 className="font-bold text-lg">Disponibilidad</h3><Button variant="ghost" size="icon" onClick={() => setShowAvailabilityModal(false)}><X className="h-5 w-5" /></Button></div><div className="flex-1 overflow-hidden p-4"><WorkAreaCalendar orders={orders} onViewOrder={(o) => { setShowAvailabilityModal(false); handleViewOrder(o, 'tasks'); }} /></div></div></div>)}
-
-      {/* MODAL DETALLE DE ORDEN */}
-      <OrderDetailsModal 
-        order={viewOrder} 
-        user={user} 
-        staffUsers={staffUsers} 
-        onClose={() => setViewOrder(null)} 
-        onProductToggle={handleProductToggle} 
-        isTaskView={viewOrderSource === 'tasks'} 
-        onAdvanceWorkflow={handleAdvanceWorkflow} 
-        onArchiveOrder={handleArchiveOrder} 
-        onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} 
-        onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }}
-        
-        onAnulateOrder={handleAnulateOrder} 
-        canAnulate={user.role === 'Administrador' || canUserAnulate} 
-      />
-      
+      <OrderDetailsModal order={viewOrder} user={user} staffUsers={staffUsers} onClose={() => setViewOrder(null)} onProductToggle={handleProductToggle} isTaskView={viewOrderSource === 'tasks'} onAdvanceWorkflow={handleAdvanceWorkflow} onArchiveOrder={handleArchiveOrder} onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} onAnulateOrder={handleAnulateOrder} canAnulate={user.role === 'Administrador' || canUserAnulate} canEdit={user.role === 'Administrador' || canUserEdit} />
       <Toaster />
     </>
   );

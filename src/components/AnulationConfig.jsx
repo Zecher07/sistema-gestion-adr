@@ -1,9 +1,9 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { ShieldAlert, Users, Percent, Save, Loader2 } from 'lucide-react';
+import { ShieldAlert, Users, Percent, Save, Loader2, Edit3, Lock } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Switch } from '@/components/ui/switch';
-import { Input } from '@/components/ui/Text';
+import { Input } from '@/components/ui/Text'; 
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle, CardDescription } from '@/components/ui/card';
 
@@ -22,11 +22,11 @@ const AnulationConfig = () => {
     try {
       setLoading(true);
       
-      // 1. Cargar Permisos desde role_permissions (OPTIMIZADO)
+      // 1. Cargar Permisos desde role_permissions
       const { data: rolesData } = await supabase
         .from('role_permissions')
         .select('*')
-        .neq('role', 'Administrador') // Opcional: Ocultar Admin porque siempre tiene permiso
+        .neq('role', 'Administrador') // Ocultamos Admin (siempre tiene permiso)
         .order('role');
         
       if (rolesData) setRolesConfig(rolesData);
@@ -48,25 +48,30 @@ const AnulationConfig = () => {
     }
   };
 
-  // --- HANDLER PERMISOS ---
-  const handleToggleRole = async (rolName, currentValue) => {
-    // Optimista
-    const updated = rolesConfig.map(r => r.role === rolName ? { ...r, can_anulate: !currentValue } : r);
+  // --- HANDLER GENÉRICO PARA PERMISOS (EDITAR O ANULAR) ---
+  const handleTogglePermission = async (rolName, field, currentValue) => {
+    // 1. Actualización Optimista en UI
+    const updated = rolesConfig.map(r => 
+        r.role === rolName ? { ...r, [field]: !currentValue } : r
+    );
     setRolesConfig(updated);
 
     try {
-      // Actualizamos en la tabla unificada
+      // 2. Actualización en Base de Datos
       const { error } = await supabase
         .from('role_permissions')
-        .update({ can_anulate: !currentValue })
+        .update({ [field]: !currentValue }) // Actualiza can_anulate O can_edit
         .eq('role', rolName);
 
       if (error) throw error;
       
-      toast({ description: `Permiso para ${rolName} actualizado.` });
+      const actionName = field === 'can_edit' ? 'Edición' : 'Anulación';
+      toast({ description: `Permiso de ${actionName} actualizado para ${rolName}.` });
+
     } catch (error) {
-      fetchData(); // Revertir
-      toast({ title: "Error", variant: "destructive" });
+      console.error(error);
+      fetchData(); // Revertir si falla
+      toast({ title: "Error", description: "No se pudo guardar el cambio.", variant: "destructive" });
     }
   };
 
@@ -87,26 +92,27 @@ const AnulationConfig = () => {
     }
   };
 
-  if (loading) return <div className="p-10 text-center">Cargando configuración...</div>;
+  if (loading) return <div className="p-10 text-center"><Loader2 className="h-8 w-8 animate-spin mx-auto text-blue-600"/></div>;
 
   return (
-    <div className="max-w-5xl mx-auto animate-in fade-in space-y-8 p-4">
+    <div className="max-w-6xl mx-auto animate-in fade-in space-y-8 p-4 pb-20">
         <div>
-            <h2 className="text-3xl font-bold text-slate-800">Configuración de Órdenes</h2>
-            <p className="text-slate-500">Parámetros globales y permisos del sistema.</p>
+            <h2 className="text-3xl font-bold text-slate-800">Configuración del Sistema</h2>
+            <p className="text-slate-500">Parámetros operativos y permisos de acción crítica.</p>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-            {/* SECCIÓN IVA */}
-            <Card className="border-blue-100 shadow-md">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            
+            {/* 1. SECCIÓN IVA */}
+            <Card className="border-blue-100 shadow-md lg:col-span-2">
                 <CardHeader className="bg-blue-50/50 pb-4">
                     <CardTitle className="flex items-center gap-2 text-blue-800"><Percent className="h-5 w-5"/> Impuestos Globales</CardTitle>
-                    <CardDescription>IVA automático para nuevas órdenes.</CardDescription>
+                    <CardDescription>Este valor se aplicará automáticamente a todas las nuevas órdenes.</CardDescription>
                 </CardHeader>
                 <CardContent className="pt-6">
-                    <div className="flex items-end gap-4">
+                    <div className="flex items-end gap-4 max-w-md">
                         <div className="space-y-2 flex-1">
-                            <label className="text-sm font-medium text-slate-700">Porcentaje (%)</label>
+                            <label className="text-sm font-medium text-slate-700">Porcentaje de IVA (%)</label>
                             <Input type="number" value={ivaGlobal} onChange={(e) => setIvaGlobal(e.target.value)} className="text-lg font-bold" />
                         </div>
                         <Button onClick={handleSaveIva} disabled={savingIva} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[120px]">
@@ -116,30 +122,65 @@ const AnulationConfig = () => {
                 </CardContent>
             </Card>
 
-            {/* SECCIÓN PERMISOS */}
-            <Card className="border-slate-200 shadow-md">
-                <CardHeader className="bg-slate-50/50 pb-4">
-                    <CardTitle className="flex items-center gap-2 text-slate-800"><ShieldAlert className="h-5 w-5 text-red-600"/> Permisos de Anulación</CardTitle>
-                    <CardDescription>Define qué roles pueden ANULAR órdenes.</CardDescription>
+            {/* 2. PERMISOS DE EDICIÓN (NUEVO) */}
+            <Card className="border-amber-200 shadow-md">
+                <CardHeader className="bg-amber-50/50 pb-4">
+                    <CardTitle className="flex items-center gap-2 text-amber-800"><Edit3 className="h-5 w-5"/> Permisos de Edición</CardTitle>
+                    <CardDescription>Roles que pueden <b>modificar</b> órdenes activas.</CardDescription>
                 </CardHeader>
                 <CardContent className="p-0">
                     <div className="divide-y divide-slate-100">
+                        {/* Admin Fijo */}
                         <div className="flex justify-between items-center px-6 py-4 bg-slate-50/30">
-                            <div className="flex items-center gap-3"><div className="bg-slate-200 p-2 rounded-full"><Users className="h-4 w-4 text-slate-500"/></div><span className="font-semibold text-slate-700">Administrador</span></div>
-                            <span className="text-xs font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">SIEMPRE ACTIVO</span>
+                            <div className="flex items-center gap-3"><div className="bg-slate-200 p-2 rounded-full"><Lock className="h-4 w-4 text-slate-500"/></div><span className="font-semibold text-slate-700">Administrador</span></div>
+                            <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">SIEMPRE</span>
                         </div>
+                        {/* Lista Roles */}
                         {rolesConfig.map((item) => (
-                            <div key={item.id} className="flex justify-between items-center px-6 py-4 hover:bg-slate-50 transition-colors">
+                            <div key={`edit-${item.role}`} className="flex justify-between items-center px-6 py-4 hover:bg-slate-50 transition-colors">
                                 <span className="font-medium text-slate-700">{item.role}</span>
-                                <Switch checked={item.can_anulate} onCheckedChange={() => handleToggleRole(item.role, item.can_anulate)} />
+                                <Switch 
+                                    checked={item.can_edit || false} 
+                                    onCheckedChange={() => handleTogglePermission(item.role, 'can_edit', item.can_edit)} 
+                                    className="data-[state=checked]:bg-amber-500"
+                                />
                             </div>
                         ))}
                     </div>
                 </CardContent>
             </Card>
+
+            {/* 3. PERMISOS DE ANULACIÓN */}
+            <Card className="border-red-200 shadow-md">
+                <CardHeader className="bg-red-50/50 pb-4">
+                    <CardTitle className="flex items-center gap-2 text-red-800"><ShieldAlert className="h-5 w-5"/> Permisos de Anulación</CardTitle>
+                    <CardDescription>Roles que pueden <b>cancelar/anular</b> órdenes.</CardDescription>
+                </CardHeader>
+                <CardContent className="p-0">
+                    <div className="divide-y divide-slate-100">
+                        {/* Admin Fijo */}
+                        <div className="flex justify-between items-center px-6 py-4 bg-slate-50/30">
+                            <div className="flex items-center gap-3"><div className="bg-slate-200 p-2 rounded-full"><Lock className="h-4 w-4 text-slate-500"/></div><span className="font-semibold text-slate-700">Administrador</span></div>
+                            <span className="text-[10px] font-bold text-green-600 bg-green-50 px-2 py-1 rounded border border-green-200">SIEMPRE</span>
+                        </div>
+                        {/* Lista Roles */}
+                        {rolesConfig.map((item) => (
+                            <div key={`anulate-${item.role}`} className="flex justify-between items-center px-6 py-4 hover:bg-slate-50 transition-colors">
+                                <span className="font-medium text-slate-700">{item.role}</span>
+                                <Switch 
+                                    checked={item.can_anulate || false} 
+                                    onCheckedChange={() => handleTogglePermission(item.role, 'can_anulate', item.can_anulate)} 
+                                    className="data-[state=checked]:bg-red-500"
+                                />
+                            </div>
+                        ))}
+                    </div>
+                </CardContent>
+            </Card>
+
         </div>
     </div>
   );
 };
 
-export default AnulationConfig;
+export default AnulationConfig; 
