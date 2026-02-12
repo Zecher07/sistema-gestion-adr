@@ -99,16 +99,38 @@ function App() {
     return String(text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
   };
 
+  // --- 1. FUNCIÓN MAESTRA DE CARGA DE DATOS (MODIFICADA PARA FILTRAR POR VENDEDOR) ---
   const fetchAllData = async (userOverride = null) => {
     try {
       const currentUser = userOverride || user; 
+      if (!currentUser) return;
+
+      // 1. Cargar Clientes (Todos ven todos los clientes, usualmente es mejor así para no duplicar)
       const { data: clientesData } = await supabase.from('clientes').select('*');
       if (clientesData) setClients(clientesData);
 
-      const { data: ordenesData } = await supabase.from('ordenes').select('*').order('created_at', { ascending: false });
-      const { data: proformasData } = await supabase.from('proformas').select('*').order('created_at', { ascending: false });
+      // 2. CONFIGURAR CONSULTA DE ÓRDENES
+      let ordersQuery = supabase.from('ordenes').select('*').order('created_at', { ascending: false });
+      
+      // 🔒 FILTRO: Si es Vendedor, solo ve las suyas
+      if (currentUser.role === 'Vendedor') {
+          ordersQuery = ordersQuery.eq('vendedor', currentUser.name);
+      }
+
+      const { data: ordenesData } = await ordersQuery;
+      
+      // 3. CONFIGURAR CONSULTA DE PROFORMAS
+      let proformasQuery = supabase.from('proformas').select('*').order('created_at', { ascending: false });
+
+      // 🔒 FILTRO: Si es Vendedor, solo ve las suyas (campo 'responsable_nombre')
+      if (currentUser.role === 'Vendedor') {
+          proformasQuery = proformasQuery.eq('responsable_nombre', currentUser.name);
+      }
+
+      const { data: proformasData } = await proformasQuery;
       if (proformasData) setProformas(proformasData);
 
+      // 4. CRUCE DE DATOS ÓRDENES (Enriquecer con datos del cliente)
       if (ordenesData && clientesData) {
         const ordenesEnriquecidas = ordenesData.map(orden => {
           const nombreOrden = normalizeText(orden.cliente || orden.cliente_nombre);
@@ -123,8 +145,10 @@ function App() {
       } else if (ordenesData) {
         setOrders(ordenesData);
       }
+      
       setStaffUsers(FIXED_STAFF);
 
+      // PERMISOS GENERALES
       if (currentUser) {
           if (currentUser.role === 'Administrador') {
               setCanUserAnulate(true); setCanUserEdit(true);
@@ -160,7 +184,7 @@ function App() {
   const handleLogin = (userData) => { setUser(userData); localStorage.setItem('currentUser', JSON.stringify(userData)); fetchUserPermissions(userData.role); fetchAllData(userData); };
   const handleLogout = () => { setUser(null); setAllowedViews([]); localStorage.removeItem('currentUser'); };
 
-  // --- HANDLER DE ÉXITO DE ORDEN (AQUÍ ACTUALIZAMOS LA PROFORMA) ---
+  // --- HANDLER DE ÉXITO DE ORDEN ---
   const handleOrderSuccess = async () => {
     // Si veníamos de convertir una proforma, ahora la marcamos como aprobada
     if (proformaToConvertId) {
@@ -191,20 +215,17 @@ function App() {
   const handleCreateInvoice = (d) => { setInvoices(p => [{ ...d, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...p]); setShowInvoiceForm(false); setInitialInvoiceOrder(null); };
   const handleAnulateInvoice = (inv) => { setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: 'ANULADA' } : i)); if(viewInvoice?.id === inv.id) setViewInvoice(prev => ({...prev, status: 'ANULADA'})); };
 
-  // --- CONVERSIÓN: ABRE EL MODAL (NO GUARDA DIRECTO) ---
+  // --- CONVERSIÓN: ABRE EL MODAL ---
   const handleConvertProformaToOrder = (proforma) => {
-      // 1. Preparamos los datos
       const prefilledOrderData = {
           cliente_nombre: proforma.cliente_nombre,
-          // Usamos nombre plano para el input de búsqueda
           cliente: proforma.cliente_nombre,
-          // RUC para que el form lo detecte
           ruc: proforma.cliente_identificacion, 
           
           productos: (proforma.items || []).map(item => ({
               cantidad: item.cantidad,
               descripcion: item.descripcion,
-              precio: item.precioUnitario, // Cambio de nombre de campo
+              precio: item.precioUnitario, 
               total: item.total
           })),
           
@@ -213,7 +234,7 @@ function App() {
               iva: proforma.iva,
               total: proforma.total,
               ivaPercentage: proforma.iva_percentage || 15,
-              saldo: proforma.total // Saldo inicial = total
+              saldo: proforma.total
           },
           
           tipo_trabajo: 'Proforma #' + (proforma.proformaNumber || proforma.numero),
@@ -221,13 +242,9 @@ function App() {
           vendedor: proforma.responsable_nombre || user.name,
       };
 
-      // 2. Guardamos ID para uso posterior
       setProformaToConvertId(proforma.id);
-
-      // 3. Abrimos el formulario en modo "edición" pero con datos nuevos
       setEditingOrder(prefilledOrderData);
       
-      // 4. Gestión de modales
       setViewProforma(null);
       setShowForm(true); 
       
@@ -321,7 +338,6 @@ function App() {
                 nextOrderNumber={getNextOrderNumber()} 
                 onCheckAvailability={() => setShowAvailabilityModal(true)} 
                 onCreateClient={() => setShowClientFormModal(true)} 
-                // onReloadClients NO es necesario aquí porque ya pasamos clients como prop
             />
           </div>
         </div>
@@ -330,7 +346,6 @@ function App() {
       {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
       {showClientFormModal && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-md bg-white rounded-xl shadow-2xl p-6 relative"><button onClick={() => setShowClientFormModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button><h3 className="text-lg font-bold mb-4">Registrar Nuevo Cliente</h3><ClientForm onSuccess={handleClientSuccess} onCancel={() => setShowClientFormModal(false)} /></div></div>)}
       
-      {/* AQUÍ ESTABA EL PROBLEMA DEL BOTÓN "AGREGAR ITEM" */}
       {(showProformaForm || editingProforma) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
@@ -348,13 +363,12 @@ function App() {
 
       {showInvoiceForm && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto h-full"><InvoiceForm user={user} initialOrder={initialInvoiceOrder} nextInvoiceNumber={getNextInvoiceNumber()} onSubmit={handleCreateInvoice} onCancel={() => { setShowInvoiceForm(false); setInitialInvoiceOrder(null); }} /></div></div>)}
       
-      {/* AQUÍ PASAMOS LA FUNCIÓN QUE ABRE EL MODAL */}
       {viewProforma && (
         <ProformaDetailsModal 
             proforma={viewProforma} 
             onClose={() => setViewProforma(null)} 
             onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} 
-            onConvert={(p) => handleConvertProformaToOrder(p)} // Usamos la nueva lógica
+            onConvert={(p) => handleConvertProformaToOrder(p)} 
             user={user} 
             staffUsers={staffUsers} 
         />
