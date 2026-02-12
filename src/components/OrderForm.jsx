@@ -1,7 +1,11 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { motion } from 'framer-motion';
-import { useDropzone } from 'react-dropzone'; 
-import { X, Plus, Trash2, Calendar, FileImage, Link, Search, Check, Lock, CheckCircle2, Upload, Calculator, User, Mail, FileText, Save, Loader2, Image as ImageIcon } from 'lucide-react';
+import { useDropzone } from 'react-dropzone';
+import { 
+  Save, X, Upload, Calendar as CalendarIcon, User, Search, Calculator, 
+  FileText, Loader2, UserPlus, Image as ImageIcon, Mail, 
+  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard 
+} from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
@@ -34,14 +38,13 @@ const OrderForm = ({
   nextOrderNumber,
   onCheckAvailability,
   onReloadClients,
-  staffUsers = [] 
+  staffUsers = []
 }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
   const isAdmin = currentUser?.role === 'Administrador';
   
   const [loading, setLoading] = useState(false);
-  // Eliminamos 'uploading' porque Base64 es instantáneo
 
   // --- LÓGICA BUSCADOR CLIENTES ---
   const [searchTerm, setSearchTerm] = useState('');
@@ -75,6 +78,7 @@ const OrderForm = ({
     retencion: 0, 
     retentionPercent: 0, 
     formaPagoAnticipo: 'Efectivo',
+    referenciaPago: '', 
     
     saldo: 0,
     formaPagoSaldo: 'No aplica',
@@ -83,9 +87,9 @@ const OrderForm = ({
 
     descuentoPorcentaje: 0,
     aplicarIva: true,
-    ivaPercentage: 15,
+    ivaPercentage: 15, // Valor por defecto, se sobrescribirá si hay config global
     origenProformaId: '',
-    imagenes: [], // Aquí se guardarán los Base64
+    imagenes: [], 
     notas: ''
   });
 
@@ -93,7 +97,34 @@ const OrderForm = ({
     subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0
   });
 
-  // Cargar datos
+  // --- ESTADOS IMÁGENES ---
+  const [files, setFiles] = useState([]); 
+  const [existingImages, setExistingImages] = useState([]);
+
+  // --- 1. NUEVO: CARGAR IVA GLOBAL ---
+  useEffect(() => {
+    const fetchGlobalConfig = async () => {
+      // Solo cargamos la config global si es una orden nueva
+      // Si estamos editando (initialData existe), respetamos el IVA guardado en la orden
+      if (!initialData) {
+        try {
+          const { data, error } = await supabase
+            .from('configuracion_global')
+            .select('iva_porcentaje')
+            .maybeSingle();
+          
+          if (data && data.iva_porcentaje !== undefined) {
+            setFormData(prev => ({ ...prev, ivaPercentage: data.iva_porcentaje }));
+          }
+        } catch (error) {
+          console.error("Error cargando IVA global:", error);
+        }
+      }
+    };
+    fetchGlobalConfig();
+  }, [initialData]);
+
+  // --- 2. CARGAR DATOS (Edición) ---
   useEffect(() => {
     if (initialData) {
       const saldoDB = initialData.financials?.saldo || 0;
@@ -106,6 +137,16 @@ const OrderForm = ({
       const savedPercent = initialData.financials?.descuentoPorcentaje || 0;
       const savedAnticipo = initialData.anticipo || 0;
 
+      // Separar Referencia
+      let savedPaymentMethod = initialData.forma_pago_anticipo || 'Efectivo';
+      let savedReference = '';
+
+      if (savedPaymentMethod.includes(' - Ref: ')) {
+          const parts = savedPaymentMethod.split(' - Ref: ');
+          savedPaymentMethod = parts[0];
+          savedReference = parts[1] || '';
+      }
+
       setFormData({
         ...initialData,
         orderNumber: initialData.order_number || initialData.orderNumber || nextOrderNumber,
@@ -116,7 +157,8 @@ const OrderForm = ({
         productos: initialData.productos || [],
         
         anticipo: savedAnticipo,
-        formaPagoAnticipo: initialData.forma_pago_anticipo || 'Efectivo',
+        formaPagoAnticipo: savedPaymentMethod,
+        referenciaPago: savedReference,
         
         retencion: retentionVal,
         retentionPercent: initialData.financials?.retentionPercent || 0,
@@ -131,6 +173,7 @@ const OrderForm = ({
         ivaPercentage: initialData.financials?.ivaPercentage || 15 
       });
       
+      setExistingImages(initialData.imagenes || []);
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
       setSearchTerm(initialData.cliente_nombre || initialData.cliente || '');
@@ -282,19 +325,15 @@ const OrderForm = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [searchRef]);
 
-  // --- IMÁGENES: BASE64 (LOGICA ANTIGUA RESTAURADA) ---
-  
-  // Función auxiliar para procesar archivos a Base64
+  // --- IMÁGENES: BASE64 ---
   const processFiles = (files) => {
     Array.from(files).forEach(file => {
         if (file.size > 2000000) { 
             toast({ title: "⚠️ Archivo muy grande", description: "Máximo 2MB por imagen", variant: "destructive" }); 
             return; 
         }
-        
         const reader = new FileReader();
         reader.onloadend = () => {
-            // Guardamos directo en formData.imagenes como querías
             setFormData(prev => ({ 
                 ...prev, 
                 imagenes: [...(prev.imagenes || []), { name: file.name, url: reader.result }] 
@@ -304,19 +343,11 @@ const OrderForm = ({
     });
   };
 
-  const onDrop = useCallback(acceptedFiles => {
-    processFiles(acceptedFiles);
-  }, []);
-  
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ 
-    onDrop, 
-    accept: {'image/*': []} 
-  });
+  const onDrop = useCallback(acceptedFiles => { processFiles(acceptedFiles); }, []);
+  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: {'image/*': []} });
 
   const handleImageUpload = (e) => {
-    if (e.target.files && e.target.files.length > 0) {
-        processFiles(e.target.files);
-    }
+    if (e.target.files && e.target.files.length > 0) { processFiles(e.target.files); }
   };
 
   const removeImage = (index) => {
@@ -341,6 +372,12 @@ const OrderForm = ({
     if (financials.saldoPendiente < -0.02) {
         toast({ title: "Error en montos", description: "El anticipo supera el total a pagar.", variant: "destructive" });
         setLoading(false); return;
+    }
+
+    // COMBINAR REFERENCIA
+    let finalPaymentString = formData.formaPagoAnticipo;
+    if (formData.formaPagoAnticipo !== 'Efectivo' && formData.referenciaPago) {
+        finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
     }
 
     try {
@@ -368,17 +405,15 @@ const OrderForm = ({
             
             anticipo: formData.anticipo,
             retencion: formData.retencion,
-            forma_pago_anticipo: formData.formaPagoAnticipo,
-            // Las imágenes ya están en Base64 dentro de formData.imagenes
+            forma_pago_anticipo: finalPaymentString, // Enviar el string combinado
+            
             imagenes: formData.imagenes, 
             updated_at: new Date().toISOString()
         };
 
-        // --- CORRECCIÓN DB: ASEGURAR ORDER_NUMBER Y ELIMINAR CAMELCASE ---
         if (!initialData || !initialData.id) {
             const num = formData.orderNumber || nextOrderNumber; 
             payload.order_number = num;
-            // payload.orderNumber = num; <--- ELIMINADO PARA EVITAR ERROR PGRST204
             payload.status = 'VENTAS';
             payload.created_at = new Date().toISOString();
         }
@@ -541,6 +576,17 @@ const OrderForm = ({
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
                       <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select>
                    </div>
+
+                   {formData.formaPagoAnticipo !== 'Efectivo' && (
+                       <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                           <label className="text-xs font-bold w-20 text-blue-600">Referencia:</label>
+                           <div className="relative flex-1">
+                               <CreditCard className="absolute left-2 top-1.5 h-4 w-4 text-blue-400" />
+                               <input type="text" placeholder="# Depósito / Transferencia / Cheque" className="w-full pl-8 pr-2 py-1 border border-blue-300 bg-blue-50 rounded text-sm focus:border-blue-500 focus:outline-none" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} />
+                           </div>
+                       </div>
+                   )}
+
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
                         <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} />
                         <label htmlFor="chk-ret" className="text-xs cursor-pointer select-none">¿Aplica Retención?</label>
