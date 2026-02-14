@@ -1,35 +1,27 @@
 import React, { useState, useEffect } from 'react';
-import { supabase } from './supabaseClient'; // 🔒 CONEXIÓN DB
+import { supabase } from './supabaseClient';
 import { Menu, Settings, X } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
 
-// --- COMPONENTES DE SEGURIDAD Y ADMIN ---
+// --- IMPORTACIONES ---
 import UserManagement from '@/components/UserManagement'; 
 import RolesPermissions from '@/components/RolesPermissions'; 
 import Login from '@/components/Login';
 import AnulationConfig from '@/components/AnulationConfig';
-
-// --- COMPONENTES PRINCIPALES ---
 import Sidebar from '@/components/Sidebar';
 import Stats from '@/components/Stats';
-import Notifications from '@/components/Notifications';
+import Notifications from '@/components/Notifications'; // <--- ESTE ES EL QUE ACTUALIZAREMOS
 import DailyReport from '@/components/DailyReport';
 import StatisticsCharts from '@/components/StatisticsCharts';
-
-// --- MÓDULO ÓRDENES Y TRABAJO ---
 import OrdersPanel from '@/components/OrdersPanel';
 import OrderForm from '@/components/OrderForm';
 import OrderDetailsModal from '@/components/OrderDetailsModal';
 import WorkAreaList from '@/components/WorkAreaList';
 import WorkAreaCalendar from '@/components/WorkAreaCalendar';
-
-// --- MÓDULO CLIENTES ---
 import ClientsPanel from '@/components/ClientsPanel';
 import ClientForm from '@/components/ClientForm';
-
-// --- MÓDULO FACTURACIÓN Y PROFORMAS ---
 import ProformasPanel from '@/components/ProformasPanel';
 import ProformaForm from '@/components/ProformaForm';
 import ProformaDetailsModal from '@/components/ProformaDetailsModal';
@@ -37,38 +29,28 @@ import InvoicesPanel from '@/components/InvoicesPanel';
 import InvoiceForm from '@/components/InvoiceForm';
 import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 
-// Flujos de trabajo
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- LISTA DE EMPLEADOS FIJA ---
-const FIXED_STAFF = [
-  { id: 1, name: 'Administrador Principal', role: 'Administrador' },
-  { id: 2, name: 'Juan Pérez', role: 'Vendedor' },
-  { id: 3, name: 'Ana Gomez', role: 'Vendedor' },
-  { id: 4, name: 'Carlos Producción', role: 'Producción' },
-  { id: 5, name: 'Lucia Contabilidad', role: 'Contabilidad' }
-];
-
 function App() {
-  // --- ESTADOS DE SESIÓN ---
   const [user, setUser] = useState(null);
   const [allowedViews, setAllowedViews] = useState([]); 
-  
-  // --- ESTADOS DE DATOS (DB) ---
   const [orders, setOrders] = useState([]);
   const [clients, setClients] = useState([]); 
   const [proformas, setProformas] = useState([]);
   const [invoices, setInvoices] = useState([]); 
   const [kanbanTasks, setKanbanTasks] = useState([]);
+  const [staffUsers, setStaffUsers] = useState([]); 
   
-  // --- ESTADOS DE UI ---
   const [currentView, setCurrentView] = useState('inicio');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
   const [showClientFormModal, setShowClientFormModal] = useState(false);
   const [archivedNotifications, setArchivedNotifications] = useState([]);
+
+  // --- NUEVO ESTADO PARA NOTIFICACIONES DE LA CAMPANA ---
+  const [realtimeEvents, setRealtimeEvents] = useState([]); 
 
   // Modales
   const [editingOrder, setEditingOrder] = useState(null); 
@@ -84,13 +66,9 @@ function App() {
   const [initialInvoiceOrder, setInitialInvoiceOrder] = useState(null);
   const [viewInvoice, setViewInvoice] = useState(null);
   
-  // ESTADO NUEVO: Para saber qué proforma estamos convirtiendo
   const [proformaToConvertId, setProformaToConvertId] = useState(null);
 
-  const [staffUsers, setStaffUsers] = useState(FIXED_STAFF);
   const { toast } = useToast();
-
-  // ESTADO DE PERMISO 
   const [canUserAnulate, setCanUserAnulate] = useState(false);
   const [canUserEdit, setCanUserEdit] = useState(false);
   
@@ -99,30 +77,28 @@ function App() {
     return String(text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
   };
 
-  // --- 1. FUNCIÓN MAESTRA DE CARGA DE DATOS (MODIFICADA PARA FILTRAR POR VENDEDOR) ---
   const fetchAllData = async (userOverride = null) => {
     try {
       const currentUser = userOverride || user; 
       if (!currentUser) return;
 
-      // 1. Cargar Clientes (Todos ven todos los clientes, usualmente es mejor así para no duplicar)
       const { data: clientesData } = await supabase.from('clientes').select('*');
       if (clientesData) setClients(clientesData);
 
-      // 2. CONFIGURAR CONSULTA DE ÓRDENES
+      const { data: profilesData } = await supabase.from('profiles').select('id, full_name, role').order('full_name');
+      if (profilesData) {
+          setStaffUsers(profilesData.map(p => ({ id: p.id, name: p.full_name, role: p.role })));
+      }
+
       let ordersQuery = supabase.from('ordenes').select('*').order('created_at', { ascending: false });
       
-      // 🔒 FILTRO: Si es Vendedor, solo ve las suyas
       if (currentUser.role === 'Vendedor') {
           ordersQuery = ordersQuery.eq('vendedor', currentUser.name);
       }
 
       const { data: ordenesData } = await ordersQuery;
       
-      // 3. CONFIGURAR CONSULTA DE PROFORMAS
       let proformasQuery = supabase.from('proformas').select('*').order('created_at', { ascending: false });
-
-      // 🔒 FILTRO: Si es Vendedor, solo ve las suyas (campo 'responsable_nombre')
       if (currentUser.role === 'Vendedor') {
           proformasQuery = proformasQuery.eq('responsable_nombre', currentUser.name);
       }
@@ -130,7 +106,6 @@ function App() {
       const { data: proformasData } = await proformasQuery;
       if (proformasData) setProformas(proformasData);
 
-      // 4. CRUCE DE DATOS ÓRDENES (Enriquecer con datos del cliente)
       if (ordenesData && clientesData) {
         const ordenesEnriquecidas = ordenesData.map(orden => {
           const nombreOrden = normalizeText(orden.cliente || orden.cliente_nombre);
@@ -146,9 +121,6 @@ function App() {
         setOrders(ordenesData);
       }
       
-      setStaffUsers(FIXED_STAFF);
-
-      // PERMISOS GENERALES
       if (currentUser) {
           if (currentUser.role === 'Administrador') {
               setCanUserAnulate(true); setCanUserEdit(true);
@@ -169,8 +141,117 @@ function App() {
       if(localStorage.getItem('archivedNotifications')) setArchivedNotifications(JSON.parse(localStorage.getItem('archivedNotifications')));
       if(localStorage.getItem('kanbanTasksDB')) setKanbanTasks(JSON.parse(localStorage.getItem('kanbanTasksDB')));
       if(localStorage.getItem('invoicesDB')) setInvoices(JSON.parse(localStorage.getItem('invoicesDB')));
+      // Cargar notificaciones guardadas de sesión anterior (opcional)
+      if(localStorage.getItem('realtimeEvents')) setRealtimeEvents(JSON.parse(localStorage.getItem('realtimeEvents')));
     } catch (e) { console.error(e); }
   }, []);
+
+  // Guardar notificaciones en local storage para no perderlas al recargar
+  useEffect(() => { localStorage.setItem('realtimeEvents', JSON.stringify(realtimeEvents)); }, [realtimeEvents]);
+
+  // 🔥 LÓGICA DE REALTIME MEJORADA (ASIGNACIÓN + CAMBIO DE ESTADO) 🔥
+  useEffect(() => {
+    if (!user) return;
+
+    const intervalId = setInterval(() => { fetchAllData(user); }, 5000); 
+
+    const channel = supabase
+      .channel('realtime_ordenes_global')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes' }, (payload) => {
+        
+        const { eventType, new: newRecord, old: oldRecord } = payload;
+        const seeAll = ['Administrador', 'Producción', 'Contabilidad'].includes(user.role);
+
+        // --- 1. GENERAR NOTIFICACIONES PARA LA CAMPANA ---
+        if (eventType === 'UPDATE') {
+            const numOrden = newRecord.order_number || newRecord.id;
+            
+            // A. ME ASIGNARON UNA ORDEN (Soy Vendedor)
+            if (newRecord.vendedor === user.name && oldRecord.vendedor !== user.name) {
+                const notif = {
+                    id: Date.now(),
+                    type: 'assignment',
+                    title: 'Nueva Orden Asignada',
+                    message: `Te han delegado la orden #${numOrden}`,
+                    orderId: newRecord.id,
+                    isRead: false,
+                    timestamp: new Date().toISOString()
+                };
+                setRealtimeEvents(prev => [notif, ...prev]);
+                
+                toast({ title: notif.title, description: notif.message, className: "bg-blue-100 border-blue-500 text-blue-900" });
+            }
+
+            // B. CAMBIO DE ESTADO (Para quien le interese)
+            if (newRecord.status !== oldRecord.status) {
+                let relevant = false;
+                // Si soy el dueño
+                if (newRecord.vendedor === user.name) relevant = true;
+                // Si soy producción y pasó a producción
+                if (user.role === 'Producción' && newRecord.status === 'PRODUCCION') relevant = true;
+                // Si soy contabilidad y pasó a contabilidad
+                if (user.role === 'Contabilidad' && newRecord.status === 'CONTABILIDAD') relevant = true;
+
+                if (relevant) {
+                    const notif = {
+                        id: Date.now(),
+                        type: 'status',
+                        title: 'Cambio de Estado',
+                        message: `Orden #${numOrden} pasó a ${newRecord.status}`,
+                        orderId: newRecord.id,
+                        isRead: false,
+                        timestamp: new Date().toISOString()
+                    };
+                    setRealtimeEvents(prev => [notif, ...prev]);
+                    
+                    toast({ title: notif.title, description: notif.message });
+                }
+            }
+        }
+
+        // --- 2. ACTUALIZAR LISTA DE ÓRDENES (Lógica de inyección) ---
+        setOrders(prevOrders => {
+            if (eventType === 'INSERT') {
+                if (seeAll || newRecord.vendedor === user.name) return [newRecord, ...prevOrders];
+                return prevOrders;
+            }
+            if (eventType === 'UPDATE') {
+                const isAdmin = user.role === 'Administrador';
+                const isMine = newRecord.vendedor === user.name;
+                const wasMine = oldRecord.vendedor === user.name;
+                const exists = prevOrders.some(o => o.id === newRecord.id);
+
+                if (seeAll) return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
+                
+                // Si me la asignaron y no la tenía, agregarla
+                if (isMine && !exists) return [newRecord, ...prevOrders];
+                
+                // Si me la quitaron, borrarla
+                if (!isMine && wasMine) return prevOrders.filter(o => o.id !== newRecord.id);
+                
+                // Si es actualización normal
+                if (isMine && exists) return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
+
+                return prevOrders;
+            }
+            if (eventType === 'DELETE') return prevOrders.filter(o => o.id !== oldRecord.id);
+            return prevOrders;
+        });
+
+        setTimeout(() => fetchAllData(user), 1000);
+      })
+      .subscribe();
+
+    return () => {
+      clearInterval(intervalId);
+      supabase.removeChannel(channel);
+    };
+  }, [user, toast]); 
+
+  // --- HANDLER PARA BORRAR NOTIFICACIONES DE LA CAMPANA ---
+  const handleClearEvent = (id) => {
+      setRealtimeEvents(prev => prev.filter(e => e.id !== id));
+  };
 
   useEffect(() => { localStorage.setItem('archivedNotifications', JSON.stringify(archivedNotifications)); }, [archivedNotifications]);
   useEffect(() => { localStorage.setItem('kanbanTasksDB', JSON.stringify(kanbanTasks)); }, [kanbanTasks]);
@@ -184,9 +265,7 @@ function App() {
   const handleLogin = (userData) => { setUser(userData); localStorage.setItem('currentUser', JSON.stringify(userData)); fetchUserPermissions(userData.role); fetchAllData(userData); };
   const handleLogout = () => { setUser(null); setAllowedViews([]); localStorage.removeItem('currentUser'); };
 
-  // --- HANDLER DE ÉXITO DE ORDEN ---
   const handleOrderSuccess = async () => {
-    // Si veníamos de convertir una proforma, ahora la marcamos como aprobada
     if (proformaToConvertId) {
         try {
             await supabase.from('proformas').update({ status: 'APROBADA' }).eq('id', proformaToConvertId);
@@ -194,7 +273,6 @@ function App() {
         } catch (error) { console.error(error); }
         setProformaToConvertId(null);
     }
-
     fetchAllData(); 
     setShowForm(false);
     setEditingOrder(null);
@@ -215,20 +293,17 @@ function App() {
   const handleCreateInvoice = (d) => { setInvoices(p => [{ ...d, id: Date.now().toString(), createdAt: new Date().toISOString() }, ...p]); setShowInvoiceForm(false); setInitialInvoiceOrder(null); };
   const handleAnulateInvoice = (inv) => { setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: 'ANULADA' } : i)); if(viewInvoice?.id === inv.id) setViewInvoice(prev => ({...prev, status: 'ANULADA'})); };
 
-  // --- CONVERSIÓN: ABRE EL MODAL ---
   const handleConvertProformaToOrder = (proforma) => {
       const prefilledOrderData = {
           cliente_nombre: proforma.cliente_nombre,
           cliente: proforma.cliente_nombre,
           ruc: proforma.cliente_identificacion, 
-          
           productos: (proforma.items || []).map(item => ({
               cantidad: item.cantidad,
               descripcion: item.descripcion,
               precio: item.precioUnitario, 
               total: item.total
           })),
-          
           financials: {
               subtotal: proforma.subtotal,
               iva: proforma.iva,
@@ -236,18 +311,14 @@ function App() {
               ivaPercentage: proforma.iva_percentage || 15,
               saldo: proforma.total
           },
-          
           tipo_trabajo: 'Proforma #' + (proforma.proformaNumber || proforma.numero),
           notas: proforma.notas,
           vendedor: proforma.responsable_nombre || user.name,
       };
-
       setProformaToConvertId(proforma.id);
       setEditingOrder(prefilledOrderData);
-      
       setViewProforma(null);
       setShowForm(true); 
-      
       toast({ description: "Verifique la orden, agregue anticipo y guarde." });
   };
 
@@ -263,12 +334,12 @@ function App() {
     if (idx !== -1 && idx < flow.length - 1) {
         const nextStatus = flow[idx + 1];
         const { error } = await supabase.from('ordenes').update({ status: nextStatus }).eq('id', order.id);
-        if(!error) { fetchAllData(); toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` }); }
+        if(!error) { toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` }); }
     }
   };
 
-  const handleArchiveOrder = async (order) => { await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id); fetchAllData(); setViewOrder(null); toast({ title: "Orden Archivada" }); };
-  const handleAnulateOrder = async (orderId) => { try { const { error } = await supabase.from('ordenes').update({ status: 'ANULADA' }).eq('id', orderId); if (error) throw error; toast({ title: "Orden Anulada" }); fetchAllData(); setViewOrder(null); } catch (error) { toast({ variant: "destructive", title: "Error" }); } };
+  const handleArchiveOrder = async (order) => { await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id); setViewOrder(null); toast({ title: "Orden Archivada" }); };
+  const handleAnulateOrder = async (orderId) => { try { const { error } = await supabase.from('ordenes').update({ status: 'ANULADA' }).eq('id', orderId); if (error) throw error; toast({ title: "Orden Anulada" }); setViewOrder(null); } catch (error) { toast({ variant: "destructive", title: "Error" }); } };
 
   if (!user) return <><Login onLogin={handleLogin} /><Toaster /></>;
 
@@ -294,7 +365,7 @@ function App() {
               orders={filtered}
               user={user}
               onUpdateStatus={() => {}} 
-              onDeleteOrder={async (id) => { await supabase.from('ordenes').delete().eq('id', id); fetchAllData(); }}
+              onDeleteOrder={async (id) => { await supabase.from('ordenes').delete().eq('id', id); }}
               onEditOrder={setEditingOrder}
               onCloneOrder={setCloningOrder}
               onPaymentOrder={setPaymentOrder}
@@ -321,12 +392,18 @@ function App() {
     <>
       <div className="min-h-screen bg-slate-50 flex">
         <div className="hidden md:block w-64 flex-shrink-0"><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={handleViewChange} allowedViews={allowedViews} /></div>
-        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div></div>
+        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3">
+            {/* 🔥 PASAMOS LOS EVENTOS REALTIME A LAS NOTIFICACIONES 🔥 */}
+            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} />
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div>
+        </div>
         {isMobileMenuOpen && (<div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsMobileMenuOpen(false)}><div className="w-64 bg-slate-900 h-full shadow-2xl" onClick={e => e.stopPropagation()}><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} allowedViews={allowedViews} /></div></div>)}
-        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /><div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
+        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4">
+            {/* 🔥 Y AQUÍ TAMBIÉN 🔥 */}
+            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} />
+            <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
-      {/* MODAL ORDEN (Formulario) */}
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
           <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
