@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, ExternalLink, User, Calendar, FileBox } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -20,6 +20,43 @@ import {
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
+// --- 1. COMPONENTE DE IMAGEN OPTIMIZADO (MEMO) ---
+const ImageGalleryViewer = memo(({ images, onPreview }) => {
+    if (!images || images.length === 0) {
+        return (
+            <div className="flex flex-col items-center text-slate-400">
+                <ImageIcon className="h-12 w-12 mb-2 opacity-50" />
+                <span className="italic">Sin imágenes adjuntas</span>
+            </div>
+        );
+    }
+
+    return (
+        <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6 w-full">
+            {images.map((img, i) => (
+                <div 
+                    key={i} 
+                    className="group relative bg-white border border-slate-200 p-2 rounded-lg shadow-sm hover:shadow-md cursor-pointer transition-all" 
+                    onClick={() => onPreview(img.url)}
+                >
+                    <div className="aspect-square w-full overflow-hidden rounded bg-slate-100 mb-2 relative">
+                        <img 
+                            src={img.url} 
+                            alt={img.name} 
+                            className="w-full h-full object-cover group-hover:scale-105 transition-transform" 
+                            loading="lazy" 
+                            decoding="async" 
+                        />
+                    </div>
+                    <p className="text-xs text-slate-600 truncate text-center font-medium" title={img.name}>
+                        {img.name}
+                    </p>
+                </div>
+            ))}
+        </div>
+    );
+});
+
 const OrderDetailsModal = ({ 
   order, 
   user, 
@@ -29,15 +66,17 @@ const OrderDetailsModal = ({
   isTaskView, 
   onAdvanceWorkflow, 
   onArchiveOrder,
-  onUpdateOrder, // Esta función abre el formulario de edición
+  onUpdateOrder, 
   onGenerateInvoice,
   onAnulateOrder,
   canAnulate,
-  canEdit // <--- RECIBIMOS EL NUEVO PERMISO
+  canEdit
 }) => {
   const [previewImage, setPreviewImage] = useState(null);
   const [showAnulateAlert, setShowAnulateAlert] = useState(false);
   const { toast } = useToast();
+
+  const isAdmin = user?.role === 'Administrador';
 
   useEffect(() => {
     if (order) {
@@ -48,13 +87,36 @@ const OrderDetailsModal = ({
     };
   }, [order]);
 
-  const isAdmin = user?.role === 'Administrador';
-  
   const validSellers = useMemo(() => {
      const sellers = getValidSellers(staffUsers);
      return removeDuplicateUsers(sellers);
   }, [staffUsers]);
 
+  // 🔥 CORRECCIÓN: ESTE HOOK AHORA ESTÁ ANTES DEL RETURN NULL
+  const canAdvanceWorkflow = useMemo(() => {
+      if (!order) return false; // Validación interna
+      
+      const isAnulada = order.status === 'ANULADA';
+      const isArchivada = order.status === 'ARCHIVADA';
+      const isFinalizada = order.status === 'FINALIZADA';
+
+      if (isAnulada || isArchivada || isFinalizada) return false;
+      
+      const role = user?.role;
+      const status = order.status;
+
+      if (role === 'Administrador') return true;
+
+      switch (status) {
+          case 'VENTAS': return role === 'Vendedor';
+          case 'PRODUCCION': return role === 'Producción';
+          case 'VENTAS POR RETIRAR': return role === 'Vendedor';
+          case 'CONTABILIDAD': return role === 'Contabilidad';
+          default: return false;
+      }
+  }, [order, user]);
+
+  // --- AHORA SÍ PODEMOS HACER EL RETURN SI NO HAY ORDEN ---
   if (!order) return null;
 
   // --- MAPEO DE DATOS ---
@@ -80,15 +142,6 @@ const OrderDetailsModal = ({
       retencion: Number(order.retencion || 0),
       productos: order.products || order.productos || [],
       imagenes: order.imagenes || []
-  };
-
-  const handleResponsableChange = (e) => {
-    if (onUpdateOrder) {
-       // Si cambiamos responsable desde el dropdown rápido
-       // Nota: Esto requiere que onUpdateOrder soporte actualizaciones parciales directa, 
-       // si no, mejor usar el botón de Editar completo.
-       // Por ahora lo dejamos visual o funcional si tu backend lo soporta.
-    }
   };
 
   const formatCurrency = (amount) => {
@@ -121,7 +174,7 @@ const OrderDetailsModal = ({
   const canArchive = isAdmin && isFinalizada;
   const canInvoice = !isAnulada && (user.role === 'Vendedor' || user.role === 'Contabilidad' || user.role === 'Administrador');
     
-  const showWorkflowButton = !isAnulada && !isFinalizada && !isArchivada && (isTaskView || !isAdmin);
+  const showWorkflowButton = canAdvanceWorkflow;
 
   const getWorkflowButtonConfig = () => {
      const tipo = data.titulo || ''; 
@@ -131,10 +184,13 @@ const OrderDetailsModal = ({
      if (currentIndex === -1 || currentIndex >= workflow.length - 1) return { text: 'Continuar', helper: '' };
      const nextStatus = workflow[currentIndex + 1];
      let text = `Pasar a ${nextStatus}`;
-     if (order.status === 'VENTAS') text = nextStatus === 'PRODUCCION' ? "Pasar a Producción" : "Pasar a Contabilidad";
-     if (order.status === 'PRODUCCION') text = `Pasar a Ventas – ${data.autor}`;
-     if (order.status === 'CONTABILIDAD') text = "Finalizar orden";
-     return { text, helper: `Siguiente: ${nextStatus}` };
+     
+     if (order.status === 'VENTAS') text = nextStatus === 'PRODUCCION' ? "Enviar a Producción" : "Enviar a Contabilidad";
+     if (order.status === 'PRODUCCION') text = "Terminar Producción";
+     if (order.status === 'VENTAS POR RETIRAR') text = "Entregar / Enviar a Contabilidad";
+     if (order.status === 'CONTABILIDAD') text = "Finalizar Orden";
+     
+     return { text, helper: `Siguiente paso: ${nextStatus}` };
   };
 
   const workflowConfig = getWorkflowButtonConfig();
@@ -177,12 +233,11 @@ const OrderDetailsModal = ({
                 </div>
                 <div className="flex items-center gap-3 print:hidden">
                     
-                    {/* BOTÓN EDITAR */}
                     {(canEdit || isAdmin) && !isAnulada && !isArchivada && (
                         <Button 
                             size="sm"
                             variant="outline"
-                            onClick={() => onUpdateOrder(order)} // Llama a la función de editar del padre
+                            onClick={() => onUpdateOrder(order)} 
                             className="border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-300 gap-2"
                         >
                             <Edit2 className="h-4 w-4" /> Editar
@@ -347,23 +402,8 @@ const OrderDetailsModal = ({
                 <div className="pb-8">
                     <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><ImageIcon className="h-4 w-4"/> Arte / Archivos Adjuntos</h3>
                     <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 min-h-[250px] flex items-center justify-center bg-white">
-                        {data.imagenes.length > 0 ? (
-                            <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-6 w-full">
-                                {data.imagenes.map((img, i) => (
-                                    <div key={i} className="group relative bg-white border border-slate-200 p-2 rounded-lg shadow-sm hover:shadow-md cursor-pointer transition-all" onClick={() => setPreviewImage(img.url)}>
-                                        <div className="aspect-square w-full overflow-hidden rounded bg-slate-100 mb-2">
-                                            <img src={img.url} alt={img.name} className="w-full h-full object-cover group-hover:scale-105 transition-transform" />
-                                        </div>
-                                        <p className="text-xs text-slate-600 truncate text-center font-medium" title={img.name}>{img.name}</p>
-                                    </div>
-                                ))}
-                            </div>
-                        ) : (
-                            <div className="flex flex-col items-center text-slate-400">
-                                <ImageIcon className="h-12 w-12 mb-2 opacity-50" />
-                                <span className="italic">Sin imágenes adjuntas</span>
-                            </div>
-                        )}
+                        {/* IMÁGENES OPTIMIZADAS */}
+                        <ImageGalleryViewer images={data.imagenes} onPreview={setPreviewImage} />
                     </div>
                 </div>
             </div>
@@ -402,7 +442,7 @@ const OrderDetailsModal = ({
             {previewImage && (
               <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} className="fixed inset-0 z-[100] flex items-center justify-center bg-black/95 p-4" onClick={(e) => { e.stopPropagation(); setPreviewImage(null); }}>
                 <button className="absolute top-4 right-4 text-white hover:text-gray-300 p-2 bg-white/10 rounded-full"><X className="h-8 w-8" /></button>
-                <img src={previewImage} alt="Full" className="max-w-full max-h-[95vh] rounded shadow-2xl" />
+                <img src={previewImage} alt="Full" className="max-w-full max-h-[95vh] rounded shadow-2xl" loading="lazy" decoding="async"/>
               </motion.div>
             )}
         </AnimatePresence>

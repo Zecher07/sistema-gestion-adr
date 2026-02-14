@@ -1,10 +1,10 @@
-import React, { useState, useEffect, useRef, useCallback } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
 import { motion } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Upload, Calendar as CalendarIcon, User, Search, Calculator, 
   FileText, Loader2, UserPlus, Image as ImageIcon, Mail, 
-  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard 
+  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -28,23 +28,99 @@ for (let h = 8; h <= 20; h++) {
   ['00', '15', '30', '45'].forEach(m => TIME_SLOTS.push(`${hour}:${m}`));
 }
 
+// --- 1. FUNCIÓN DE COMPRESIÓN (FUERA DEL COMPONENTE) ---
+// Reduce imágenes gigantes a tamaños manejables para la web
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                // Reducir a máximo 1024px de ancho (suficiente para ver en pantalla)
+                const MAX_WIDTH = 1024; 
+                let width = img.width;
+                let height = img.height;
+
+                if (width > MAX_WIDTH) {
+                    height *= MAX_WIDTH / width;
+                    width = MAX_WIDTH;
+                }
+
+                canvas.width = width;
+                canvas.height = height;
+
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+
+                // Comprimir a JPEG calidad 70%
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                resolve({ name: file.name, url: dataUrl });
+            };
+        };
+    });
+};
+
+// --- 2. COMPONENTE DE IMAGEN AISLADO (MEMO) ---
+// Esto es vital: Evita que las imágenes se "recarguen" cuando escribes en otros campos
+const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }) => {
+    const onDrop = useCallback(acceptedFiles => { onAdd(acceptedFiles); }, [onAdd]);
+    const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing });
+  
+    return (
+      <div className="border border-slate-300 p-4 rounded-sm bg-slate-50/50">
+         <div className="min-h-[100px] mb-3 flex flex-wrap gap-4">
+            {images.map((img, i) => (
+               <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all">
+                  {/* decoding="async" ayuda a que el navegador no se congele al pintar la imagen */}
+                  <img src={img.url} alt={img.name} className="w-full h-full object-cover" title={img.name} loading="lazy" decoding="async" />
+                  {!isReadOnly && <button type="button" onClick={() => onRemove(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>}
+               </div>
+            ))}
+            
+            {/* Indicador de carga mientras se comprime */}
+            {isProcessing && (
+                <div className="w-24 h-24 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
+                    <Loader2 className="h-6 w-6 text-blue-500 animate-spin"/>
+                    <span className="text-[10px] text-blue-500 font-medium mt-1">Optimizando...</span>
+                </div>
+            )}
+
+            {!isProcessing && images.length === 0 && (<div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-4"><FileImage className="h-8 w-8 mb-2 opacity-50" /><span>Sin imágenes adjuntas</span></div>)}
+         </div>
+         
+         {!isReadOnly && (
+             <div>
+                 <input {...getInputProps()} className="hidden" />
+                 <label {...getRootProps()} className={`inline-flex items-center gap-1 ${isProcessing ? 'bg-slate-400 cursor-wait' : 'bg-green-600 hover:bg-green-700 cursor-pointer'} text-white text-xs px-3 py-1.5 rounded transition-colors`}>
+                     <Plus className="h-3 w-3" /> {isProcessing ? 'Procesando...' : 'Agregar Imágenes'}
+                 </label>
+             </div>
+         )}
+      </div>
+    );
+});
+
 const OrderForm = ({ 
   currentUser, 
   clients = [], 
-  onSuccess,
+  staffUsers = [], 
+  onSuccess, 
   onCancel, 
   initialData = null, 
   mode = 'create',
   nextOrderNumber,
   onCheckAvailability,
-  onReloadClients,
-  staffUsers = []
+  onReloadClients
 }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
   const isAdmin = currentUser?.role === 'Administrador';
   
   const [loading, setLoading] = useState(false);
+  const [isProcessingImages, setIsProcessingImages] = useState(false);
 
   // --- LÓGICA BUSCADOR CLIENTES ---
   const [searchTerm, setSearchTerm] = useState('');
@@ -87,7 +163,7 @@ const OrderForm = ({
 
     descuentoPorcentaje: 0,
     aplicarIva: true,
-    ivaPercentage: 15, // Valor por defecto, se sobrescribirá si hay config global
+    ivaPercentage: 15,
     origenProformaId: '',
     imagenes: [], 
     notas: ''
@@ -97,28 +173,16 @@ const OrderForm = ({
     subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0
   });
 
-  // --- ESTADOS IMÁGENES ---
-  const [files, setFiles] = useState([]); 
-  const [existingImages, setExistingImages] = useState([]);
-
-  // --- 1. NUEVO: CARGAR IVA GLOBAL ---
+  // --- 1. CARGAR IVA GLOBAL ---
   useEffect(() => {
     const fetchGlobalConfig = async () => {
-      // Solo cargamos la config global si es una orden nueva
-      // Si estamos editando (initialData existe), respetamos el IVA guardado en la orden
       if (!initialData) {
         try {
-          const { data, error } = await supabase
-            .from('configuracion_global')
-            .select('iva_porcentaje')
-            .maybeSingle();
-          
+          const { data } = await supabase.from('configuracion_global').select('iva_porcentaje').maybeSingle();
           if (data && data.iva_porcentaje !== undefined) {
             setFormData(prev => ({ ...prev, ivaPercentage: data.iva_porcentaje }));
           }
-        } catch (error) {
-          console.error("Error cargando IVA global:", error);
-        }
+        } catch (error) { console.error(error); }
       }
     };
     fetchGlobalConfig();
@@ -137,11 +201,10 @@ const OrderForm = ({
       const savedPercent = initialData.financials?.descuentoPorcentaje || 0;
       const savedAnticipo = initialData.anticipo || 0;
 
-      // Separar Referencia
       let savedPaymentMethod = initialData.forma_pago_anticipo || 'Efectivo';
       let savedReference = '';
 
-      if (savedPaymentMethod.includes(' - Ref: ')) {
+      if (savedPaymentMethod && savedPaymentMethod.includes(' - Ref: ')) {
           const parts = savedPaymentMethod.split(' - Ref: ');
           savedPaymentMethod = parts[0];
           savedReference = parts[1] || '';
@@ -156,6 +219,8 @@ const OrderForm = ({
         fechaEntrega: initialData.fecha_entrega || '',
         productos: initialData.productos || [],
         
+        vendedor: initialData.vendedor || currentUser.name,
+
         anticipo: savedAnticipo,
         formaPagoAnticipo: savedPaymentMethod,
         referenciaPago: savedReference,
@@ -173,12 +238,11 @@ const OrderForm = ({
         ivaPercentage: initialData.financials?.ivaPercentage || 15 
       });
       
-      setExistingImages(initialData.imagenes || []);
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
       setSearchTerm(initialData.cliente_nombre || initialData.cliente || '');
     }
-  }, [initialData, nextOrderNumber]);
+  }, [initialData, nextOrderNumber, currentUser]);
 
   // Manejo Fechas
   const currentDatePart = formData.fechaEntrega ? formData.fechaEntrega.split('T')[0] : '';
@@ -257,9 +321,7 @@ const OrderForm = ({
     setLocalDiscountPercent(intPercent > 0 ? intPercent.toString() : '');
   };
 
-  const handleKeyDown = (e, commitFunction) => {
-    if (e.key === 'Enter') { e.preventDefault(); commitFunction(); e.target.blur(); }
-  };
+  const handleKeyDown = (e, commitFunction) => { if (e.key === 'Enter') { e.preventDefault(); commitFunction(); e.target.blur(); } };
 
   const handleAnticipoChange = (e) => {
       const valStr = e.target.value;
@@ -294,10 +356,7 @@ const OrderForm = ({
     setFormData({ ...formData, productos: newProducts });
   };
 
-  const filteredClients = localClients.filter(c => 
-    c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || 
-    (c.empresa && c.empresa.includes(searchTerm))
-  );
+  const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.includes(searchTerm)));
 
   const handleSelectClient = (client) => {
     setFormData({ ...formData, clienteId: client.id, cliente: client.nombre });
@@ -325,29 +384,28 @@ const OrderForm = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [searchRef]);
 
-  // --- IMÁGENES: BASE64 ---
-  const processFiles = (files) => {
-    Array.from(files).forEach(file => {
-        if (file.size > 2000000) { 
-            toast({ title: "⚠️ Archivo muy grande", description: "Máximo 2MB por imagen", variant: "destructive" }); 
-            return; 
-        }
-        const reader = new FileReader();
-        reader.onloadend = () => {
-            setFormData(prev => ({ 
-                ...prev, 
-                imagenes: [...(prev.imagenes || []), { name: file.name, url: reader.result }] 
-            }));
-        };
-        reader.readAsDataURL(file);
-    });
-  };
+  // --- IMÁGENES: NUEVA LÓGICA CON COMPRESIÓN ---
+  // Al agregar, pasamos por el compresor
+  const handleAddImages = async (files) => {
+      setIsProcessingImages(true);
+      const newImages = [];
+      
+      for (const file of files) {
+          if (file.size > 15000000) { // Limite 15MB antes de comprimir
+              toast({ title: "Archivo demasiado grande", description: `"${file.name}" supera el límite.`, variant: "destructive" });
+              continue;
+          }
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (e) {
+              console.error(e);
+              toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" });
+          }
+      }
 
-  const onDrop = useCallback(acceptedFiles => { processFiles(acceptedFiles); }, []);
-  const { getRootProps, getInputProps, isDragActive } = useDropzone({ onDrop, accept: {'image/*': []} });
-
-  const handleImageUpload = (e) => {
-    if (e.target.files && e.target.files.length > 0) { processFiles(e.target.files); }
+      setFormData(prev => ({ ...prev, imagenes: [...(prev.imagenes || []), ...newImages] }));
+      setIsProcessingImages(false);
   };
 
   const removeImage = (index) => {
@@ -360,21 +418,20 @@ const OrderForm = ({
     setLoading(true);
 
     if (!formData.clienteId && !formData.cliente) {
-      toast({ title: "⚠️ Falta Cliente", description: "Seleccione un cliente.", variant: "destructive" });
+      toast({ title: "⚠️ Falta Cliente", variant: "destructive" });
       setLoading(false); return;
     }
     const validProducts = formData.productos.filter(p => p.descripcion && p.descripcion.trim() !== '');
     if (validProducts.length === 0) {
-      toast({ title: "⚠️ Sin productos", description: "Agregue items.", variant: "destructive" });
+      toast({ title: "⚠️ Sin productos", variant: "destructive" });
       setLoading(false); return;
     }
 
     if (financials.saldoPendiente < -0.02) {
-        toast({ title: "Error en montos", description: "El anticipo supera el total a pagar.", variant: "destructive" });
+        toast({ title: "Error en montos", description: "El anticipo supera el total.", variant: "destructive" });
         setLoading(false); return;
     }
 
-    // COMBINAR REFERENCIA
     let finalPaymentString = formData.formaPagoAnticipo;
     if (formData.formaPagoAnticipo !== 'Efectivo' && formData.referenciaPago) {
         finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
@@ -386,11 +443,10 @@ const OrderForm = ({
             cliente_nombre: formData.cliente,
             tipo_trabajo: formData.tipoLetrero,
             fecha_entrega: formData.fechaEntrega || null,
-            vendedor: formData.vendedor,
+            vendedor: formData.vendedor, 
             notas: formData.notas,
             prioridad: 'Normal',
             productos: validProducts,
-            
             financials: { 
                 ...financials, 
                 saldo: financials.saldoPendiente,
@@ -402,11 +458,9 @@ const OrderForm = ({
                 creditoVenceSaldo: formData.creditoVenceSaldo,
                 notaSaldo: formData.notaSaldo
             },
-            
             anticipo: formData.anticipo,
             retencion: formData.retencion,
-            forma_pago_anticipo: finalPaymentString, // Enviar el string combinado
-            
+            forma_pago_anticipo: finalPaymentString,
             imagenes: formData.imagenes, 
             updated_at: new Date().toISOString()
         };
@@ -416,6 +470,9 @@ const OrderForm = ({
             payload.order_number = num;
             payload.status = 'VENTAS';
             payload.created_at = new Date().toISOString();
+            payload.recibido_por_anticipo = currentUser.name; 
+        } else if (isAdmin && initialData.vendedor !== formData.vendedor) {
+            toast({ title: "Orden Reasignada", description: `Transferida a ${formData.vendedor}` });
         }
 
         if (initialData?.id) {
@@ -452,24 +509,43 @@ const OrderForm = ({
 
       <div className="p-6 overflow-y-auto flex-1 bg-white">
         <form id="orderForm" onSubmit={handleSubmit} className="space-y-6">
-          
-          {/* GENERAL INFO */}
           <div className="space-y-3 pb-6 border-b border-slate-200">
              <div className="grid grid-cols-12 gap-4 items-center">
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Titulo / Referencia:</label>
                 <div className="col-span-12 md:col-span-10">
                    <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isReadOnly} />
                 </div>
+                
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tipo de Orden:</label>
                 <div className="col-span-12 md:col-span-4">
                    <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isReadOnly}>
                      {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                    </select>
                 </div>
+
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Responsable:</label>
-                <div className="col-span-12 md:col-span-4">
-                   <input type="text" className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-slate-100 font-semibold text-slate-600" value={formData.vendedor} readOnly />
+                <div className="col-span-12 md:col-span-4 relative">
+                   {isAdmin ? (
+                       <div className="relative">
+                           <select 
+                               className="w-full border border-blue-300 bg-blue-50 rounded px-2 py-1 text-sm font-semibold text-blue-800 focus:outline-none appearance-none pr-8"
+                               value={formData.vendedor}
+                               onChange={(e) => setFormData({...formData, vendedor: e.target.value})}
+                           >
+                               {staffUsers.filter(u => u.role === 'Vendedor' || u.role === 'Administrador').map(u => (
+                                   <option key={u.id} value={u.name}>{u.name}</option>
+                               ))}
+                           </select>
+                           <Users className="absolute right-2 top-1.5 h-4 w-4 text-blue-500 pointer-events-none" />
+                       </div>
+                   ) : (
+                       <>
+                           <input type="text" className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-slate-100 font-semibold text-slate-600 cursor-not-allowed" value={formData.vendedor} readOnly />
+                           <Lock className="absolute right-2 top-1.5 h-3 w-3 text-slate-400" />
+                       </>
+                   )}
                 </div>
+
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Cliente:</label>
                 <div className="col-span-12 md:col-span-10 relative" ref={searchRef}>
                    <div className="flex items-center gap-2 w-full md:w-1/2">
@@ -572,11 +648,13 @@ const OrderForm = ({
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1"><span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span><input type="number" step="0.01" className={`w-full pl-6 pr-2 py-1 border rounded text-sm font-bold ${paymentMode === 'full' ? 'bg-slate-100 text-green-700' : 'bg-white border-slate-300'}`} value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} readOnly={paymentMode === 'full' || mode==='read_only'} placeholder="0.00" /></div>
                    </div>
+                   
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
                       <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select>
                    </div>
 
+                   {/* CAMPO DE REFERENCIA CONDICIONAL */}
                    {formData.formaPagoAnticipo !== 'Efectivo' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-blue-600">Referencia:</label>
@@ -606,19 +684,14 @@ const OrderForm = ({
 
           <div className="space-y-2 pt-2 border-t border-slate-200">
              <div className="text-xs text-slate-500 italic">Arte/Diseño</div>
-             <div className="border border-slate-300 p-4 rounded-sm">
-                <div className="min-h-[100px] border border-slate-200 bg-slate-50 mb-3 p-3 flex flex-wrap gap-4">
-                   {/* IMÁGENES GUARDADAS Y NUEVAS (UNIFICADO) */}
-                   {formData.imagenes.map((img, i) => (
-                      <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all">
-                         <img src={img.url} alt={img.name} className="w-full h-full object-cover" title={img.name} />
-                         {!isReadOnly && <button type="button" onClick={() => removeImage(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>}
-                      </div>
-                   ))}
-                   {formData.imagenes.length === 0 && (<div className="w-full h-full flex flex-col items-center justify-center text-slate-400 text-xs py-4"><FileImage className="h-8 w-8 mb-2 opacity-50" /><span>Sin imágenes adjuntas</span></div>)}
-                </div>
-                {!isReadOnly && (<div><input type="file" id="file-upload" multiple accept="image/*" className="hidden" onChange={handleImageUpload}/><label htmlFor="file-upload" className="inline-flex items-center gap-1 bg-green-600 hover:bg-green-700 text-white text-xs px-3 py-1.5 rounded cursor-pointer"><Plus className="h-3 w-3" /> Agregar...</label></div>)}
-             </div>
+             {/* COMPONENTE DE IMÁGENES AISLADO Y OPTIMIZADO */}
+             <ImageGallery 
+                images={formData.imagenes} 
+                isReadOnly={isReadOnly} 
+                onRemove={removeImage} 
+                onAdd={handleAddImages} 
+                isProcessing={isProcessingImages}
+             />
              <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Observaciones:</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isReadOnly} /></div>
           </div>
         </form>
