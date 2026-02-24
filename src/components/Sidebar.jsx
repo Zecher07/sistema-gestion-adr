@@ -1,12 +1,9 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-// Importamos iconos nuevos del cliente
-import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet } from 'lucide-react';
+import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package } from 'lucide-react';
 import { cn } from '@/lib/utils';
-import { useToast } from '@/components/ui/use-toast';
 
 const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
-  const { toast } = useToast();
   const Icon = item.icon;
   const hasSubmenu = item.submenu && item.submenu.length > 0;
   const isChildActive = hasSubmenu && item.submenu.some(sub => sub.id === currentView);
@@ -15,7 +12,7 @@ const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
   React.useEffect(() => { if (isChildActive) setIsSubmenuOpen(true); }, [isChildActive]);
 
   const handleClick = () => {
-    if (hasSubmenu) { setIsSubmenuOpen(!isSubmenuOpen); } 
+    if (hasSubmenu) setIsSubmenuOpen(!isSubmenuOpen);
     else { onClick(item); if (item.action) item.action(); }
   };
 
@@ -43,21 +40,14 @@ const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
 
 const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] }) => {
   
-  // --- MENÚ FUSIONADO: TUYO + CLIENTE ---
   const allMenuItems = [
     { id: 'inicio', label: 'Inicio', icon: Home }, 
-    
-    // Módulo Clientes
     { id: 'clientes', label: 'Clientes', icon: Users, submenu: [
         { label: 'Lista de Clientes', id: 'clientes-lista' },
         { label: 'Nuevo Cliente', id: 'clientes-nuevo' }
       ]
     }, 
-    
-    // Módulo Proformas (NUEVO CLIENTE)
     { id: 'proformas', label: 'Cotizaciones', icon: FileSpreadsheet },
-
-    // Módulo Órdenes
     { id: 'ordenes', label: 'Órdenes Producción', icon: FileText, submenu: [
         { label: 'Ver Todas', id: 'ordenes-todas' },
         { label: 'Nueva Orden', id: 'ordenes-nueva' },
@@ -65,28 +55,30 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
         { label: 'Con Factura', id: 'ordenes-con-factura' },
         { label: 'Crédito', id: 'ordenes-credito' },
         { label: 'Archivadas', id: 'ordenes-archivadas' },
-        ...(user.role === 'Administrador' ? [{ label: 'Configuración', id: 'configuracion', icon: Settings }] : [])
+        ...(user?.role === 'Administrador' ? [{ label: 'Configuración', id: 'configuracion', icon: Settings }] : [])
       ]
     },
-    
-    // Módulo Facturación (NUEVO CLIENTE)
     { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
+    
+    // 🔥 INVENTARIO DIVIDIDO CON PERMISOS
+    { id: 'inventario', label: 'Inventario', icon: Package, submenu: [
+        { label: 'Ver Inventario', id: 'inventario-ver' },
+        // La opción de gestionar solo se agrega si es Admin o Producción
+        ...(user?.role === 'Administrador' || user?.role === 'Producción' ? [{ label: 'Gestionar Inventario', id: 'inventario-gestionar' }] : [])
+      ]
+    },
 
-    // Módulo Trabajo
     { id: 'trabajo', label: 'Área de Trabajo', icon: Briefcase, submenu: [
         { label: 'Lista Tareas', id: 'trabajo-listado' }, 
-        { label: 'Tablero Kanban', id: 'trabajo-mistareas' }, // Nuevo
+        { label: 'Tablero Kanban', id: 'trabajo-mistareas' },
         { label: 'Calendario', id: 'trabajo-disponibilidad' }
       ]
     }, 
-
-    // Módulo Usuarios 
     { id: 'usuarios', label: 'Admin Usuarios', icon: Shield, submenu: [
         { label: 'Gestión Personal', id: 'admin-usuarios' }, 
         { label: 'Roles y Permisos', id: 'roles-permisos' } 
       ]
     },
-    
     { id: 'estadisticas', label: 'Estadísticas', icon: BarChart2, submenu: [
         { label: 'Gráficos', id: 'estadisticas-graficos' }, 
         { label: 'Reporte Diario', id: 'estadisticas-reporte' }
@@ -96,20 +88,23 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     { id: 'salir', label: 'Cerrar Sesión', icon: LogOut, action: onLogout }
   ];
 
-  // --- FILTRO DE SEGURIDAD (TU LÓGICA) ---
-  const visibleItems = allMenuItems.filter(item => {
-    if (item.id === 'salir') return true; 
-    if (user.role === 'Administrador') return true; 
+  const visibleItems = allMenuItems.map(item => {
+    if (item.id === 'salir' || item.id === 'inicio' || item.id === 'mi-perfil') return item;
+    
+    // Filtro especial para Inventario (siempre visible, pero su submenu cambia según el rol arriba)
+    if (item.id === 'inventario') return item;
 
-    // Si no es admin, filtramos:
-    if (item.id !== 'inicio' && !allowedViews.includes(item.id)) return false;
+    if (user?.role === 'Administrador') return item; 
+
+    if (!allowedViews.includes(item.id)) return null;
 
     if (item.submenu) {
-        item.submenu = item.submenu.filter(sub => allowedViews.includes(sub.id));
-        if (item.submenu.length === 0) return false; 
+        const filteredSub = item.submenu.filter(sub => allowedViews.includes(sub.id));
+        if (filteredSub.length === 0) return null;
+        return { ...item, submenu: filteredSub };
     }
-    return true;
-  });
+    return item;
+  }).filter(Boolean);
 
   return (
     <div className="w-64 bg-slate-900 h-screen flex flex-col shadow-2xl border-r border-slate-800 fixed left-0 top-0 z-40 overflow-y-auto print:hidden">
@@ -127,7 +122,7 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
           <MenuItem key={item.label} item={item} isActive={currentView === item.id || (item.submenu && item.submenu.some(sub => sub.id === currentView))} currentView={currentView} onClick={(item) => item.id && !item.submenu && onViewChange(item.id)} onSubItemClick={(subId) => onViewChange(subId)} />
         ))}
       </div>
-      <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600 text-center">Sistema v2.0 - Fusionado</div>
+      <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600 text-center">Sistema v2.1 - Inventario Roles</div>
     </div>
   );
 };

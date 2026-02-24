@@ -1,10 +1,11 @@
 import React, { useState, useEffect, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, ExternalLink, User, Calendar, FileBox } from 'lucide-react';
+import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, ExternalLink, User, Calendar, FileBox, CheckCircle2, PlayCircle, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import StatusBadge from '@/components/StatusBadge';
+import { supabase } from '../supabaseClient'; 
 import {
   AlertDialog,
   AlertDialogAction,
@@ -16,11 +17,10 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Flujos de trabajo
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- 1. COMPONENTE DE IMAGEN OPTIMIZADO (MEMO) ---
+// --- COMPONENTE DE IMAGEN OPTIMIZADO (MEMO) ---
 const ImageGalleryViewer = memo(({ images, onPreview }) => {
     if (!images || images.length === 0) {
         return (
@@ -62,7 +62,6 @@ const OrderDetailsModal = ({
   user, 
   staffUsers = [],
   onClose, 
-  onProductToggle, 
   isTaskView, 
   onAdvanceWorkflow, 
   onArchiveOrder,
@@ -74,13 +73,19 @@ const OrderDetailsModal = ({
 }) => {
   const [previewImage, setPreviewImage] = useState(null);
   const [showAnulateAlert, setShowAnulateAlert] = useState(false);
+  
+  // ESTADO LOCAL PARA PRODUCCIÓN
+  const [localProdState, setLocalProdState] = useState('Pendiente');
+  const [isUpdatingProd, setIsUpdatingProd] = useState(false);
+  
   const { toast } = useToast();
-
   const isAdmin = user?.role === 'Administrador';
 
   useEffect(() => {
     if (order) {
       document.body.style.overflow = 'hidden';
+      // Cargar el estado de producción al abrir
+      setLocalProdState(order.estado_produccion || 'Pendiente');
     }
     return () => {
       document.body.style.overflow = 'unset';
@@ -92,9 +97,8 @@ const OrderDetailsModal = ({
      return removeDuplicateUsers(sellers);
   }, [staffUsers]);
 
-  // 🔥 CORRECCIÓN: ESTE HOOK AHORA ESTÁ ANTES DEL RETURN NULL
   const canAdvanceWorkflow = useMemo(() => {
-      if (!order) return false; // Validación interna
+      if (!order) return false;
       
       const isAnulada = order.status === 'ANULADA';
       const isArchivada = order.status === 'ARCHIVADA';
@@ -116,10 +120,8 @@ const OrderDetailsModal = ({
       }
   }, [order, user]);
 
-  // --- AHORA SÍ PODEMOS HACER EL RETURN SI NO HAY ORDEN ---
   if (!order) return null;
 
-  // --- MAPEO DE DATOS ---
   const data = {
       titulo: order.tipoLetrero || order.tipoOrden || order.tipo_trabajo || order.titulo || 'Sin Título',
       cliente: order.cliente || order.cliente_nombre || order.nombre_cliente || 'Cliente Desconocido',
@@ -174,7 +176,10 @@ const OrderDetailsModal = ({
   const canArchive = isAdmin && isFinalizada;
   const canInvoice = !isAnulada && (user.role === 'Vendedor' || user.role === 'Contabilidad' || user.role === 'Administrador');
     
-  const showWorkflowButton = canAdvanceWorkflow;
+  const isProductionView = order.status === 'PRODUCCION' && (user.role === 'Producción' || isAdmin);
+  
+  // El botón de avanzar a ventas solo aparece si Producción terminó
+  const showWorkflowButton = canAdvanceWorkflow && (!isProductionView || localProdState === 'Finalizado');
 
   const getWorkflowButtonConfig = () => {
      const tipo = data.titulo || ''; 
@@ -186,7 +191,7 @@ const OrderDetailsModal = ({
      let text = `Pasar a ${nextStatus}`;
      
      if (order.status === 'VENTAS') text = nextStatus === 'PRODUCCION' ? "Enviar a Producción" : "Enviar a Contabilidad";
-     if (order.status === 'PRODUCCION') text = "Terminar Producción";
+     if (order.status === 'PRODUCCION') text = `Pasar a Ventas – ${data.autor}`;
      if (order.status === 'VENTAS POR RETIRAR') text = "Entregar / Enviar a Contabilidad";
      if (order.status === 'CONTABILIDAD') text = "Finalizar Orden";
      
@@ -194,6 +199,28 @@ const OrderDetailsModal = ({
   };
 
   const workflowConfig = getWorkflowButtonConfig();
+
+  // 🔥 FUNCIÓN PARA INICIAR/FINALIZAR PRODUCCIÓN (OPTIMIZADA) 🔥
+  const handleToggleProduction = async (newState) => {
+      setIsUpdatingProd(true);
+      try {
+          // 1. Guardamos en la base de datos
+          const { error } = await supabase.from('ordenes').update({ estado_produccion: newState }).eq('id', order.id);
+          if (error) throw error;
+          
+          // 2. 🔥 EL TRUCO MAGICO 🔥: Actualizamos el objeto 'order' directamente en memoria
+          // Así, si cierras y abres el modal rápido, la memoria ya sabe que cambió.
+          order.estado_produccion = newState;
+          
+          // 3. Actualizamos la interfaz actual
+          setLocalProdState(newState); 
+          toast({ title: "Producción", description: `Estado cambiado a: ${newState}` });
+      } catch (error) {
+          toast({ title: "Error", description: "No se guardó el estado.", variant: "destructive" });
+      } finally {
+          setIsUpdatingProd(false);
+      }
+  };
 
   return (
     <div className="fixed inset-0 z-50 flex justify-end items-stretch">
@@ -402,21 +429,57 @@ const OrderDetailsModal = ({
                 <div className="pb-8">
                     <h3 className="font-bold text-slate-700 mb-3 flex items-center gap-2"><ImageIcon className="h-4 w-4"/> Arte / Archivos Adjuntos</h3>
                     <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 min-h-[250px] flex items-center justify-center bg-white">
-                        {/* IMÁGENES OPTIMIZADAS */}
                         <ImageGalleryViewer images={data.imagenes} onPreview={setPreviewImage} />
                     </div>
                 </div>
             </div>
 
             <div className="bg-white border-t border-slate-200 p-6 flex justify-end gap-3 shrink-0 relative z-20">
+                
+                {/* BOTONES DE INICIAR/FINALIZAR PRODUCCIÓN */}
+                {isProductionView && localProdState !== 'Finalizado' && (
+                    <div className="flex flex-col items-end gap-1">
+                        {localProdState === 'Pendiente' ? (
+                            <Button 
+                                size="lg" 
+                                disabled={isUpdatingProd}
+                                className="bg-orange-500 hover:bg-orange-600 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" 
+                                onClick={() => handleToggleProduction('En Proceso')}
+                            >
+                                {isUpdatingProd ? <Loader2 className="h-6 w-6 animate-spin"/> : <PlayCircle className="h-6 w-6" />} INICIAR PRODUCCIÓN
+                            </Button>
+                        ) : (
+                            <Button 
+                                size="lg" 
+                                disabled={isUpdatingProd}
+                                className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" 
+                                onClick={() => handleToggleProduction('Finalizado')}
+                            >
+                                {isUpdatingProd ? <Loader2 className="h-6 w-6 animate-spin"/> : <CheckCircle2 className="h-6 w-6" />} FINALIZAR PRODUCCIÓN
+                            </Button>
+                        )}
+                        <span className="text-xs text-slate-500 font-medium px-2">
+                            {localProdState === 'Pendiente' ? 'Haz clic para comenzar a trabajar' : 'Haz clic cuando hayas terminado todo'}
+                        </span>
+                    </div>
+                )}
+
+                {/* BOTÓN ESTÁNDAR PARA PASAR A OTRA ETAPA */}
                 {showWorkflowButton && (
                     <div className="flex flex-col items-end gap-1">
-                      <Button size="lg" className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" onClick={() => onAdvanceWorkflow(order)}>
+                      <Button size="lg" className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" onClick={() => {
+                          // Truco idéntico para que el workflow se guarde localmente
+                          order.status = workflowConfig.text.includes('Contabilidad') ? 'CONTABILIDAD' : 
+                                         workflowConfig.text.includes('Producción') ? 'PRODUCCION' : 
+                                         workflowConfig.text.includes('Ventas') ? 'VENTAS POR RETIRAR' : 'FINALIZADA';
+                          onAdvanceWorkflow(order);
+                      }}>
                         {workflowConfig.text} <ArrowRightCircle className="h-6 w-6" />
                       </Button>
                       <span className="text-xs text-slate-500 font-medium px-2">{workflowConfig.helper}</span>
                     </div>
                 )}
+
                 {canArchive && (
                     <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" onClick={() => onArchiveOrder(order)}>
                       ARCHIVAR Orden <Archive className="h-6 w-6" />
