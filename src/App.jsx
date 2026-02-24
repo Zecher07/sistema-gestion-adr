@@ -29,6 +29,7 @@ import InvoicesPanel from '@/components/InvoicesPanel';
 import InvoiceForm from '@/components/InvoiceForm';
 import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 import InventoryPanel from '@/components/InventoryPanel';
+import CatalogPanel from '@/components/CatalogPanel';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -404,6 +405,7 @@ function App() {
       case 'inventario-ver': return <InventoryPanel user={user} mode="view" />;
       case 'inventario-gestionar': return <InventoryPanel user={user} mode="manage" />; 
       case 'estadisticas-graficos': return <StatisticsCharts orders={orders} />;
+      case 'inventario-catalogo': return <CatalogPanel user={user} />;
       default: return <div className="p-10 text-center text-slate-500">Seleccione una opción del menú lateral.</div>;
     }
   };

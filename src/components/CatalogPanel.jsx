@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw } from 'lucide-react';
+import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/Text';
+import { Input } from '@/components/ui/Text'; // O input, según tu configuración
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 
@@ -10,27 +10,50 @@ const CatalogPanel = ({ user }) => {
   const { toast } = useToast();
   const [items, setItems] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [searchTerm, setSearchTerm] = useState('');
   
-  const isAdmin = user?.role === 'Administrador';
-  const isReadOnly = !isAdmin; // Solo Admin puede editar el catálogo base
+  // Para la búsqueda optimizada (Server-Side)
+  const [searchInput, setSearchInput] = useState('');
+  const [activeSearchTerm, setActiveSearchTerm] = useState('');
+  
+  const canEditCatalog = user?.role === 'Administrador' || user?.role === 'Producción';
+  const isReadOnly = !canEditCatalog; 
 
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   const [formData, setFormData] = useState({ codigo: '', categoria: '', nombre: '', descripcion: '', precio: 0 });
   const [saving, setSaving] = useState(false);
 
-  useEffect(() => { fetchCatalog(); }, []);
+  // Se ejecuta al cargar y cuando cambia el término de búsqueda activo
+  useEffect(() => { 
+      fetchCatalog(activeSearchTerm); 
+  }, [activeSearchTerm]);
 
-  const fetchCatalog = async () => {
+  const fetchCatalog = async (searchTerm = '') => {
     setLoading(true);
     try {
-      const { data, error } = await supabase.from('catalogo_productos').select('*').order('nombre');
+      let query = supabase.from('catalogo_productos').select('*');
+      
+      // 🔥 LA MAGIA DE LA OPTIMIZACIÓN: Si hay texto, busca en la DB. 
+      if (searchTerm) {
+          query = query.or(`nombre.ilike.%${searchTerm}%,codigo.ilike.%${searchTerm}%`);
+      }
+      
+      // 🔥 Límite de 100 productos en pantalla para no saturar la memoria RAM
+      query = query.order('nombre').limit(100);
+
+      const { data, error } = await query;
       if (error) throw error;
       setItems(data || []);
     } catch (error) {
       toast({ title: "Error", description: "No se pudo cargar el catálogo", variant: "destructive" });
     } finally { setLoading(false); }
+  };
+
+  // Retraso para no buscar por cada letra (Debounce manual)
+  const handleSearchKeyDown = (e) => {
+      if (e.key === 'Enter') {
+          setActiveSearchTerm(searchInput);
+      }
   };
 
   const handleOpenModal = (item = null) => {
@@ -59,7 +82,7 @@ const CatalogPanel = ({ user }) => {
               toast({ title: "Creado", description: "Producto añadido al catálogo." });
           }
           setIsModalOpen(false);
-          fetchCatalog();
+          fetchCatalog(activeSearchTerm);
       } catch (error) {
           toast({ title: "Error", description: error.message, variant: "destructive" });
       } finally { setSaving(false); }
@@ -71,16 +94,11 @@ const CatalogPanel = ({ user }) => {
           const { error } = await supabase.from('catalogo_productos').delete().eq('id', id);
           if (error) throw error;
           toast({ title: "Eliminado", description: "Producto borrado." });
-          fetchCatalog();
+          fetchCatalog(activeSearchTerm);
       } catch (error) {
           toast({ title: "Error", description: "No se pudo eliminar.", variant: "destructive" });
       }
   };
-
-  const filteredItems = items.filter(item => 
-      (item.nombre?.toLowerCase() || '').includes(searchTerm.toLowerCase()) || 
-      (item.codigo?.toLowerCase() || '').includes(searchTerm.toLowerCase())
-  );
 
   return (
     <div className="space-y-6 animate-in fade-in">
@@ -96,12 +114,24 @@ const CatalogPanel = ({ user }) => {
 
         <Card className="border-slate-200 shadow-sm">
             <CardContent className="p-0">
-                <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
-                    <div className="relative w-full max-w-md">
-                        <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                        <Input placeholder="Buscar por código o nombre..." className="pl-9 bg-white" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between flex-wrap gap-4">
+                    <div className="relative w-full max-w-md flex items-center gap-2">
+                        <div className="relative flex-1">
+                            <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                            <Input 
+                                placeholder="Escribe y presiona Enter para buscar..." 
+                                className="pl-9 bg-white" 
+                                value={searchInput} 
+                                onChange={(e) => setSearchInput(e.target.value)} 
+                                onKeyDown={handleSearchKeyDown}
+                            />
+                        </div>
+                        <Button variant="secondary" onClick={() => setActiveSearchTerm(searchInput)}>Buscar</Button>
                     </div>
-                    <Button variant="ghost" size="icon" onClick={fetchCatalog} disabled={loading}><RefreshCw className={`h-4 w-4 text-slate-500 ${loading ? 'animate-spin' : ''}`}/></Button>
+                    <div className="flex items-center gap-4">
+                        <span className="text-xs text-slate-500">Mostrando máx. 100 resultados</span>
+                        <Button variant="ghost" size="icon" onClick={() => fetchCatalog(activeSearchTerm)} disabled={loading}><RefreshCw className={`h-4 w-4 text-slate-500 ${loading ? 'animate-spin' : ''}`}/></Button>
+                    </div>
                 </div>
 
                 <div className="overflow-x-auto">
@@ -117,10 +147,10 @@ const CatalogPanel = ({ user }) => {
                         <tbody className="divide-y divide-slate-200 bg-white">
                             {loading ? (
                                 <tr><td colSpan={isReadOnly ? "3" : "4"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando catálogo...</td></tr>
-                            ) : filteredItems.length === 0 ? (
-                                <tr><td colSpan={isReadOnly ? "3" : "4"} className="text-center py-10 text-slate-500">No se encontraron productos.</td></tr>
+                            ) : items.length === 0 ? (
+                                <tr><td colSpan={isReadOnly ? "3" : "4"} className="text-center py-10 text-slate-500">No se encontraron productos. Intenta otra búsqueda.</td></tr>
                             ) : (
-                                filteredItems.map(item => (
+                                items.map(item => (
                                     <tr key={item.id} className="hover:bg-purple-50 transition-colors">
                                         <td className="px-4 py-3 font-mono text-xs font-bold text-slate-500">{item.codigo || '-'}</td>
                                         <td className="px-4 py-3">
