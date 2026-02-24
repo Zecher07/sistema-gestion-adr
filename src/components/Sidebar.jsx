@@ -63,8 +63,8 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     // 🔥 INVENTARIO DIVIDIDO CON PERMISOS
     { id: 'inventario', label: 'Inventario', icon: Package, submenu: [
         { label: 'Ver Inventario', id: 'inventario-ver' },
-        // La opción de gestionar solo se agrega si es Admin o Producción
-        ...(user?.role === 'Administrador' || user?.role === 'Producción' ? [{ label: 'Gestionar Inventario', id: 'inventario-gestionar' }] : [])
+        ...(user?.role === 'Administrador' || user?.role === 'Producción' ? [{ label: 'Gestionar Inventario', id: 'inventario-gestionar' }] : []),
+        { label: 'Catálogo / Precios', id: 'inventario-catalogo' }
       ]
     },
 
@@ -85,7 +85,8 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
       ]
     }, 
     { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
-    { id: 'salir', label: 'Cerrar Sesión', icon: LogOut, action: onLogout }
+    { id: 'salir', label: 'Cerrar Sesión', icon: LogOut, action: onLogout },
+    
   ];
 
   const visibleItems = allMenuItems.map(item => {

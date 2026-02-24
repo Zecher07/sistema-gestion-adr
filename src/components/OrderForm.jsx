@@ -113,6 +113,10 @@ const OrderForm = ({
   const [localClients, setLocalClients] = useState(clients);
   const searchRef = useRef(null);
 
+  // --- LÓGICA AUTOCOMPLETADO DE PRODUCTOS ---
+  const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
+  const [productSuggestions, setProductSuggestions] = useState([]);
+
   useEffect(() => { setLocalClients(clients); }, [clients]);
 
   // --- ESTADO DEL FORMULARIO ---
@@ -139,8 +143,8 @@ const OrderForm = ({
     retentionPercent: 0, 
     formaPagoAnticipo: 'Efectivo',
     referenciaPago: '', 
-    notaAnticipo: '', // NUEVO: Notas para anticipo (Ej: Efectivo billete 100)
-    creditoVenceAnticipo: '', // NUEVO: Fecha vencimiento si el anticipo es a crédito
+    notaAnticipo: '', 
+    creditoVenceAnticipo: '', 
     
     saldo: 0,
     formaPagoSaldo: 'No aplica',
@@ -150,7 +154,7 @@ const OrderForm = ({
     descuentoPorcentaje: 0,
     aplicarIva: true,
     ivaPercentage: 15,
-    origenProformaInfo: '', // NUEVO: Para guardar el ID de proforma visual
+    origenProformaInfo: '', 
     imagenes: [], 
     notas: ''
   });
@@ -208,7 +212,7 @@ const OrderForm = ({
         productos: initialData.productos || [],
         
         vendedor: initialData.vendedor || currentUser.name,
-        aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true, // Toma el IVA de la proforma
+        aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true,
 
         anticipo: savedAnticipo,
         formaPagoAnticipo: savedPaymentMethod,
@@ -235,7 +239,6 @@ const OrderForm = ({
     }
   }, [initialData, nextOrderNumber, currentUser]);
 
-  // Manejo Fechas
   const currentDatePart = formData.fechaEntrega ? formData.fechaEntrega.split('T')[0] : '';
   const currentTimePart = formData.fechaEntrega ? new Date(formData.fechaEntrega).toTimeString().slice(0,5) : '12:00';
 
@@ -299,11 +302,9 @@ const OrderForm = ({
 
   }, [formData.productos, formData.descuentoPorcentaje, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode]);
 
-  // --- CÁLCULO DE PORCENTAJES DE PAGO PARA UI ---
   const porcentajeAnticipoUI = financials.total > 0 ? ((formData.anticipo / financials.total) * 100).toFixed(1) : '0.0';
   const porcentajeSaldoUI = financials.total > 0 ? ((financials.saldoPendiente / financials.total) * 100).toFixed(1) : '0.0';
 
-  // --- HANDLERS ---
   const commitDiscountValue = () => {
     const val = parseFloat(localDiscountVal) || 0;
     const percent = financials.subtotal > 0 ? (val / financials.subtotal) * 100 : 0;
@@ -336,6 +337,49 @@ const OrderForm = ({
       } else {
           if (valNum > 0) setLocalAnticipo(valNum.toFixed(2));
       }
+  };
+
+  // --- HANDLERS DE BÚSQUEDA DE PRODUCTOS (AUTOCOMPLETADO) ---
+  const handleProductSearchRequest = async (index, value) => {
+      handleProductChange(index, 'descripcion', value);
+      
+      // Mostrar sugerencias si tiene al menos 2 caracteres
+      if (value.trim().length < 2) {
+          setProductSuggestions([]);
+          setActiveProductSearchRow(null);
+          return;
+      }
+      
+      setActiveProductSearchRow(index);
+      const { data } = await supabase
+          .from('catalogo_productos')
+          .select('*')
+          .ilike('nombre', `%${value}%`)
+          .limit(8);
+          
+      setProductSuggestions(data || []);
+  };
+
+  const handleSelectProductSuggestion = (index, product) => {
+      const desc = product.nombre + (product.descripcion ? ` - ${product.descripcion}` : '');
+      
+      // Actualizamos todo en un solo movimiento para evitar que se borre el texto
+      setFormData(prev => {
+          const newProducts = [...prev.productos];
+          newProducts[index] = { 
+              ...newProducts[index], 
+              descripcion: desc, 
+              precio: product.precio 
+          };
+          // Si es la última fila, agregamos una nueva vacía automáticamente
+          if (index === newProducts.length - 1) {
+              newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
+          }
+          return { ...prev, productos: newProducts };
+      });
+
+      setProductSuggestions([]);
+      setActiveProductSearchRow(null);
   };
 
   const handleProductChange = (index, field, value) => {
@@ -452,8 +496,8 @@ const OrderForm = ({
             anticipo: formData.anticipo,
             retencion: formData.retencion,
             forma_pago_anticipo: finalPaymentString,
-            nota_anticipo: formData.notaAnticipo, // Guardar nota
-            credito_vence_anticipo: formData.creditoVenceAnticipo, // Guardar fecha crédito
+            nota_anticipo: formData.notaAnticipo, 
+            credito_vence_anticipo: formData.creditoVenceAnticipo, 
             imagenes: formData.imagenes, 
             updated_at: new Date().toISOString()
         };
@@ -508,7 +552,6 @@ const OrderForm = ({
                 <div className="col-span-12 md:col-span-10 flex items-center gap-3">
                    <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isReadOnly} />
                    
-                   {/* BADGE DE ORIGEN DE PROFORMA */}
                    {formData.origenProformaInfo && (
                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
                            <Info className="h-3 w-3" />
@@ -598,7 +641,38 @@ const OrderForm = ({
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
                              <td className="py-1 px-2 text-slate-400 text-xs text-center">{idx + 1}</td>
-                             <td className="py-1 px-2"><input type="text" className="w-full border-none bg-transparent focus:ring-0 text-sm p-0 placeholder-slate-300" placeholder={idx === formData.productos.length - 1 ? "Agregar item..." : ""} value={row.descripcion} onChange={e => handleProductChange(idx, 'descripcion', e.target.value)} readOnly={isReadOnly}/></td>
+                             
+                             {/* 🔥 CELDA DEL BUSCADOR MÁGICO DE PRODUCTOS 🔥 */}
+                             <td className="py-1 px-2 relative">
+                                <input 
+                                    type="text" 
+                                    className="w-full border-none bg-transparent focus:ring-0 text-sm p-0 placeholder-slate-300" 
+                                    placeholder={idx === formData.productos.length - 1 ? "Buscar producto o escribir..." : ""} 
+                                    value={row.descripcion} 
+                                    onChange={e => handleProductSearchRequest(idx, e.target.value)}
+                                    onFocus={() => { if(row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
+                                    onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 200)}
+                                    readOnly={isReadOnly}
+                                />
+                                {activeProductSearchRow === idx && productSuggestions.length > 0 && !isReadOnly && (
+                                    <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-xl max-h-60 overflow-y-auto left-0">
+                                        {productSuggestions.map(prod => (
+                                            <div 
+                                                key={prod.id} 
+                                                className="px-3 py-2 hover:bg-purple-50 cursor-pointer text-sm border-b border-slate-100" 
+                                                onMouseDown={(e) => { e.preventDefault(); handleSelectProductSuggestion(idx, prod); }}
+                                            >
+                                                <div className="font-bold text-slate-800">{prod.nombre}</div>
+                                                <div className="flex justify-between items-center mt-1">
+                                                    <span className="text-[10px] text-slate-500 font-mono">{prod.codigo || ''}</span>
+                                                    <span className="text-xs text-green-600 font-bold">${Number(prod.precio).toFixed(2)}</span>
+                                                </div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                             </td>
+
                              <td className="py-1 px-2"><input type="number" step="0.01" className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0" value={row.precio||''} onChange={e => handleProductChange(idx, 'precio', e.target.value)} readOnly={isReadOnly}/></td>
                              <td className="py-1 px-2"><input type="number" step="1" className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0" value={row.cantidad||''} onChange={e => handleProductChange(idx, 'cantidad', e.target.value)} readOnly={isReadOnly}/></td>
                              <td className="py-1 px-2 text-right font-medium text-slate-700">$ {rowTotal.toFixed(2)}</td>
@@ -646,7 +720,6 @@ const OrderForm = ({
                 <div className="space-y-3">
                    <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">{paymentMode === 'full' ? 'Pago Total Inmediato' : 'Pago del Anticipo'}</h4>
                    
-                   {/* PORCENTAJE EN ANTICIPO */}
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1">
@@ -661,7 +734,6 @@ const OrderForm = ({
                       <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select>
                    </div>
 
-                   {/* CONDICIONALES PARA ANTICIPO (REFERENCIA, FECHA CREDITO O NOTAS) */}
                    {formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.formaPagoAnticipo !== 'No aplica' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-blue-600">Referencia:</label>
@@ -679,7 +751,6 @@ const OrderForm = ({
                        </div>
                    )}
 
-                   {/* NOTAS GENERALES PARA ANTICIPO (Especialmente útil para Efectivo) */}
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
                       <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
@@ -696,7 +767,6 @@ const OrderForm = ({
                     <div className="space-y-3 opacity-100 transition-opacity">
                         <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Saldo Pendiente</h4>
                         
-                        {/* PORCENTAJE EN SALDO */}
                         <div className="flex items-center gap-2">
                             <label className="text-xs font-bold w-20">Saldo Restante:</label>
                             <div className="relative flex-1">

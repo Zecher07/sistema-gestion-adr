@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, memo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, ExternalLink, User, Calendar, FileBox, CheckCircle2, PlayCircle, Loader2 } from 'lucide-react';
+import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, ExternalLink, User, Calendar, FileBox, CheckCircle2, PlayCircle, Loader2, Package, Plus, Info, Search, Check } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
@@ -20,7 +20,6 @@ import {
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- COMPONENTE DE IMAGEN OPTIMIZADO (MEMO) ---
 const ImageGalleryViewer = memo(({ images, onPreview }) => {
     if (!images || images.length === 0) {
         return (
@@ -74,23 +73,52 @@ const OrderDetailsModal = ({
   const [previewImage, setPreviewImage] = useState(null);
   const [showAnulateAlert, setShowAnulateAlert] = useState(false);
   
-  // ESTADO LOCAL PARA PRODUCCIÓN
   const [localProdState, setLocalProdState] = useState('Pendiente');
   const [isUpdatingProd, setIsUpdatingProd] = useState(false);
   
+  const [inventory, setInventory] = useState([]);
+  const [usedMaterials, setUsedMaterials] = useState([]);
+  const [materialQty, setMaterialQty] = useState('');
+  const [isSavingMaterial, setIsSavingMaterial] = useState(false);
+
+  const [materialSearch, setMaterialSearch] = useState('');
+  const [selectedMaterial, setSelectedMaterial] = useState(null);
+  const [showMaterialSuggestions, setShowMaterialSuggestions] = useState(false);
+
   const { toast } = useToast();
   const isAdmin = user?.role === 'Administrador';
 
   useEffect(() => {
     if (order) {
       document.body.style.overflow = 'hidden';
-      // Cargar el estado de producción al abrir
       setLocalProdState(order.estado_produccion || 'Pendiente');
+      
+      let mats = [];
+      if (typeof order.materiales_usados === 'string') {
+          try { mats = JSON.parse(order.materiales_usados); } catch(e) {}
+      } else if (Array.isArray(order.materiales_usados)) {
+          mats = order.materiales_usados;
+      }
+      setUsedMaterials(mats);
     }
     return () => {
       document.body.style.overflow = 'unset';
     };
   }, [order]);
+
+  useEffect(() => {
+      if (order && (user.role === 'Producción' || isAdmin)) {
+          const fetchInventory = async () => {
+              try {
+                  const { data } = await supabase.from('inventario').select('*').order('nombre');
+                  if (data) setInventory(data);
+              } catch (e) {
+                  console.error("Error al cargar inventario:", e);
+              }
+          };
+          fetchInventory();
+      }
+  }, [order, user, isAdmin]);
 
   const validSellers = useMemo(() => {
      const sellers = getValidSellers(staffUsers);
@@ -178,7 +206,6 @@ const OrderDetailsModal = ({
     
   const isProductionView = order.status === 'PRODUCCION' && (user.role === 'Producción' || isAdmin);
   
-  // El botón de avanzar a ventas solo aparece si Producción terminó
   const showWorkflowButton = canAdvanceWorkflow && (!isProductionView || localProdState === 'Finalizado');
 
   const getWorkflowButtonConfig = () => {
@@ -200,19 +227,81 @@ const OrderDetailsModal = ({
 
   const workflowConfig = getWorkflowButtonConfig();
 
-  // 🔥 FUNCIÓN PARA INICIAR/FINALIZAR PRODUCCIÓN (OPTIMIZADA) 🔥
+  const filteredInventory = inventory.filter(inv => inv.nombre.toLowerCase().includes(materialSearch.toLowerCase()));
+
+  // 🔥 LÓGICA DE GUARDADO INVERTIDA Y BLINDADA 🔥
+  const handleAddMaterial = async () => {
+      if (!selectedMaterial || !materialQty || parseFloat(materialQty) <= 0) {
+          toast({ title: "Error", description: "Selecciona un material de la lista y pon una cantidad válida.", variant: "destructive" });
+          return;
+      }
+
+      setIsSavingMaterial(true);
+      try {
+          const qtyNum = parseFloat(materialQty);
+          const newInventoryQty = Number(selectedMaterial.cantidad) - qtyNum;
+
+          const newUsage = {
+              id: Date.now().toString(),
+              materialId: selectedMaterial.id,
+              nombre: selectedMaterial.nombre,
+              unidad: selectedMaterial.unidad || 'Unidades',
+              cantidad: qtyNum,
+              registradoPor: user.name,
+              fecha: new Date().toISOString()
+          };
+          
+          const updatedMaterials = [...usedMaterials, newUsage];
+
+          // 1. PRIMERO INTENTAMOS GUARDAR EN LA ORDEN (Si falla por caché, aborta y NO descuenta del inventario)
+          const { error: ordError } = await supabase.from('ordenes').update({ materiales_usados: updatedMaterials }).eq('id', order.id);
+          
+          // Si el caché de Supabase sigue molestando, te avisará de inmediato
+          if (ordError) throw ordError;
+
+          // 2. SI LA ORDEN SE GUARDÓ CON ÉXITO, ENTONCES SÍ DESCONTAMOS EL INVENTARIO
+          const { error: invError } = await supabase.from('inventario').update({ cantidad: newInventoryQty }).eq('id', selectedMaterial.id);
+          if (invError) throw invError;
+
+          // 3. ACTUALIZAMOS LA PANTALLA
+          setUsedMaterials(updatedMaterials);
+          order.materiales_usados = updatedMaterials;
+          setInventory(inventory.map(i => i.id === selectedMaterial.id ? { ...i, cantidad: newInventoryQty } : i));
+          
+          setSelectedMaterial(null);
+          setMaterialSearch('');
+          setMaterialQty('');
+          toast({ title: "Gasto Registrado", description: `Se descontaron ${qtyNum} ${selectedMaterial.unidad} de ${selectedMaterial.nombre}.`, className: "bg-green-500 text-white" });
+
+      } catch (error) {
+          console.error(error);
+          // Mensaje claro si el caché sigue pegado
+          toast({ 
+              title: "Error de Caché en Base de Datos", 
+              description: "Por favor limpia el caché en Supabase (Settings > API > Rebuild Schema Cache) o verifica que la columna 'materiales_usados' esté creada.", 
+              variant: "destructive" 
+          });
+      } finally {
+          setIsSavingMaterial(false);
+      }
+  };
+
   const handleToggleProduction = async (newState) => {
+      if (newState === 'Finalizado' && usedMaterials.length === 0) {
+          toast({ 
+              title: "⚠️ Registro de Materiales Obligatorio", 
+              description: "No puedes finalizar la producción sin registrar qué materiales utilizaste en el panel de 'Materiales Consumidos'.", 
+              variant: "destructive" 
+          });
+          return; 
+      }
+
       setIsUpdatingProd(true);
       try {
-          // 1. Guardamos en la base de datos
           const { error } = await supabase.from('ordenes').update({ estado_produccion: newState }).eq('id', order.id);
           if (error) throw error;
           
-          // 2. 🔥 EL TRUCO MAGICO 🔥: Actualizamos el objeto 'order' directamente en memoria
-          // Así, si cierras y abres el modal rápido, la memoria ya sabe que cambió.
           order.estado_produccion = newState;
-          
-          // 3. Actualizamos la interfaz actual
           setLocalProdState(newState); 
           toast({ title: "Producción", description: `Estado cambiado a: ${newState}` });
       } catch (error) {
@@ -241,7 +330,6 @@ const OrderDetailsModal = ({
               </div>
             )}
 
-            {/* Header */}
             <div className="bg-[#1e3a8a] text-white px-6 py-3 flex justify-between items-center text-xs print:hidden shrink-0 relative z-10">
                 <span className="font-bold text-sm">Detalles de Orden</span>
                 <div className="flex items-center gap-3">
@@ -249,7 +337,6 @@ const OrderDetailsModal = ({
                 </div>
             </div>
 
-            {/* Toolbar */}
             <div className="bg-white border-b border-gray-200 px-6 py-4 flex flex-col md:flex-row justify-between items-center gap-4 shrink-0 relative z-10 shadow-sm print:static">
                 <div className="flex items-center gap-4 text-blue-600 whitespace-nowrap overflow-x-auto max-w-full">
                     <span className="font-bold text-slate-900 text-2xl mx-2 flex items-center gap-2">
@@ -261,12 +348,7 @@ const OrderDetailsModal = ({
                 <div className="flex items-center gap-3 print:hidden">
                     
                     {(canEdit || isAdmin) && !isAnulada && !isArchivada && (
-                        <Button 
-                            size="sm"
-                            variant="outline"
-                            onClick={() => onUpdateOrder(order)} 
-                            className="border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-300 gap-2"
-                        >
+                        <Button size="sm" variant="outline" onClick={() => onUpdateOrder(order)} className="border-amber-200 bg-amber-50 text-amber-700 hover:bg-amber-100 hover:border-amber-300 gap-2">
                             <Edit2 className="h-4 w-4" /> Editar
                         </Button>
                     )}
@@ -291,7 +373,6 @@ const OrderDetailsModal = ({
                 </div>
             </div>
 
-            {/* Content */}
             <div className="flex-1 overflow-y-auto p-6 md:p-8 w-full relative z-0 flex flex-col bg-slate-50/30">
                 <div className="grid grid-cols-1 lg:grid-cols-2 gap-8 mb-8 bg-white p-6 rounded-xl border border-slate-200 shadow-sm">
                     <div className="space-y-4 text-sm">
@@ -343,7 +424,7 @@ const OrderDetailsModal = ({
                 </div>
 
                 <div className="mb-8">
-                      <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2"><FileText className="h-4 w-4"/> Detalle de Productos</h3>
+                      <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2"><FileText className="h-4 w-4"/> Detalle de Productos Vendidos</h3>
                       <div className="border border-gray-300 rounded-lg overflow-hidden shadow-sm">
                         <table className="w-full text-sm">
                             <thead className="bg-[#003366] text-white">
@@ -369,6 +450,108 @@ const OrderDetailsModal = ({
                             </tbody>
                         </table>
                     </div>
+                </div>
+
+                <div className="mb-8 bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
+                    <h3 className="font-bold text-slate-700 mb-4 border-b border-slate-200 pb-2 flex items-center gap-2">
+                        <Package className="h-5 w-5 text-orange-600"/> Registro de Materiales Consumidos
+                    </h3>
+                    
+                    {usedMaterials.length > 0 ? (
+                        <div className="mb-4 border border-slate-200 rounded-lg overflow-hidden">
+                            <table className="w-full text-sm">
+                                <thead className="bg-slate-100 text-slate-600">
+                                    <tr>
+                                        <th className="px-4 py-2 text-left">Material de Bodega</th>
+                                        <th className="px-4 py-2 text-center w-32">Cantidad Gastada</th>
+                                        <th className="px-4 py-2 text-left w-40">Operario</th>
+                                        <th className="px-4 py-2 text-left w-40">Fecha</th>
+                                    </tr>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100 bg-white">
+                                    {usedMaterials.map(mat => (
+                                        <tr key={mat.id} className="hover:bg-orange-50/30">
+                                            <td className="px-4 py-3 font-bold text-slate-800 uppercase">{mat.nombre}</td>
+                                            <td className="px-4 py-3 text-center font-bold text-orange-600 text-lg">
+                                                {mat.cantidad} <span className="text-xs text-slate-500 font-normal lowercase">{mat.unidad}</span>
+                                            </td>
+                                            <td className="px-4 py-3 text-slate-600 flex items-center gap-1"><User className="h-3 w-3"/> {mat.registradoPor}</td>
+                                            <td className="px-4 py-3 text-slate-500 text-xs">{formatDateFull(mat.fecha)}</td>
+                                        </tr>
+                                    ))}
+                                </tbody>
+                            </table>
+                        </div>
+                    ) : (
+                        <div className="text-sm text-slate-500 italic mb-4 bg-slate-50 p-4 rounded-md border border-dashed border-slate-300 flex items-center gap-3">
+                            <Info className="h-5 w-5 text-blue-400" />
+                            Aún no se han registrado materiales de inventario en esta orden.
+                        </div>
+                    )}
+
+                    {localProdState !== 'Finalizado' && (user.role === 'Producción' || isAdmin) && order.status === 'PRODUCCION' && (
+                        <div className="bg-orange-50/50 border border-orange-200 rounded-lg p-5 flex flex-col md:flex-row gap-4 items-end shadow-inner relative">
+                            
+                            <div className="flex-1 w-full relative">
+                                <label className="text-xs font-bold text-slate-700 block mb-1 uppercase tracking-wider">Descontar del Inventario:</label>
+                                <div className="relative">
+                                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                                    <input 
+                                        type="text"
+                                        placeholder="Escribe para buscar material..."
+                                        className={`w-full border border-slate-300 rounded-md py-2 pl-9 pr-8 text-sm focus:border-orange-500 outline-none ${selectedMaterial ? 'bg-orange-100 font-bold text-orange-800' : 'bg-white'}`}
+                                        value={selectedMaterial ? selectedMaterial.nombre : materialSearch}
+                                        onChange={(e) => {
+                                            setMaterialSearch(e.target.value);
+                                            setSelectedMaterial(null);
+                                            setShowMaterialSuggestions(true);
+                                        }}
+                                        onFocus={() => setShowMaterialSuggestions(true)}
+                                        onBlur={() => setTimeout(() => setShowMaterialSuggestions(false), 200)}
+                                    />
+                                    {selectedMaterial && <Check className="absolute right-3 top-2.5 h-4 w-4 text-green-600" />}
+                                </div>
+                                
+                                {showMaterialSuggestions && materialSearch && !selectedMaterial && filteredInventory.length > 0 && (
+                                    <div className="absolute z-[60] w-full mt-1 bg-white border border-slate-300 rounded-md shadow-2xl max-h-48 overflow-y-auto">
+                                        {filteredInventory.map(inv => (
+                                            <div 
+                                                key={inv.id} 
+                                                className={`px-4 py-2 text-sm border-b border-slate-100 cursor-pointer ${inv.cantidad <= 0 ? 'bg-slate-100 opacity-50' : 'hover:bg-orange-50'}`}
+                                                onMouseDown={(e) => {
+                                                    e.preventDefault();
+                                                    if (inv.cantidad > 0) setSelectedMaterial(inv);
+                                                }}
+                                            >
+                                                <div className="font-bold text-slate-800">{inv.nombre}</div>
+                                                <div className="text-xs text-slate-500">Disp: {inv.cantidad} {inv.unidad}</div>
+                                            </div>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+
+                            <div className="w-full md:w-32">
+                                <label className="text-xs font-bold text-slate-700 block mb-1 uppercase tracking-wider">Cantidad:</label>
+                                <input 
+                                    type="number" 
+                                    min="0.01" 
+                                    step="0.01" 
+                                    className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white text-center focus:border-orange-500 outline-none"
+                                    value={materialQty}
+                                    onChange={(e) => setMaterialQty(e.target.value)}
+                                    placeholder="Ej: 2.5"
+                                />
+                            </div>
+                            <Button 
+                                onClick={handleAddMaterial} 
+                                disabled={isSavingMaterial || !selectedMaterial || !materialQty}
+                                className="bg-orange-600 hover:bg-orange-700 text-white gap-2 w-full md:w-auto font-bold h-[38px]"
+                            >
+                                {isSavingMaterial ? <Loader2 className="h-4 w-4 animate-spin"/> : <Plus className="h-4 w-4" />} Descontar
+                            </Button>
+                        </div>
+                    )}
                 </div>
 
                 <div className="mb-8 bg-white p-6 border border-slate-200 rounded-xl shadow-sm">
@@ -436,7 +619,6 @@ const OrderDetailsModal = ({
 
             <div className="bg-white border-t border-slate-200 p-6 flex justify-end gap-3 shrink-0 relative z-20">
                 
-                {/* BOTONES DE INICIAR/FINALIZAR PRODUCCIÓN */}
                 {isProductionView && localProdState !== 'Finalizado' && (
                     <div className="flex flex-col items-end gap-1">
                         {localProdState === 'Pendiente' ? (
@@ -459,16 +641,14 @@ const OrderDetailsModal = ({
                             </Button>
                         )}
                         <span className="text-xs text-slate-500 font-medium px-2">
-                            {localProdState === 'Pendiente' ? 'Haz clic para comenzar a trabajar' : 'Haz clic cuando hayas terminado todo'}
+                            {localProdState === 'Pendiente' ? 'Haz clic para comenzar a trabajar' : 'Asegúrate de descontar los materiales primero'}
                         </span>
                     </div>
                 )}
 
-                {/* BOTÓN ESTÁNDAR PARA PASAR A OTRA ETAPA */}
                 {showWorkflowButton && (
                     <div className="flex flex-col items-end gap-1">
                       <Button size="lg" className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" onClick={() => {
-                          // Truco idéntico para que el workflow se guarde localmente
                           order.status = workflowConfig.text.includes('Contabilidad') ? 'CONTABILIDAD' : 
                                          workflowConfig.text.includes('Producción') ? 'PRODUCCION' : 
                                          workflowConfig.text.includes('Ventas') ? 'VENTAS POR RETIRAR' : 'FINALIZADA';

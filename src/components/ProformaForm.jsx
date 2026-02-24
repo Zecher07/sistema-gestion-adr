@@ -20,7 +20,7 @@ const ProformaForm = ({
   const [loading, setLoading] = useState(false);
 
   // --- ESTADOS ---
-  const [titulo, setTitulo] = useState(''); // 🔥 NUEVO ESTADO PARA EL TÍTULO
+  const [titulo, setTitulo] = useState(''); 
   
   const [clientSearch, setClientSearch] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
@@ -35,6 +35,10 @@ const ProformaForm = ({
   const [products, setProducts] = useState([
     { cantidad: 1, descripcion: '', precioUnitario: 0, total: 0 }
   ]);
+  
+  // --- LÓGICA AUTOCOMPLETADO DE PRODUCTOS ---
+  const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
+  const [productSuggestions, setProductSuggestions] = useState([]);
 
   const [financials, setFinancials] = useState({ subtotal: 0, iva: 0, total: 0 });
   const [notes, setNotes] = useState('');
@@ -66,7 +70,7 @@ const ProformaForm = ({
   // --- 2. CARGAR DATOS (EDICIÓN) ---
   useEffect(() => {
     if (initialData) {
-      setTitulo(initialData.titulo || initialData.tipo_trabajo || ''); // Cargar título si existe
+      setTitulo(initialData.titulo || initialData.tipo_trabajo || ''); 
       setClientSearch(initialData.cliente_nombre || '');
       setSelectedClient({
         nombre: initialData.cliente_nombre || '',
@@ -137,6 +141,47 @@ const ProformaForm = ({
     setProducts(newProducts);
   };
 
+  const handleProductSearchRequest = async (index, value) => {
+      updateProduct(index, 'descripcion', value);
+      
+      if (value.trim().length < 2) {
+          setProductSuggestions([]);
+          setActiveProductSearchRow(null);
+          return;
+      }
+      
+      setActiveProductSearchRow(index);
+      const { data } = await supabase
+          .from('catalogo_productos')
+          .select('*')
+          .ilike('nombre', `%${value}%`)
+          .limit(8);
+          
+      setProductSuggestions(data || []);
+  };
+
+  const handleSelectProductSuggestion = (index, product) => {
+      const desc = product.nombre + (product.descripcion ? ` - ${product.descripcion}` : '');
+      
+      // Actualizamos descripción, precio y calculamos el total en un solo paso
+      setProducts(prev => {
+          const newProducts = [...prev];
+          const currentItem = newProducts[index];
+          const qty = Number(currentItem.cantidad) || 1;
+          
+          newProducts[index] = { 
+              ...currentItem, 
+              descripcion: desc, 
+              precioUnitario: product.precio,
+              total: qty * Number(product.precio)
+          };
+          return newProducts;
+      });
+
+      setProductSuggestions([]);
+      setActiveProductSearchRow(null);
+  };
+  
   // --- GUARDAR ---
   const handleSubmit = async () => {
     const finalName = selectedClient.nombre || clientSearch;
@@ -153,7 +198,7 @@ const ProformaForm = ({
     setLoading(true);
     try {
       const payload = {
-        titulo: titulo, // 🔥 GUARDAR TÍTULO EN LA DB
+        titulo: titulo, 
         cliente_nombre: finalName,
         cliente_identificacion: selectedClient.identificacion,
         cliente_telefono: selectedClient.telefono,
@@ -217,7 +262,6 @@ const ProformaForm = ({
               <div className="flex items-center justify-between mb-4 border-b pb-2"><div className="flex items-center gap-2 text-blue-700 font-semibold"><User className="h-5 w-5" /> Datos Generales</div></div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* 🔥 CAMPO DE TÍTULO AÑADIDO AQUÍ */}
                 <div className="md:col-span-2">
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Título / Referencia del Trabajo <span className="text-red-500">*</span></label>
                     <Input placeholder="Ej: Letrero luminoso para local principal" value={titulo} onChange={(e) => setTitulo(e.target.value)} className="font-semibold text-blue-800" />
@@ -260,15 +304,44 @@ const ProformaForm = ({
                 <div className="flex items-center gap-2 text-blue-700 font-semibold"><Calculator className="h-5 w-5" /> Items</div>
                 <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50"><Plus className="h-4 w-4 mr-1" /> Agregar Item</Button>
               </div>
-              <div className="overflow-hidden border rounded-lg">
+              <div className="overflow-visible border rounded-lg pb-24"> 
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 text-slate-600 font-semibold">
                     <tr><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center w-24">Cant.</th><th className="px-3 py-2 text-right w-32">P. Unit</th><th className="px-3 py-2 text-right w-32">Total</th><th className="px-3 py-2 w-10"></th></tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {products.map((row, idx) => (
-                      <tr key={idx} className="hover:bg-slate-50">
-                        <td className="p-2"><Input className="h-9" placeholder="Descripción..." value={row.descripcion} onChange={(e) => updateProduct(idx, 'descripcion', e.target.value)} /></td>
+                      <tr key={idx} className="hover:bg-slate-50 group">
+                        
+                        {/* 🔥 CELDA DEL BUSCADOR MÁGICO DE PRODUCTOS (PROFORMAS) 🔥 */}
+                        <td className="p-2 relative">
+                            <Input 
+                                className="h-9 w-full" 
+                                placeholder="Escribe para buscar catálogo o añade manual..." 
+                                value={row.descripcion} 
+                                onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
+                                onFocus={() => { if(row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
+                                onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 200)}
+                            />
+                            {activeProductSearchRow === idx && productSuggestions.length > 0 && (
+                                <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-2xl max-h-60 overflow-y-auto left-0">
+                                    {productSuggestions.map(prod => (
+                                        <div 
+                                            key={prod.id} 
+                                            className="px-3 py-2 hover:bg-purple-50 cursor-pointer text-sm border-b border-slate-100" 
+                                            onMouseDown={(e) => { e.preventDefault(); handleSelectProductSuggestion(idx, prod); }}
+                                        >
+                                            <div className="font-bold text-slate-800">{prod.nombre}</div>
+                                            <div className="flex justify-between items-center mt-1">
+                                                <span className="text-[10px] text-slate-500 font-mono">{prod.codigo || ''}</span>
+                                                <span className="text-xs text-green-600 font-bold">${Number(prod.precio).toFixed(2)}</span>
+                                            </div>
+                                        </div>
+                                    ))}
+                                </div>
+                            )}
+                        </td>
+                        
                         <td className="p-2"><Input type="number" className="text-center h-9" min="1" value={row.cantidad} onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} /></td>
                         <td className="p-2"><Input type="number" className="text-right h-9" min="0" step="0.01" value={row.precioUnitario} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
                         <td className="p-2 text-right font-bold text-slate-800 bg-slate-50/50">${Number(row.total).toFixed(2)}</td>

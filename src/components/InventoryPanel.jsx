@@ -1,10 +1,11 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw } from 'lucide-react';
+import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text'; // Usamos Text.jsx según tu proyecto
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
+import { motion } from 'framer-motion';
 
 const InventoryPanel = ({ user, mode = 'manage' }) => {
   const { toast } = useToast();
