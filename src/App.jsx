@@ -12,7 +12,7 @@ import Login from '@/components/Login';
 import AnulationConfig from '@/components/AnulationConfig';
 import Sidebar from '@/components/Sidebar';
 import Stats from '@/components/Stats';
-import Notifications from '@/components/Notifications'; // <--- ESTE ES EL QUE ACTUALIZAREMOS
+import Notifications from '@/components/Notifications';
 import DailyReport from '@/components/DailyReport';
 import StatisticsCharts from '@/components/StatisticsCharts';
 import OrdersPanel from '@/components/OrdersPanel';
@@ -28,6 +28,7 @@ import ProformaDetailsModal from '@/components/ProformaDetailsModal';
 import InvoicesPanel from '@/components/InvoicesPanel';
 import InvoiceForm from '@/components/InvoiceForm';
 import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
+import InventoryPanel from '@/components/InventoryPanel';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -311,7 +312,9 @@ function App() {
               ivaPercentage: proforma.iva_percentage || 15,
               saldo: proforma.total
           },
-          tipo_trabajo: 'Proforma #' + (proforma.proformaNumber || proforma.numero),
+          tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', // Trae el título de la proforma
+          origenProformaInfo: proforma.proformaNumber || proforma.numero || '', // Guarda el número de origen
+          aplicarIva: proforma.iva > 0,
           notas: proforma.notas,
           vendedor: proforma.responsable_nombre || user.name,
       };
@@ -325,8 +328,23 @@ function App() {
   const handleViewChange = (v) => { if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } else setCurrentView(v); };
   const handleArchiveNotification = (id) => { setArchivedNotifications(prev => [...prev, id]); };
   const handleViewOrder = (o, src) => { setViewOrder(o); setViewOrderSource(src); };
-  const handleProductToggle = (order, idx) => { if (user.role !== 'Producción') return; };
+  const handleProductToggle = async (order, idx, newState) => {
+      if (user.role !== 'Producción' && user.role !== 'Administrador') return;
+      const currentProducts = order.productos || order.products || [];
+      const updatedProducts = [...currentProducts];
+      updatedProducts[idx] = { ...updatedProducts[idx], estado_prod: newState };
+      if (viewOrder && viewOrder.id === order.id) {
+          setViewOrder({ ...viewOrder, productos: updatedProducts });
+      }
 
+      try {
+          const { error } = await supabase.from('ordenes').update({ productos: updatedProducts }).eq('id', order.id);
+          if (error) throw error;
+      } catch (error) {
+          console.error(error);
+          toast({ title: "Error", description: "No se guardó el estado de producción", variant: "destructive" });
+      }
+  };
   const handleAdvanceWorkflow = async (order) => {
     const flow = (order.tipo_trabajo?.includes('(VC)') || order.tipoOrden?.includes('(VC)')) ? WORKFLOW_VC : WORKFLOW_VPVC;
     const currentStatus = order.status;
@@ -348,7 +366,7 @@ function App() {
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
-    if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} />;
+    if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
     if (currentView === 'clientes-lista') return <ClientsPanel />;
     if (currentView === 'configuracion') return <AnulationConfig />;
 
@@ -383,6 +401,8 @@ function App() {
       case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' /></div>;
       case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' /></div>;
       case 'trabajo-disponibilidad': return <div className="h-[calc(100vh-140px)]"><WorkAreaCalendar orders={orders} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /></div>;
+      case 'inventario-ver': return <InventoryPanel user={user} mode="view" />;
+      case 'inventario-gestionar': return <InventoryPanel user={user} mode="manage" />; 
       case 'estadisticas-graficos': return <StatisticsCharts orders={orders} />;
       default: return <div className="p-10 text-center text-slate-500">Seleccione una opción del menú lateral.</div>;
     }

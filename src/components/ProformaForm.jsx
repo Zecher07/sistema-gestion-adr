@@ -20,6 +20,8 @@ const ProformaForm = ({
   const [loading, setLoading] = useState(false);
 
   // --- ESTADOS ---
+  const [titulo, setTitulo] = useState(''); // 🔥 NUEVO ESTADO PARA EL TÍTULO
+  
   const [clientSearch, setClientSearch] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClient, setSelectedClient] = useState({
@@ -42,7 +44,6 @@ const ProformaForm = ({
   // --- HELPER PARA ENCONTRAR EL ID (RUC/CEDULA) ---
   const findClientId = (c) => {
       if (!c) return '';
-      // Busca en todas las posibles columnas donde tu DB podría guardar el número
       return c.ruc || c.cedula || c.identificacion || c.dni || c.empresa || ''; 
   };
 
@@ -65,6 +66,7 @@ const ProformaForm = ({
   // --- 2. CARGAR DATOS (EDICIÓN) ---
   useEffect(() => {
     if (initialData) {
+      setTitulo(initialData.titulo || initialData.tipo_trabajo || ''); // Cargar título si existe
       setClientSearch(initialData.cliente_nombre || '');
       setSelectedClient({
         nombre: initialData.cliente_nombre || '',
@@ -93,15 +95,13 @@ const ProformaForm = ({
     if (!term) return false;
     
     const name = (c.nombre || c.razonSocial || c.full_name || '').toLowerCase();
-    const id = String(findClientId(c)); // Usamos el helper aquí también
+    const id = String(findClientId(c));
 
     return name.includes(term) || id.includes(term);
   });
 
   const handleClientSelect = (client) => {
-    // Usamos el helper para obtener el ID correcto
     const idFound = findClientId(client);
-
     setSelectedClient({
       nombre: client.nombre || client.razonSocial || client.full_name,
       identificacion: idFound,
@@ -145,9 +145,15 @@ const ProformaForm = ({
       return;
     }
     
+    if (!titulo.trim()) {
+      toast({ title: "Falta Título", description: "Por favor, agregue un título o referencia a la cotización.", variant: "destructive" });
+      return;
+    }
+
     setLoading(true);
     try {
       const payload = {
+        titulo: titulo, // 🔥 GUARDAR TÍTULO EN LA DB
         cliente_nombre: finalName,
         cliente_identificacion: selectedClient.identificacion,
         cliente_telefono: selectedClient.telefono,
@@ -208,8 +214,15 @@ const ProformaForm = ({
         <div className="max-w-5xl mx-auto space-y-6">
           <Card className="shadow-sm border-slate-200">
             <CardContent className="p-6">
-              <div className="flex items-center justify-between mb-4 border-b pb-2"><div className="flex items-center gap-2 text-blue-700 font-semibold"><User className="h-5 w-5" /> Datos del Cliente</div></div>
+              <div className="flex items-center justify-between mb-4 border-b pb-2"><div className="flex items-center gap-2 text-blue-700 font-semibold"><User className="h-5 w-5" /> Datos Generales</div></div>
+              
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {/* 🔥 CAMPO DE TÍTULO AÑADIDO AQUÍ */}
+                <div className="md:col-span-2">
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Título / Referencia del Trabajo <span className="text-red-500">*</span></label>
+                    <Input placeholder="Ej: Letrero luminoso para local principal" value={titulo} onChange={(e) => setTitulo(e.target.value)} className="font-semibold text-blue-800" />
+                </div>
+
                 <div className="relative md:col-span-2 flex gap-2 items-end">
                   <div className="relative flex-1">
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Buscar Cliente</label>
@@ -220,7 +233,6 @@ const ProformaForm = ({
                     {showClientSuggestions && clientSearch.length > 1 && filteredClients.length > 0 && (
                       <div className="absolute z-20 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-60 overflow-y-auto">
                         {filteredClients.map(client => {
-                           // Usamos el helper aquí para mostrar en la lista
                            const displayId = findClientId(client) || 'S/N';
                            return (
                             <div key={client.id} className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-sm border-b border-slate-100 last:border-0" onMouseDown={() => handleClientSelect(client)}>

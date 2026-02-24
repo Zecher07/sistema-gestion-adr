@@ -4,7 +4,7 @@ import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Upload, Calendar as CalendarIcon, User, Search, Calculator, 
   FileText, Loader2, UserPlus, Image as ImageIcon, Mail, 
-  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users
+  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -28,8 +28,7 @@ for (let h = 8; h <= 20; h++) {
   ['00', '15', '30', '45'].forEach(m => TIME_SLOTS.push(`${hour}:${m}`));
 }
 
-// --- 1. FUNCIÓN DE COMPRESIÓN (FUERA DEL COMPONENTE) ---
-// Reduce imágenes gigantes a tamaños manejables para la web
+// --- FUNCIÓN DE COMPRESIÓN ---
 const compressImage = async (file) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -39,23 +38,14 @@ const compressImage = async (file) => {
             img.src = event.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                // Reducir a máximo 1024px de ancho (suficiente para ver en pantalla)
                 const MAX_WIDTH = 1024; 
                 let width = img.width;
                 let height = img.height;
-
-                if (width > MAX_WIDTH) {
-                    height *= MAX_WIDTH / width;
-                    width = MAX_WIDTH;
-                }
-
+                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
                 canvas.width = width;
                 canvas.height = height;
-
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-
-                // Comprimir a JPEG calidad 70%
                 const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
                 resolve({ name: file.name, url: dataUrl });
             };
@@ -63,8 +53,7 @@ const compressImage = async (file) => {
     });
 };
 
-// --- 2. COMPONENTE DE IMAGEN AISLADO (MEMO) ---
-// Esto es vital: Evita que las imágenes se "recarguen" cuando escribes en otros campos
+// --- COMPONENTE DE IMAGEN OPTIMIZADO ---
 const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }) => {
     const onDrop = useCallback(acceptedFiles => { onAdd(acceptedFiles); }, [onAdd]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing });
@@ -74,23 +63,18 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
          <div className="min-h-[100px] mb-3 flex flex-wrap gap-4">
             {images.map((img, i) => (
                <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all">
-                  {/* decoding="async" ayuda a que el navegador no se congele al pintar la imagen */}
                   <img src={img.url} alt={img.name} className="w-full h-full object-cover" title={img.name} loading="lazy" decoding="async" />
                   {!isReadOnly && <button type="button" onClick={() => onRemove(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>}
                </div>
             ))}
-            
-            {/* Indicador de carga mientras se comprime */}
             {isProcessing && (
                 <div className="w-24 h-24 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
                     <Loader2 className="h-6 w-6 text-blue-500 animate-spin"/>
                     <span className="text-[10px] text-blue-500 font-medium mt-1">Optimizando...</span>
                 </div>
             )}
-
             {!isProcessing && images.length === 0 && (<div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-4"><FileImage className="h-8 w-8 mb-2 opacity-50" /><span>Sin imágenes adjuntas</span></div>)}
          </div>
-         
          {!isReadOnly && (
              <div>
                  <input {...getInputProps()} className="hidden" />
@@ -155,6 +139,8 @@ const OrderForm = ({
     retentionPercent: 0, 
     formaPagoAnticipo: 'Efectivo',
     referenciaPago: '', 
+    notaAnticipo: '', // NUEVO: Notas para anticipo (Ej: Efectivo billete 100)
+    creditoVenceAnticipo: '', // NUEVO: Fecha vencimiento si el anticipo es a crédito
     
     saldo: 0,
     formaPagoSaldo: 'No aplica',
@@ -164,7 +150,7 @@ const OrderForm = ({
     descuentoPorcentaje: 0,
     aplicarIva: true,
     ivaPercentage: 15,
-    origenProformaId: '',
+    origenProformaInfo: '', // NUEVO: Para guardar el ID de proforma visual
     imagenes: [], 
     notas: ''
   });
@@ -176,7 +162,7 @@ const OrderForm = ({
   // --- 1. CARGAR IVA GLOBAL ---
   useEffect(() => {
     const fetchGlobalConfig = async () => {
-      if (!initialData) {
+      if (!initialData || (initialData && initialData.aplicarIva === undefined)) {
         try {
           const { data } = await supabase.from('configuracion_global').select('iva_porcentaje').maybeSingle();
           if (data && data.iva_porcentaje !== undefined) {
@@ -188,7 +174,7 @@ const OrderForm = ({
     fetchGlobalConfig();
   }, [initialData]);
 
-  // --- 2. CARGAR DATOS (Edición) ---
+  // --- 2. CARGAR DATOS (Edición o Conversión) ---
   useEffect(() => {
     if (initialData) {
       const saldoDB = initialData.financials?.saldo || 0;
@@ -201,7 +187,7 @@ const OrderForm = ({
       const savedPercent = initialData.financials?.descuentoPorcentaje || 0;
       const savedAnticipo = initialData.anticipo || 0;
 
-      let savedPaymentMethod = initialData.forma_pago_anticipo || 'Efectivo';
+      let savedPaymentMethod = initialData.forma_pago_anticipo || initialData.formaPagoAnticipo || 'Efectivo';
       let savedReference = '';
 
       if (savedPaymentMethod && savedPaymentMethod.includes(' - Ref: ')) {
@@ -210,20 +196,25 @@ const OrderForm = ({
           savedReference = parts[1] || '';
       }
 
-      setFormData({
+      setFormData(prev => ({
+        ...prev,
         ...initialData,
         orderNumber: initialData.order_number || initialData.orderNumber || nextOrderNumber,
         cliente: initialData.cliente_nombre || initialData.cliente,
         clienteId: initialData.cliente_id || initialData.clienteId,
-        tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero,
+        tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || '',
+        origenProformaInfo: initialData.origenProformaInfo || '',
         fechaEntrega: initialData.fecha_entrega || '',
         productos: initialData.productos || [],
         
         vendedor: initialData.vendedor || currentUser.name,
+        aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true, // Toma el IVA de la proforma
 
         anticipo: savedAnticipo,
         formaPagoAnticipo: savedPaymentMethod,
         referenciaPago: savedReference,
+        notaAnticipo: initialData.notaAnticipo || '',
+        creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         
         retencion: retentionVal,
         retentionPercent: initialData.financials?.retentionPercent || 0,
@@ -235,8 +226,8 @@ const OrderForm = ({
         imagenes: initialData.imagenes || [],
         notas: initialData.notas || '',
         descuentoPorcentaje: savedPercent,
-        ivaPercentage: initialData.financials?.ivaPercentage || 15 
-      });
+        ivaPercentage: initialData.financials?.ivaPercentage || prev.ivaPercentage
+      }));
       
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
@@ -307,6 +298,10 @@ const OrderForm = ({
     });
 
   }, [formData.productos, formData.descuentoPorcentaje, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode]);
+
+  // --- CÁLCULO DE PORCENTAJES DE PAGO PARA UI ---
+  const porcentajeAnticipoUI = financials.total > 0 ? ((formData.anticipo / financials.total) * 100).toFixed(1) : '0.0';
+  const porcentajeSaldoUI = financials.total > 0 ? ((financials.saldoPendiente / financials.total) * 100).toFixed(1) : '0.0';
 
   // --- HANDLERS ---
   const commitDiscountValue = () => {
@@ -384,14 +379,11 @@ const OrderForm = ({
     return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [searchRef]);
 
-  // --- IMÁGENES: NUEVA LÓGICA CON COMPRESIÓN ---
-  // Al agregar, pasamos por el compresor
   const handleAddImages = async (files) => {
       setIsProcessingImages(true);
       const newImages = [];
-      
       for (const file of files) {
-          if (file.size > 15000000) { // Limite 15MB antes de comprimir
+          if (file.size > 15000000) { 
               toast({ title: "Archivo demasiado grande", description: `"${file.name}" supera el límite.`, variant: "destructive" });
               continue;
           }
@@ -403,7 +395,6 @@ const OrderForm = ({
               toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" });
           }
       }
-
       setFormData(prev => ({ ...prev, imagenes: [...(prev.imagenes || []), ...newImages] }));
       setIsProcessingImages(false);
   };
@@ -461,6 +452,8 @@ const OrderForm = ({
             anticipo: formData.anticipo,
             retencion: formData.retencion,
             forma_pago_anticipo: finalPaymentString,
+            nota_anticipo: formData.notaAnticipo, // Guardar nota
+            credito_vence_anticipo: formData.creditoVenceAnticipo, // Guardar fecha crédito
             imagenes: formData.imagenes, 
             updated_at: new Date().toISOString()
         };
@@ -512,8 +505,16 @@ const OrderForm = ({
           <div className="space-y-3 pb-6 border-b border-slate-200">
              <div className="grid grid-cols-12 gap-4 items-center">
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Titulo / Referencia:</label>
-                <div className="col-span-12 md:col-span-10">
+                <div className="col-span-12 md:col-span-10 flex items-center gap-3">
                    <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isReadOnly} />
+                   
+                   {/* BADGE DE ORIGEN DE PROFORMA */}
+                   {formData.origenProformaInfo && (
+                       <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
+                           <Info className="h-3 w-3" />
+                           Proviene de: Proforma #{formData.origenProformaInfo}
+                       </span>
+                   )}
                 </div>
                 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tipo de Orden:</label>
@@ -644,9 +645,15 @@ const OrderForm = ({
              <div className={`border rounded p-4 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 transition-colors ${paymentMode === 'full' ? 'bg-green-50/50 border-green-200' : 'bg-orange-50/50 border-orange-200'}`}>
                 <div className="space-y-3">
                    <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">{paymentMode === 'full' ? 'Pago Total Inmediato' : 'Pago del Anticipo'}</h4>
+                   
+                   {/* PORCENTAJE EN ANTICIPO */}
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
-                      <div className="relative flex-1"><span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span><input type="number" step="0.01" className={`w-full pl-6 pr-2 py-1 border rounded text-sm font-bold ${paymentMode === 'full' ? 'bg-slate-100 text-green-700' : 'bg-white border-slate-300'}`} value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} readOnly={paymentMode === 'full' || mode==='read_only'} placeholder="0.00" /></div>
+                      <div className="relative flex-1">
+                          <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
+                          <input type="number" step="0.01" className={`w-full pl-6 pr-12 py-1 border rounded text-sm font-bold ${paymentMode === 'full' ? 'bg-slate-100 text-green-700' : 'bg-white border-slate-300'}`} value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} readOnly={paymentMode === 'full' || mode==='read_only'} placeholder="0.00" />
+                          <span className="absolute right-2 top-1.5 text-[10px] text-slate-400 font-bold bg-slate-100 px-1 rounded">{porcentajeAnticipoUI}%</span>
+                      </div>
                    </div>
                    
                    <div className="flex items-center gap-2">
@@ -654,8 +661,8 @@ const OrderForm = ({
                       <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select>
                    </div>
 
-                   {/* CAMPO DE REFERENCIA CONDICIONAL */}
-                   {formData.formaPagoAnticipo !== 'Efectivo' && (
+                   {/* CONDICIONALES PARA ANTICIPO (REFERENCIA, FECHA CREDITO O NOTAS) */}
+                   {formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.formaPagoAnticipo !== 'No aplica' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-blue-600">Referencia:</label>
                            <div className="relative flex-1">
@@ -665,18 +672,50 @@ const OrderForm = ({
                        </div>
                    )}
 
+                   {formData.formaPagoAnticipo === 'Crédito' && (
+                       <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                           <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
+                           <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
+                       </div>
+                   )}
+
+                   {/* NOTAS GENERALES PARA ANTICIPO (Especialmente útil para Efectivo) */}
+                   <div className="flex items-center gap-2">
+                      <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
+                      <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
+                   </div>
+
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
                         <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} />
                         <label htmlFor="chk-ret" className="text-xs cursor-pointer select-none">¿Aplica Retención?</label>
                         {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs text-slate-500">%</span><input type="number" step="0.01" className="w-12 text-center text-xs border-b border-slate-400 bg-transparent focus:outline-none" value={formData.retentionPercent} onChange={e => setFormData({...formData, retentionPercent: parseFloat(e.target.value) || 0})} readOnly={mode === 'read_only'} title="Porcentaje de Retención" /><span className="text-xs font-bold text-red-600">- $ {formData.retencion.toFixed(2)}</span></div>)}
                    </div>
                 </div>
+
                 {paymentMode === 'partial' ? (
                     <div className="space-y-3 opacity-100 transition-opacity">
                         <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Saldo Pendiente</h4>
-                        <div className="flex items-center gap-2"><label className="text-xs font-bold w-20">Saldo Restante:</label><div className="relative flex-1"><span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span><input type="number" className="w-full pl-6 pr-2 py-1 border border-slate-300 rounded text-sm bg-red-50 font-bold text-red-700" value={financials.saldoPendiente.toFixed(2)} readOnly/></div></div>
+                        
+                        {/* PORCENTAJE EN SALDO */}
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs font-bold w-20">Saldo Restante:</label>
+                            <div className="relative flex-1">
+                                <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
+                                <input type="number" className="w-full pl-6 pr-12 py-1 border border-slate-300 rounded text-sm bg-red-50 font-bold text-red-700" value={financials.saldoPendiente.toFixed(2)} readOnly/>
+                                <span className="absolute right-2 top-1.5 text-[10px] text-red-400 font-bold bg-red-100 px-1 rounded">{porcentajeSaldoUI}%</span>
+                            </div>
+                        </div>
+                        
                         <div className="flex items-center gap-2"><label className="text-xs font-bold w-20">Forma Saldo:</label><select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
-                        <div className="flex items-center gap-2"><label className="text-xs font-bold w-20">Nota Saldo:</label><input type="text" placeholder="Ej: Paga al retirar" className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} /></div>
+                        
+                        {formData.formaPagoSaldo === 'Crédito' && (
+                           <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
+                               <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
+                               <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceSaldo} onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} />
+                           </div>
+                        )}
+
+                        <div className="flex items-center gap-2"><label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label><input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} /></div>
                     </div>
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
              </div>
@@ -684,7 +723,6 @@ const OrderForm = ({
 
           <div className="space-y-2 pt-2 border-t border-slate-200">
              <div className="text-xs text-slate-500 italic">Arte/Diseño</div>
-             {/* COMPONENTE DE IMÁGENES AISLADO Y OPTIMIZADO */}
              <ImageGallery 
                 images={formData.imagenes} 
                 isReadOnly={isReadOnly} 

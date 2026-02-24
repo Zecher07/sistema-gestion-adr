@@ -1,12 +1,12 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Ban, Undo2, Edit2, Calculator, Bug, Trash2 } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Ban, Undo2, Edit2, Calculator, Bug, Trash2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 
-const DailyReport = ({ orders = [], user }) => {
+const DailyReport = ({ orders = [], user, onViewOrder }) => {
   if (!user) return <div className="p-10 text-center text-slate-500">Cargando perfil...</div>;
 
   const { toast } = useToast();
@@ -85,7 +85,6 @@ const DailyReport = ({ orders = [], user }) => {
     const isToday = date === todayStr;
 
     try {
-      // A. Verificar si YA existe reporte guardado en DB
       const { data: currentReport, error } = await supabase
         .from('daily_closings')
         .select('*')
@@ -95,7 +94,6 @@ const DailyReport = ({ orders = [], user }) => {
 
       if (error) throw error;
 
-      // CASO 1: Es un día PASADO y ya tiene reporte cerrado -> Usamos FOTO ESTÁTICA
       if (currentReport && !isToday) {
         const opening = Number(currentReport.opening_cash) || 0;
         setLedgerData({
@@ -117,11 +115,6 @@ const DailyReport = ({ orders = [], user }) => {
         return; 
       }
 
-      // CASO 2: Es HOY (o un día pasado sin reporte) -> SIEMPRE RECALCULAMOS EL SALDO INICIAL
-      // Aunque exista un reporte guardado de hoy, ignoramos su 'opening_cash' y lo recalculamos
-      // para que sea dinámico.
-      
-      // 2.1 Buscar el ÚLTIMO cierre guardado ANTERIOR a la fecha seleccionada
       const { data: lastReport } = await supabase
           .from('daily_closings')
           .select('date, final_balance') 
@@ -141,11 +134,10 @@ const DailyReport = ({ orders = [], user }) => {
           foundPrevious = true;
       }
 
-      // 2.2 Calcular flujos "perdidos" (órdenes entre el último cierre y hoy)
       const { data: userOrders } = await supabase
           .from('ordenes')
           .select('*')
-          .eq('vendedor', userName)
+          .or(`recibido_por_anticipo.eq.${userName},recibido_por_saldo.eq.${userName},vendedor.eq.${userName}`) 
           .order('created_at', { ascending: false })
           .limit(1000);
 
@@ -156,25 +148,29 @@ const DailyReport = ({ orders = [], user }) => {
           userOrders.forEach(o => {
               const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
               const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
+              const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
 
               const isAfterLastReport = createdDateStr > lastReportDateStr;
-              const isBeforeToday = createdDateStr < date; // Estrictamente antes de la fecha actual
+              const isBeforeToday = createdDateStr < date;
 
-              // A. Anticipos en el limbo
-              if (isAfterLastReport && isBeforeToday) {
+              const recibioAnticipo = o.recibido_por_anticipo === userName || (!o.recibido_por_anticipo && o.vendedor === userName);
+              
+              if (isAfterLastReport && isBeforeToday && recibioAnticipo) {
                   if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') {
                       floatingSum += Number(o.anticipo);
                       floatingCount++;
                   }
               }
 
-              // B. Saldos cobrados en el limbo
-              const isUpdatedAfterLastReport = updatedDateStr > lastReportDateStr;
-              const isUpdatedBeforeToday = updatedDateStr < date;
-              const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR';
+              const isUpdatedAfterLastReport = balanceDateStr > lastReportDateStr;
+              const isUpdatedBeforeToday = balanceDateStr < date;
+              const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
               
-              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && Number(o.financials?.saldo) > 0) {
-                  floatingSum += Number(o.financials.saldo);
+              const recibioSaldo = o.recibido_por_saldo === userName || (!o.recibido_por_saldo && o.vendedor === userName);
+              const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
+
+              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && saldoCobrado > 0 && recibioSaldo) {
+                  floatingSum += saldoCobrado;
                   floatingCount++;
               }
           });
@@ -182,11 +178,8 @@ const DailyReport = ({ orders = [], user }) => {
 
       const totalCalculatedOpening = baseCash + floatingSum;
 
-      // 2.3 Mezclar con datos guardados (si existen para hoy)
-      // Si ya guardaste algo hoy, recuperamos tus transacciones manuales y entrega a contabilidad,
-      // pero el Saldo Inicial lo imponemos nosotros con el cálculo fresco.
       setLedgerData({
-          openingCash: totalCalculatedOpening, // <--- SIEMPRE DINÁMICO HOY
+          openingCash: totalCalculatedOpening, 
           amountToAccounting: currentReport ? Number(currentReport.amount_to_accounting) : 0, 
           manualTransactions: currentReport ? (currentReport.manual_transactions || []) : []
       });
@@ -250,9 +243,13 @@ const DailyReport = ({ orders = [], user }) => {
         if (data) data.forEach(item => activityDates.add(item.date));
     } catch (e) {}
 
-    // FILTRO ESTRICTO
     orders.forEach(o => {
-        if (o.vendedor === targetUserName) {
+        const tocoDinero = 
+            o.vendedor === targetUserName || 
+            o.recibido_por_anticipo === targetUserName || 
+            o.recibido_por_saldo === targetUserName;
+
+        if (tocoDinero) {
             const dateStr = toLocalDateStr(o.created_at || o.createdAt);
             if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr);
         }
@@ -277,9 +274,10 @@ const DailyReport = ({ orders = [], user }) => {
         const hasReport = daysWithReport.has(dateStr);
         const isSelected = selectedDate === dateStr;
         const isToday = dateStr === todayStr;
+        const dayClass = cn("h-24 border border-slate-200 p-2 cursor-pointer transition-all hover:bg-blue-50 relative flex flex-col justify-between group", isSelected ? "bg-blue-100 border-blue-300 shadow-inner" : "bg-white");
+        
         days.push(
-            <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setViewMode('report'); }}
-                className={cn("h-24 border border-slate-200 p-2 cursor-pointer transition-all hover:bg-blue-50 relative flex flex-col justify-between group", isSelected ? "bg-blue-100 border-blue-300 shadow-inner" : "bg-white")}>
+            <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setViewMode('report'); }} className={dayClass}>
                 <div className="flex justify-between items-start">
                     <span className={cn("text-sm font-bold w-6 h-6 flex items-center justify-center rounded-full", isToday ? "bg-blue-600 text-white" : "text-slate-700")}>{d}</span>
                     {hasReport && <div className="h-3 w-3 rounded-full bg-green-500 shadow-sm animate-pulse"></div>}
@@ -296,49 +294,67 @@ const DailyReport = ({ orders = [], user }) => {
   const automaticTransactions = useMemo(() => {
     const txs = [];
     
-    // FILTRO ESTRICTO: Solo mostrar órdenes del usuario seleccionado
-    const userOrders = orders.filter(o => o.vendedor === targetUserName);
+    const relevantOrders = orders.filter(o => 
+        o.vendedor === targetUserName || 
+        o.recibido_por_anticipo === targetUserName || 
+        o.recibido_por_saldo === targetUserName
+    );
 
-    // A. VENTAS
-    const newSales = userOrders.filter(o => toLocalDateStr(o.createdAt || o.created_at) === selectedDate);
-    newSales.forEach(o => {
-      const numOrden = o.order_number || o.orderNumber || o.id;
-      if (Number(o.anticipo) > 0) {
-          txs.push({
-            id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`,
-            orderNumber: numOrden, income: Number(o.anticipo), expense: 0, 
-            balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false 
-          });
+    // A. VENTAS / ANTICIPOS
+    relevantOrders.forEach(o => {
+      const creationDate = toLocalDateStr(o.createdAt || o.created_at);
+      if (creationDate === selectedDate) {
+          const quienCobro = o.recibido_por_anticipo || o.vendedor;
+          if (quienCobro === targetUserName && Number(o.anticipo) > 0) {
+              const numOrden = o.order_number || o.orderNumber || o.id;
+              txs.push({
+                id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`,
+                orderNumber: numOrden, income: Number(o.anticipo), expense: 0, 
+                balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false,
+                originalOrder: o // 🔥 GUARDAMOS LA ORDEN ORIGINAL PARA ABRIRLA LUEGO
+              });
+          }
       }
     });
 
-    // B. COBROS
-    const pickups = userOrders.filter(o => {
+    // B. COBROS DE SALDOS
+    relevantOrders.forEach(o => {
       const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
-      const isUpdatedToday = updatedDate === selectedDate;
-      const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR';
-      return isUpdatedToday && isRelevantStatus && Number(o.financials?.saldo) > 0;
-    });
-    pickups.forEach(o => {
-        const numOrden = o.order_number || o.orderNumber || o.id;
-        txs.push({
-            id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`,
-            orderNumber: numOrden, income: Number(o.financials.saldo), expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false
-        });
+      const paymentDate = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDate;
+      
+      const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
+      
+      const total = Number(o.financials?.total) || 0;
+      const ant = Number(o.anticipo) || 0;
+      const ret = Number(o.retencion) || 0;
+      const saldoCobrado = total - ant - ret;
+
+      if (paymentDate === selectedDate && isRelevantStatus && saldoCobrado > 0) {
+          const quienCobroSaldo = o.recibido_por_saldo || o.vendedor;
+          if (quienCobroSaldo === targetUserName) {
+              const numOrden = o.order_number || o.orderNumber || o.id;
+              txs.push({
+                id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`,
+                orderNumber: numOrden, income: saldoCobrado, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false,
+                originalOrder: o // 🔥 GUARDAMOS LA ORDEN ORIGINAL
+              });
+          }
+      }
     });
 
     // C. ANULACIONES
-    const cancellations = userOrders.filter(o => {
+    relevantOrders.forEach(o => {
         const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
-        return o.status === 'ANULADA' && updatedDate === selectedDate;
-    });
-    cancellations.forEach(o => {
-        const numOrden = o.order_number || o.orderNumber || o.id;
-        if (Number(o.anticipo) > 0) {
-            txs.push({
-                id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Devolución/Anulación #${numOrden}`,
-                orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true
-            });
+        if (o.status === 'ANULADA' && updatedDate === selectedDate) {
+            const quienCobroOriginalmente = o.recibido_por_anticipo || o.vendedor;
+            if (quienCobroOriginalmente === targetUserName && Number(o.anticipo) > 0) {
+                const numOrden = o.order_number || o.orderNumber || o.id;
+                txs.push({
+                    id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Devolución/Anulación #${numOrden}`,
+                    orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true,
+                    originalOrder: o // 🔥 GUARDAMOS LA ORDEN ORIGINAL
+                });
+            }
         }
     });
     
@@ -377,7 +393,6 @@ const DailyReport = ({ orders = [], user }) => {
       toast({ title: "Guardado Correctamente", description: "El saldo ha sido registrado para mañana." });
       fetchCalendarDots();
       
-      // Actualizamos estado visual
       setDebugInfo(prev => ({ ...prev, status: "Guardado ahora mismo", isSaved: true }));
 
     } catch (error) {
@@ -490,7 +505,21 @@ const DailyReport = ({ orders = [], user }) => {
 
                     <div className="flex-1 overflow-auto">
                         {allTransactions.map((tx, idx) => (
-                            <div key={tx.id} className={cn("grid grid-cols-[40px_1fr_100px_100px_100px_200px_40px] border-b border-slate-300 divide-x divide-slate-300 hover:bg-yellow-50 transition-colors", idx % 2 === 0 ? "bg-white" : "bg-slate-50", tx.isAnulada ? "bg-red-50" : "")}>
+                            <div 
+                                key={tx.id} 
+                                // 🔥 AGREGAMOS EL EVENTO ONCLICK Y ESTILOS VISUALES PARA ÓRDENES CLICKABLES
+                                onClick={() => { 
+                                    if (!tx.isManual && tx.originalOrder && onViewOrder) {
+                                        onViewOrder(tx.originalOrder); 
+                                    }
+                                }}
+                                className={cn(
+                                    "grid grid-cols-[40px_1fr_100px_100px_100px_200px_40px] border-b border-slate-300 divide-x divide-slate-300 transition-colors group", 
+                                    idx % 2 === 0 ? "bg-white" : "bg-slate-50", 
+                                    tx.isAnulada ? "bg-red-50" : "",
+                                    !tx.isManual ? "cursor-pointer hover:bg-blue-100" : "hover:bg-yellow-50" // Indicador de que es clickable
+                                )}
+                            >
                                 <div className="py-2 font-bold text-center text-slate-500">{idx + 1}</div>
                                 <div className="py-1 px-2 flex flex-col justify-center">
                                     <div className="flex items-center gap-2">
@@ -503,7 +532,15 @@ const DailyReport = ({ orders = [], user }) => {
                                 <div className="py-2 px-2 text-right font-bold text-green-700">{tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.income} onChange={(e) => updateManualTransaction(tx.id, 'income', e.target.value)} /> : (Number(tx.income) > 0 ? `$${Number(tx.income).toFixed(2)}` : '-')}</div>
                                 <div className="py-2 px-2 text-right font-bold text-red-700">{tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? `$${Number(tx.expense).toFixed(2)}` : '-')}</div>
                                 <div className="py-2 px-2 text-xs text-slate-600 truncate">{tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : tx.balanceNote}</div>
-                                <div className="flex items-center justify-center bg-slate-50 print:hidden">{tx.isManual && isEditable && <button onClick={() => removeManualTransaction(tx.id)} className="text-red-400 hover:text-red-600 font-bold">X</button>}</div>
+                                
+                                {/* 🔥 AÑADIMOS EL ÍCONO DE "VER DETALLES" (O la X si es manual) */}
+                                <div className="flex items-center justify-center bg-slate-50 print:hidden">
+                                    {tx.isManual && isEditable ? (
+                                        <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button>
+                                    ) : (
+                                        !tx.isManual && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                    )}
+                                </div>
                             </div>
                         ))}
                         {isEditable && isAdmin && (<div className="p-4 flex gap-4 bg-slate-100 print:hidden border-t border-slate-300"><Button variant="outline" onClick={() => addManualTransaction('GASTO')} className="border-red-300 text-red-700 hover:bg-red-50">+ Gasto</Button><Button variant="outline" onClick={() => addManualTransaction('INGRESO')} className="border-green-300 text-green-700 hover:bg-green-50">+ Ingreso Extra</Button></div>)}
