@@ -253,10 +253,8 @@ const OrderDetailsModal = ({
           
           const updatedMaterials = [...usedMaterials, newUsage];
 
-          // 1. PRIMERO INTENTAMOS GUARDAR EN LA ORDEN (Si falla por caché, aborta y NO descuenta del inventario)
+          // 1. PRIMERO INTENTAMOS GUARDAR EN LA ORDEN 
           const { error: ordError } = await supabase.from('ordenes').update({ materiales_usados: updatedMaterials }).eq('id', order.id);
-          
-          // Si el caché de Supabase sigue molestando, te avisará de inmediato
           if (ordError) throw ordError;
 
           // 2. SI LA ORDEN SE GUARDÓ CON ÉXITO, ENTONCES SÍ DESCONTAMOS EL INVENTARIO
@@ -275,7 +273,6 @@ const OrderDetailsModal = ({
 
       } catch (error) {
           console.error(error);
-          // Mensaje claro si el caché sigue pegado
           toast({ 
               title: "Error de Caché en Base de Datos", 
               description: "Por favor limpia el caché en Supabase (Settings > API > Rebuild Schema Cache) o verifica que la columna 'materiales_usados' esté creada.", 
@@ -646,13 +643,13 @@ const OrderDetailsModal = ({
                     </div>
                 )}
 
+                {/* 🔥 BOTÓN CON CIERRE AUTOMÁTICO 🔥 */}
                 {showWorkflowButton && (
                     <div className="flex flex-col items-end gap-1">
                       <Button size="lg" className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 shadow-lg flex items-center gap-3" onClick={() => {
-                          order.status = workflowConfig.text.includes('Contabilidad') ? 'CONTABILIDAD' : 
-                                         workflowConfig.text.includes('Producción') ? 'PRODUCCION' : 
-                                         workflowConfig.text.includes('Ventas') ? 'VENTAS POR RETIRAR' : 'FINALIZADA';
+                          // Solo avanzamos en la DB y cerramos ventana. NO tocamos el status en memoria local.
                           onAdvanceWorkflow(order);
+                          onClose(); 
                       }}>
                         {workflowConfig.text} <ArrowRightCircle className="h-6 w-6" />
                       </Button>
