@@ -181,17 +181,28 @@ const OrderForm = ({
   // --- 2. CARGAR DATOS (Edición o Conversión de Proforma a Orden) ---
   useEffect(() => {
     if (initialData) {
-      const saldoDB = initialData.financials?.saldo || 0;
+      
+      // 🔥 1. EXTRAER FINANZAS DE FORMA 100% SEGURA 🔥
+      let finData = {};
+      if (initialData.financials) {
+          if (typeof initialData.financials === 'string') {
+              try { finData = JSON.parse(initialData.financials); } catch(e) { console.error(e); }
+          } else {
+              finData = initialData.financials;
+          }
+      }
+
+      const saldoDB = finData.saldo || initialData.saldo || 0;
       const isFull = saldoDB <= 0.01; 
       setPaymentMode(isFull ? 'full' : 'partial');
       
-      const retentionVal = initialData.retencion || initialData.financials?.retencion || 0;
+      const retentionVal = initialData.retencion || finData.retencion || 0;
       setApplyRetention(retentionVal > 0);
 
-      const savedPercent = initialData.financials?.descuentoPorcentaje || 0;
-      const savedAnticipo = initialData.anticipo || 0;
+      const savedPercent = finData.descuentoPorcentaje || initialData.descuentoPorcentaje || 0;
+      const savedAnticipo = initialData.anticipo || finData.anticipo || 0;
 
-      let savedPaymentMethod = initialData.forma_pago_anticipo || initialData.formaPagoAnticipo || 'Efectivo';
+      let savedPaymentMethod = initialData.forma_pago_anticipo || initialData.formaPagoAnticipo || finData.formaPago || 'Efectivo';
       let savedReference = '';
 
       if (savedPaymentMethod && savedPaymentMethod.includes(' - Ref: ')) {
@@ -200,30 +211,30 @@ const OrderForm = ({
           savedReference = parts[1] || '';
       }
 
-      // 🔥 MAGIA: CÁLCULO DE DÍAS LABORABLES TOMANDO COMO REFERENCIA LA FECHA DE HOY 🔥
+      // 🔥 2. MAGIA: CÁLCULO DE DÍAS LABORABLES TOMANDO FECHA DE HOY 🔥
       let calculatedFechaEntrega = initialData.fecha_entrega || initialData.fechaEntrega || '';
-      
-      // Verificamos si viene de una proforma (no tiene order_number aún)
       const isProformaConversion = !initialData.order_number && !initialData.orderNumber;
       
-      if (isProformaConversion && initialData.financials?.diasEntrega) {
-          const days = parseInt(initialData.financials.diasEntrega, 10);
-          if (days > 0) {
-              let date = new Date(); // Inicia HOY
-              let added = 0;
-              while (added < days) {
-                  date.setDate(date.getDate() + 1);
-                  // Si NO es Domingo (0) y NO es Sábado (6), cuenta como día de entrega
-                  if (date.getDay() !== 0 && date.getDay() !== 6) { 
-                      added++;
-                  }
+      // Busca los días en la columna directa o en el JSON parseado
+      const diasLaborales = parseInt(initialData.dias_entrega || finData.diasEntrega || 0, 10);
+      
+      if (isProformaConversion && !calculatedFechaEntrega && diasLaborales > 0) {
+          let date = new Date(); // <--- INICIA EXACTAMENTE HOY
+          let added = 0;
+          
+          while (added < diasLaborales) {
+              date.setDate(date.getDate() + 1);
+              // 0 = Domingo, 6 = Sábado. Solo suma si es día de semana (Lunes a Viernes).
+              if (date.getDay() !== 0 && date.getDay() !== 6) { 
+                  added++;
               }
-              // Formateamos para el input de tipo date-time (YYYY-MM-DDTHH:mm)
-              const yyyy = date.getFullYear();
-              const mm = String(date.getMonth() + 1).padStart(2, '0');
-              const dd = String(date.getDate()).padStart(2, '0');
-              calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`; // Por defecto, entrega a las 5:00 PM
           }
+          
+          // Formateamos la fecha calculada para que el input type="datetime-local" la entienda
+          const yyyy = date.getFullYear();
+          const mm = String(date.getMonth() + 1).padStart(2, '0');
+          const dd = String(date.getDate()).padStart(2, '0');
+          calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`; // Por defecto, te pondrá las 5:00 PM
       }
 
       setFormData(prev => ({
@@ -233,7 +244,6 @@ const OrderForm = ({
         cliente: initialData.cliente_nombre || initialData.cliente,
         clienteId: initialData.cliente_id || initialData.clienteId,
         
-        // Mapeo Inteligente (Absorbe título y proforma ID automáticamente)
         tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || initialData.titulo || '',
         origenProformaInfo: initialData.origenProformaInfo || initialData.proformaNumber || initialData.numero || '',
         productos: initialData.productos || initialData.items || [],
@@ -250,16 +260,16 @@ const OrderForm = ({
         creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         
         retencion: retentionVal,
-        retentionPercent: initialData.financials?.retentionPercent || 0,
+        retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
 
-        formaPagoSaldo: initialData.financials?.formaPagoSaldo || 'No aplica',
-        creditoVenceSaldo: initialData.financials?.creditoVenceSaldo || '',
-        notaSaldo: initialData.financials?.notaSaldo || '',
+        formaPagoSaldo: finData.formaPagoSaldo || 'No aplica',
+        creditoVenceSaldo: finData.creditoVenceSaldo || '',
+        notaSaldo: finData.notaSaldo || '',
 
         imagenes: initialData.imagenes || [],
         notas: initialData.notas || '',
         descuentoPorcentaje: savedPercent,
-        ivaPercentage: initialData.financials?.ivaPercentage || prev.ivaPercentage
+        ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage
       }));
       
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
@@ -671,7 +681,7 @@ const OrderForm = ({
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
-                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(row.precio || row.precioUnitario)||0);
+                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(row.precio !== undefined ? row.precio : (row.precioUnitario || 0))||0);
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
                              <td className="py-1 px-2 text-slate-400 text-xs text-center">{idx + 1}</td>
