@@ -178,7 +178,7 @@ const OrderForm = ({
     fetchGlobalConfig();
   }, [initialData]);
 
-  // --- 2. CARGAR DATOS (Edición o Conversión) ---
+  // --- 2. CARGAR DATOS (Edición o Conversión de Proforma a Orden) ---
   useEffect(() => {
     if (initialData) {
       const saldoDB = initialData.financials?.saldo || 0;
@@ -200,18 +200,47 @@ const OrderForm = ({
           savedReference = parts[1] || '';
       }
 
+      // 🔥 MAGIA: CÁLCULO DE DÍAS LABORABLES TOMANDO COMO REFERENCIA LA FECHA DE HOY 🔥
+      let calculatedFechaEntrega = initialData.fecha_entrega || initialData.fechaEntrega || '';
+      
+      // Verificamos si viene de una proforma (no tiene order_number aún)
+      const isProformaConversion = !initialData.order_number && !initialData.orderNumber;
+      
+      if (isProformaConversion && initialData.financials?.diasEntrega) {
+          const days = parseInt(initialData.financials.diasEntrega, 10);
+          if (days > 0) {
+              let date = new Date(); // Inicia HOY
+              let added = 0;
+              while (added < days) {
+                  date.setDate(date.getDate() + 1);
+                  // Si NO es Domingo (0) y NO es Sábado (6), cuenta como día de entrega
+                  if (date.getDay() !== 0 && date.getDay() !== 6) { 
+                      added++;
+                  }
+              }
+              // Formateamos para el input de tipo date-time (YYYY-MM-DDTHH:mm)
+              const yyyy = date.getFullYear();
+              const mm = String(date.getMonth() + 1).padStart(2, '0');
+              const dd = String(date.getDate()).padStart(2, '0');
+              calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`; // Por defecto, entrega a las 5:00 PM
+          }
+      }
+
       setFormData(prev => ({
         ...prev,
         ...initialData,
         orderNumber: initialData.order_number || initialData.orderNumber || nextOrderNumber,
         cliente: initialData.cliente_nombre || initialData.cliente,
         clienteId: initialData.cliente_id || initialData.clienteId,
-        tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || '',
-        origenProformaInfo: initialData.origenProformaInfo || '',
-        fechaEntrega: initialData.fecha_entrega || '',
-        productos: initialData.productos || [],
         
-        vendedor: initialData.vendedor || currentUser.name,
+        // Mapeo Inteligente (Absorbe título y proforma ID automáticamente)
+        tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || initialData.titulo || '',
+        origenProformaInfo: initialData.origenProformaInfo || initialData.proformaNumber || initialData.numero || '',
+        productos: initialData.productos || initialData.items || [],
+        
+        fechaEntrega: calculatedFechaEntrega, // Asignamos la fecha calculada
+        
+        vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
         aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true,
 
         anticipo: savedAnticipo,
@@ -240,7 +269,7 @@ const OrderForm = ({
   }, [initialData, nextOrderNumber, currentUser]);
 
   const currentDatePart = formData.fechaEntrega ? formData.fechaEntrega.split('T')[0] : '';
-  const currentTimePart = formData.fechaEntrega ? new Date(formData.fechaEntrega).toTimeString().slice(0,5) : '12:00';
+  const currentTimePart = formData.fechaEntrega && formData.fechaEntrega.includes('T') ? formData.fechaEntrega.split('T')[1].slice(0,5) : '12:00';
 
   const handleDateTimeChange = (date, time) => {
     if (!date) { setFormData(prev => ({ ...prev, fechaEntrega: '' })); return; }
@@ -258,7 +287,7 @@ const OrderForm = ({
   useEffect(() => {
     const subtotal = formData.productos.reduce((sum, p) => {
       if (!p.descripcion) return sum;
-      return sum + ((parseFloat(p.cantidad) || 0) * (parseFloat(p.precio) || 0));
+      return sum + ((parseFloat(p.cantidad) || 0) * (parseFloat(p.precio || p.precioUnitario) || 0));
     }, 0);
 
     const descuentoVal = subtotal * (formData.descuentoPorcentaje / 100);
@@ -343,7 +372,6 @@ const OrderForm = ({
   const handleProductSearchRequest = async (index, value) => {
       handleProductChange(index, 'descripcion', value);
       
-      // Mostrar sugerencias si tiene al menos 2 caracteres
       if (value.trim().length < 2) {
           setProductSuggestions([]);
           setActiveProductSearchRow(null);
@@ -363,7 +391,6 @@ const OrderForm = ({
   const handleSelectProductSuggestion = (index, product) => {
       const desc = product.nombre + (product.descripcion ? ` - ${product.descripcion}` : '');
       
-      // Actualizamos todo en un solo movimiento para evitar que se borre el texto
       setFormData(prev => {
           const newProducts = [...prev.productos];
           newProducts[index] = { 
@@ -383,16 +410,23 @@ const OrderForm = ({
   };
 
   const handleProductChange = (index, field, value) => {
-    const newProducts = [...formData.productos];
-    newProducts[index] = { ...newProducts[index], [field]: value };
-    if (index === newProducts.length - 1 && value !== '') newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
-    setFormData({ ...formData, productos: newProducts });
+    setFormData(prev => {
+        const newProducts = [...prev.productos];
+        newProducts[index] = { ...newProducts[index], [field]: value };
+        
+        if (index === newProducts.length - 1 && value !== '') {
+            newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
+        }
+        return { ...prev, productos: newProducts };
+    });
   };
 
   const handleRemoveProductRow = (index) => {
-    if (formData.productos.length <= 1) return;
-    const newProducts = formData.productos.filter((_, i) => i !== index);
-    setFormData({ ...formData, productos: newProducts });
+    setFormData(prev => {
+        if (prev.productos.length <= 1) return prev;
+        const newProducts = prev.productos.filter((_, i) => i !== index);
+        return { ...prev, productos: newProducts };
+    });
   };
 
   const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.includes(searchTerm)));
@@ -502,7 +536,7 @@ const OrderForm = ({
             updated_at: new Date().toISOString()
         };
 
-        if (!initialData || !initialData.id) {
+        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') {
             const num = formData.orderNumber || nextOrderNumber; 
             payload.order_number = num;
             payload.status = 'VENTAS';
@@ -512,7 +546,7 @@ const OrderForm = ({
             toast({ title: "Orden Reasignada", description: `Transferida a ${formData.vendedor}` });
         }
 
-        if (initialData?.id) {
+        if (initialData?.id && initialData.status !== 'BORRADOR') {
             const { error } = await supabase.from('ordenes').update(payload).eq('id', initialData.id);
             if(error) throw error;
         } else {
@@ -537,7 +571,7 @@ const OrderForm = ({
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-white shadow-xl rounded-lg flex flex-col h-full border border-slate-300 relative">
       <div className="bg-slate-100 border-b border-slate-300 px-6 py-3 flex justify-between items-center">
         <h2 className="text-lg font-bold text-slate-800 uppercase">
-          {(!initialData || !initialData.id) ? `Orden NUEVA (${getDisplayedOrderNumber()})` : `Editar Orden #${getDisplayedOrderNumber()}`}
+          {(!initialData || !initialData.id || initialData.status === 'BORRADOR') ? `Orden NUEVA (${getDisplayedOrderNumber()})` : `Editar Orden #${getDisplayedOrderNumber()}`}
         </h2>
         <div className="flex items-center gap-2">
            <Button variant="ghost" size="sm" onClick={onCancel} className="h-8 w-8 p-0"><X className="h-5 w-5 text-slate-500" /></Button>
@@ -637,12 +671,11 @@ const OrderForm = ({
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
-                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(row.precio)||0);
+                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(row.precio || row.precioUnitario)||0);
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
                              <td className="py-1 px-2 text-slate-400 text-xs text-center">{idx + 1}</td>
                              
-                             {/* 🔥 CELDA DEL BUSCADOR MÁGICO DE PRODUCTOS 🔥 */}
                              <td className="py-1 px-2 relative">
                                 <input 
                                     type="text" 
@@ -651,7 +684,7 @@ const OrderForm = ({
                                     value={row.descripcion} 
                                     onChange={e => handleProductSearchRequest(idx, e.target.value)}
                                     onFocus={() => { if(row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
-                                    onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 200)}
+                                    onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                                     readOnly={isReadOnly}
                                 />
                                 {activeProductSearchRow === idx && productSuggestions.length > 0 && !isReadOnly && (
@@ -673,7 +706,7 @@ const OrderForm = ({
                                 )}
                              </td>
 
-                             <td className="py-1 px-2"><input type="number" step="0.01" className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0" value={row.precio||''} onChange={e => handleProductChange(idx, 'precio', e.target.value)} readOnly={isReadOnly}/></td>
+                             <td className="py-1 px-2"><input type="number" step="0.01" className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0" value={row.precio !== undefined ? row.precio : (row.precioUnitario || '')} onChange={e => handleProductChange(idx, 'precio', e.target.value)} readOnly={isReadOnly}/></td>
                              <td className="py-1 px-2"><input type="number" step="1" className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0" value={row.cantidad||''} onChange={e => handleProductChange(idx, 'cantidad', e.target.value)} readOnly={isReadOnly}/></td>
                              <td className="py-1 px-2 text-right font-medium text-slate-700">$ {rowTotal.toFixed(2)}</td>
                              <td className="py-1 px-1 text-center">{!isReadOnly && row.descripcion && (<button type="button" onClick={() => handleRemoveProductRow(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-3 w-3" /></button>)}</td>
