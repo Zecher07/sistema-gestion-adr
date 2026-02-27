@@ -296,6 +296,13 @@ function App() {
   const handleAnulateInvoice = (inv) => { setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: 'ANULADA' } : i)); if(viewInvoice?.id === inv.id) setViewInvoice(prev => ({...prev, status: 'ANULADA'})); };
 
   const handleConvertProformaToOrder = (proforma) => {
+      // 1. Extraemos los datos financieros de la proforma por si acaso vienen como texto
+      let finData = proforma.financials || {};
+      if (typeof finData === 'string') {
+          try { finData = JSON.parse(finData); } catch(e) { finData = {}; }
+      }
+
+      // 2. Armamos el paquete asegurándonos de ENVIAR los días de entrega
       const prefilledOrderData = {
           cliente_nombre: proforma.cliente_nombre,
           cliente: proforma.cliente_nombre,
@@ -311,21 +318,24 @@ function App() {
               iva: proforma.iva,
               total: proforma.total,
               ivaPercentage: proforma.iva_percentage || 15,
-              saldo: proforma.total
+              saldo: proforma.total,
+              diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0 // 🔥 EMPACAMOS LOS DÍAS AQUÍ
           },
-          tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', // Trae el título de la proforma
-          origenProformaInfo: proforma.proformaNumber || proforma.numero || '', // Guarda el número de origen
+          dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0, // 🔥 Y TAMBIÉN AQUÍ POR SEGURIDAD
+          tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', 
+          origenProformaInfo: proforma.proformaNumber || proforma.numero || '', 
           aplicarIva: proforma.iva > 0,
           notas: proforma.notas,
           vendedor: proforma.responsable_nombre || user.name,
       };
+      
       setProformaToConvertId(proforma.id);
       setEditingOrder(prefilledOrderData);
       setViewProforma(null);
       setShowForm(true); 
       toast({ description: "Verifique la orden, agregue anticipo y guarde." });
   };
-
+  
   const handleViewChange = (v) => { if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } else setCurrentView(v); };
   const handleArchiveNotification = (id) => { setArchivedNotifications(prev => [...prev, id]); };
   const handleViewOrder = (o, src) => { setViewOrder(o); setViewOrderSource(src); };
