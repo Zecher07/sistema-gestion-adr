@@ -30,6 +30,7 @@ import InvoiceForm from '@/components/InvoiceForm';
 import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 import InventoryPanel from '@/components/InventoryPanel';
 import CatalogPanel from '@/components/CatalogPanel';
+import ValesCajaPanel from './components/ValesCajaPanel'; 
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -50,11 +51,9 @@ function App() {
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
   const [showClientFormModal, setShowClientFormModal] = useState(false);
   const [archivedNotifications, setArchivedNotifications] = useState([]);
-
-  // --- NUEVO ESTADO PARA NOTIFICACIONES DE LA CAMPANA ---
+  
   const [realtimeEvents, setRealtimeEvents] = useState([]); 
 
-  // Modales
   const [editingOrder, setEditingOrder] = useState(null); 
   const [paymentOrder, setPaymentOrder] = useState(null);
   const [cloningOrder, setCloningOrder] = useState(null);
@@ -143,15 +142,12 @@ function App() {
       if(localStorage.getItem('archivedNotifications')) setArchivedNotifications(JSON.parse(localStorage.getItem('archivedNotifications')));
       if(localStorage.getItem('kanbanTasksDB')) setKanbanTasks(JSON.parse(localStorage.getItem('kanbanTasksDB')));
       if(localStorage.getItem('invoicesDB')) setInvoices(JSON.parse(localStorage.getItem('invoicesDB')));
-      // Cargar notificaciones guardadas de sesión anterior (opcional)
       if(localStorage.getItem('realtimeEvents')) setRealtimeEvents(JSON.parse(localStorage.getItem('realtimeEvents')));
     } catch (e) { console.error(e); }
   }, []);
 
-  // Guardar notificaciones en local storage para no perderlas al recargar
   useEffect(() => { localStorage.setItem('realtimeEvents', JSON.stringify(realtimeEvents)); }, [realtimeEvents]);
 
-  // 🔥 LÓGICA DE REALTIME MEJORADA (ASIGNACIÓN + CAMBIO DE ESTADO) 🔥
   useEffect(() => {
     if (!user) return;
 
@@ -164,11 +160,9 @@ function App() {
         const { eventType, new: newRecord, old: oldRecord } = payload;
         const seeAll = ['Administrador', 'Producción', 'Contabilidad'].includes(user.role);
 
-        // --- 1. GENERAR NOTIFICACIONES PARA LA CAMPANA ---
         if (eventType === 'UPDATE') {
             const numOrden = newRecord.order_number || newRecord.id;
             
-            // A. ME ASIGNARON UNA ORDEN (Soy Vendedor)
             if (newRecord.vendedor === user.name && oldRecord.vendedor !== user.name) {
                 const notif = {
                     id: Date.now(),
@@ -180,18 +174,13 @@ function App() {
                     timestamp: new Date().toISOString()
                 };
                 setRealtimeEvents(prev => [notif, ...prev]);
-                
                 toast({ title: notif.title, description: notif.message, className: "bg-blue-100 border-blue-500 text-blue-900" });
             }
 
-            // B. CAMBIO DE ESTADO (Para quien le interese)
             if (newRecord.status !== oldRecord.status) {
                 let relevant = false;
-                // Si soy el dueño
                 if (newRecord.vendedor === user.name) relevant = true;
-                // Si soy producción y pasó a producción
                 if (user.role === 'Producción' && newRecord.status === 'PRODUCCION') relevant = true;
-                // Si soy contabilidad y pasó a contabilidad
                 if (user.role === 'Contabilidad' && newRecord.status === 'CONTABILIDAD') relevant = true;
 
                 if (relevant) {
@@ -205,33 +194,24 @@ function App() {
                         timestamp: new Date().toISOString()
                     };
                     setRealtimeEvents(prev => [notif, ...prev]);
-                    
                     toast({ title: notif.title, description: notif.message });
                 }
             }
         }
 
-        // --- 2. ACTUALIZAR LISTA DE ÓRDENES (Lógica de inyección) ---
         setOrders(prevOrders => {
             if (eventType === 'INSERT') {
                 if (seeAll || newRecord.vendedor === user.name) return [newRecord, ...prevOrders];
                 return prevOrders;
             }
             if (eventType === 'UPDATE') {
-                const isAdmin = user.role === 'Administrador';
                 const isMine = newRecord.vendedor === user.name;
                 const wasMine = oldRecord.vendedor === user.name;
                 const exists = prevOrders.some(o => o.id === newRecord.id);
 
                 if (seeAll) return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
-                
-                // Si me la asignaron y no la tenía, agregarla
                 if (isMine && !exists) return [newRecord, ...prevOrders];
-                
-                // Si me la quitaron, borrarla
                 if (!isMine && wasMine) return prevOrders.filter(o => o.id !== newRecord.id);
-                
-                // Si es actualización normal
                 if (isMine && exists) return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
 
                 return prevOrders;
@@ -250,7 +230,6 @@ function App() {
     };
   }, [user, toast]); 
 
-  // --- HANDLER PARA BORRAR NOTIFICACIONES DE LA CAMPANA ---
   const handleClearEvent = (id) => {
       setRealtimeEvents(prev => prev.filter(e => e.id !== id));
   };
@@ -296,13 +275,11 @@ function App() {
   const handleAnulateInvoice = (inv) => { setInvoices(p => p.map(i => i.id === inv.id ? { ...i, status: 'ANULADA' } : i)); if(viewInvoice?.id === inv.id) setViewInvoice(prev => ({...prev, status: 'ANULADA'})); };
 
   const handleConvertProformaToOrder = (proforma) => {
-      // 1. Extraemos los datos financieros de la proforma por si acaso vienen como texto
       let finData = proforma.financials || {};
       if (typeof finData === 'string') {
           try { finData = JSON.parse(finData); } catch(e) { finData = {}; }
       }
 
-      // 2. Armamos el paquete asegurándonos de ENVIAR los días de entrega
       const prefilledOrderData = {
           cliente_nombre: proforma.cliente_nombre,
           cliente: proforma.cliente_nombre,
@@ -319,9 +296,9 @@ function App() {
               total: proforma.total,
               ivaPercentage: proforma.iva_percentage || 15,
               saldo: proforma.total,
-              diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0 // 🔥 EMPACAMOS LOS DÍAS AQUÍ
+              diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0
           },
-          dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0, // 🔥 Y TAMBIÉN AQUÍ POR SEGURIDAD
+          dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0,
           tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', 
           origenProformaInfo: proforma.proformaNumber || proforma.numero || '', 
           aplicarIva: proforma.iva > 0,
@@ -380,6 +357,8 @@ function App() {
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
     if (currentView === 'clientes-lista') return <ClientsPanel />;
     if (currentView === 'configuracion') return <AnulationConfig />;
+    
+    if (currentView === 'vales') return <ValesCajaPanel user={user} />;
 
     if (currentView.startsWith('ordenes-')) {
        let filtered = orders.filter(o => o.status !== 'ARCHIVADA');
@@ -424,16 +403,23 @@ function App() {
     <>
       <div className="min-h-screen bg-slate-50 flex">
         <div className="hidden md:block w-64 flex-shrink-0"><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={handleViewChange} allowedViews={allowedViews} /></div>
-        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3">
-            {/* 🔥 PASAMOS LOS EVENTOS REALTIME A LAS NOTIFICACIONES 🔥 */}
-            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} />
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div>
+        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden">
+          <span className="font-bold">Sistema Producción</span>
+          <div className="flex items-center gap-3">
+            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} />
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button>
+          </div>
         </div>
         {isMobileMenuOpen && (<div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsMobileMenuOpen(false)}><div className="w-64 bg-slate-900 h-full shadow-2xl" onClick={e => e.stopPropagation()}><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} allowedViews={allowedViews} /></div></div>)}
-        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4">
-            {/* 🔥 Y AQUÍ TAMBIÉN 🔥 */}
-            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} />
-            <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
+        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col">
+          <div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden">
+            <div className="flex items-center gap-4">
+              <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} />
+              <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span>
+            </div>
+          </div>
+          <div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div>
+        </div>
       </div>
 
       {(showForm || cloningOrder || editingOrder) && (
