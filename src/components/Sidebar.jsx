@@ -54,13 +54,13 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
         { label: 'Sin Factura', id: 'ordenes-sin-factura' },
         { label: 'Con Factura', id: 'ordenes-con-factura' },
         { label: 'Crédito', id: 'ordenes-credito' },
+        { label: 'Vales de Caja', id: 'vales' }, 
         { label: 'Archivadas', id: 'ordenes-archivadas' },
         ...(user?.role === 'Administrador' ? [{ label: 'Configuración', id: 'configuracion', icon: Settings }] : [])
       ]
     },
     { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
     
-    // 🔥 INVENTARIO DIVIDIDO CON PERMISOS
     { id: 'inventario', label: 'Inventario', icon: Package, submenu: [
         { label: 'Ver Inventario', id: 'inventario-ver' },
         ...(user?.role === 'Administrador' || user?.role === 'Producción' ? [{ label: 'Gestionar Inventario', id: 'inventario-gestionar' }] : []),
@@ -86,21 +86,26 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     }, 
     { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
     { id: 'salir', label: 'Cerrar Sesión', icon: LogOut, action: onLogout },
-    
   ];
+
+  // 🔥 LÓGICA BLINDADA PARA PERMISOS 🔥
+  const isAllowed = (id) => {
+      if (allowedViews.includes(id)) return true;
+      // Siempre permitir vales y órdenes a los Vendedores
+      if (id === 'vales' && user?.role === 'Vendedor') return true;
+      if (id === 'ordenes' && user?.role === 'Vendedor') return true;
+      return false;
+  };
 
   const visibleItems = allMenuItems.map(item => {
     if (item.id === 'salir' || item.id === 'inicio' || item.id === 'mi-perfil') return item;
-    
-    // Filtro especial para Inventario (siempre visible, pero su submenu cambia según el rol arriba)
     if (item.id === 'inventario') return item;
-
     if (user?.role === 'Administrador') return item; 
 
-    if (!allowedViews.includes(item.id)) return null;
+    if (!isAllowed(item.id)) return null;
 
     if (item.submenu) {
-        const filteredSub = item.submenu.filter(sub => allowedViews.includes(sub.id));
+        const filteredSub = item.submenu.filter(sub => isAllowed(sub.id));
         if (filteredSub.length === 0) return null;
         return { ...item, submenu: filteredSub };
     }

@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Ban, Undo2, Edit2, Calculator, Bug, Trash2, ExternalLink } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Undo2, Edit2, Bug, Trash2, ExternalLink, Receipt } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
@@ -12,7 +12,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const { toast } = useToast();
   const isAdmin = user.role === 'Administrador';
 
-  // --- HELPER: FECHA LOCAL ---
   const toLocalDateStr = (isoString) => {
     if (!isoString) return '';
     const date = new Date(isoString);
@@ -29,16 +28,14 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const [saving, setSaving] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   
-  // ADMIN
   const [targetUserId, setTargetUserId] = useState(user.id);
   const [staffList, setStaffList] = useState([]);
   const [targetUserName, setTargetUserName] = useState(user.name);
 
-  // Calendario
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [daysWithReport, setDaysWithReport] = useState(new Set()); 
+  const [valesDelDia, setValesDelDia] = useState([]);
 
-  // --- DATOS DEL REPORTE ---
   const [ledgerData, setLedgerData] = useState({
     openingCash: 0,        
     amountToAccounting: 0, 
@@ -49,7 +46,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const [editingOpening, setEditingOpening] = useState(false);
   const isEditable = selectedDate === todayStr || isAdmin;
 
-  // 1. CARGAR STAFF
   useEffect(() => {
     if (isAdmin) {
         const fetchStaff = async () => {
@@ -69,8 +65,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       }
   }, [targetUserId, staffList, isAdmin, user.name]);
 
-
-  // 2. CARGA DE DATOS (LÓGICA HÍBRIDA PARA HOY)
   useEffect(() => {
     if (targetUserId && targetUserName) {
         loadDailyData(selectedDate, targetUserId, targetUserName);
@@ -85,6 +79,19 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     const isToday = date === todayStr;
 
     try {
+      const { data: todosLosValesDB } = await supabase.from('vales_caja').select('*');
+          
+      const valesFiltrados = (todosLosValesDB || []).filter(v => {
+          const fechaValeLimpia = v.fecha ? v.fecha.split('T')[0] : "";
+          const coincideFecha = fechaValeLimpia === date;
+          const vendedorDB = v.vendedor?.toLowerCase().trim() || "";
+          const vendedorBuscado = userName?.toLowerCase().trim() || "";
+          const coincideVendedor = vendedorDB === vendedorBuscado;
+          return coincideFecha && coincideVendedor;
+      });
+      
+      setValesDelDia(valesFiltrados);
+
       const { data: currentReport, error } = await supabase
         .from('daily_closings')
         .select('*')
@@ -208,25 +215,17 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       
       setRecalculating(true);
       try {
-          const { error } = await supabase
-            .from('daily_closings')
-            .delete()
-            .match({ date: selectedDate, user_id: targetUserId });
-
+          const { error } = await supabase.from('daily_closings').delete().match({ date: selectedDate, user_id: targetUserId });
           if (error) throw error;
-
           toast({ title: "Reporte Reiniciado", description: "Recalculando saldos..." });
           await loadDailyData(selectedDate, targetUserId, targetUserName);
-
       } catch (error) {
-          console.error(error);
           toast({ title: "Error", description: "No se pudo reiniciar el reporte.", variant: "destructive" });
       } finally {
           setRecalculating(false);
       }
   };
 
-  // 3. CALENDARIO
   useEffect(() => {
     if (targetUserId && targetUserName) fetchCalendarDots();
   }, [viewMode, currentMonth, targetUserId, targetUserName, orders]);
@@ -241,14 +240,17 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     try {
         const { data } = await supabase.from('daily_closings').select('date').eq('user_id', targetUserId).gte('date', firstDay).lte('date', lastDay);
         if (data) data.forEach(item => activityDates.add(item.date));
+        
+        const { data: vales } = await supabase.from('vales_caja').select('fecha, vendedor').gte('fecha', firstDay).lte('fecha', lastDay);
+        if (vales) {
+            vales.forEach(v => {
+                if (v.vendedor?.toLowerCase().trim() === targetUserName?.toLowerCase().trim()) activityDates.add(v.fecha);
+            });
+        }
     } catch (e) {}
 
     orders.forEach(o => {
-        const tocoDinero = 
-            o.vendedor === targetUserName || 
-            o.recibido_por_anticipo === targetUserName || 
-            o.recibido_por_saldo === targetUserName;
-
+        const tocoDinero = o.vendedor === targetUserName || o.recibido_por_anticipo === targetUserName || o.recibido_por_saldo === targetUserName;
         if (tocoDinero) {
             const dateStr = toLocalDateStr(o.created_at || o.createdAt);
             if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr);
@@ -290,17 +292,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     return days;
   };
 
-  // 4. TRANSACCIONES DEL DÍA
   const automaticTransactions = useMemo(() => {
     const txs = [];
     
     const relevantOrders = orders.filter(o => 
-        o.vendedor === targetUserName || 
-        o.recibido_por_anticipo === targetUserName || 
-        o.recibido_por_saldo === targetUserName
+        o.vendedor === targetUserName || o.recibido_por_anticipo === targetUserName || o.recibido_por_saldo === targetUserName
     );
 
-    // A. VENTAS / ANTICIPOS
     relevantOrders.forEach(o => {
       const creationDate = toLocalDateStr(o.createdAt || o.created_at);
       if (creationDate === selectedDate) {
@@ -311,23 +309,17 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                 id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`,
                 orderNumber: numOrden, income: Number(o.anticipo), expense: 0, 
                 balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false,
-                originalOrder: o // 🔥 GUARDAMOS LA ORDEN ORIGINAL PARA ABRIRLA LUEGO
+                originalOrder: o
               });
           }
       }
     });
 
-    // B. COBROS DE SALDOS
     relevantOrders.forEach(o => {
       const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
       const paymentDate = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDate;
-      
       const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
-      
-      const total = Number(o.financials?.total) || 0;
-      const ant = Number(o.anticipo) || 0;
-      const ret = Number(o.retencion) || 0;
-      const saldoCobrado = total - ant - ret;
+      const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
 
       if (paymentDate === selectedDate && isRelevantStatus && saldoCobrado > 0) {
           const quienCobroSaldo = o.recibido_por_saldo || o.vendedor;
@@ -336,13 +328,12 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
               txs.push({
                 id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`,
                 orderNumber: numOrden, income: saldoCobrado, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false,
-                originalOrder: o // 🔥 GUARDAMOS LA ORDEN ORIGINAL
+                originalOrder: o 
               });
           }
       }
     });
 
-    // C. ANULACIONES
     relevantOrders.forEach(o => {
         const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
         if (o.status === 'ANULADA' && updatedDate === selectedDate) {
@@ -350,31 +341,43 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             if (quienCobroOriginalmente === targetUserName && Number(o.anticipo) > 0) {
                 const numOrden = o.order_number || o.orderNumber || o.id;
                 txs.push({
-                    id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Devolución/Anulación #${numOrden}`,
+                    id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Anulación #${numOrden}`,
                     orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true,
-                    originalOrder: o // 🔥 GUARDAMOS LA ORDEN ORIGINAL
+                    originalOrder: o 
                 });
             }
         }
     });
     
+    valesDelDia.forEach(vale => {
+        txs.push({
+            id: `vale-${vale.id}`, 
+            type: 'VALE CAJA', 
+            description: vale.concepto, 
+            details: '',
+            orderNumber: 'VALE', 
+            income: 0, 
+            expense: Number(vale.monto), 
+            balanceNote: 'EFECTIVO', 
+            isManual: false, 
+            isAnulada: false,
+            isVale: true 
+        });
+    });
+
     return txs;
-  }, [orders, selectedDate, targetUserName]);
+  }, [orders, selectedDate, targetUserName, valesDelDia]);
 
   const allTransactions = useMemo(() => [...automaticTransactions, ...ledgerData.manualTransactions], [automaticTransactions, ledgerData]);
 
-  // TOTALES
   const totals = useMemo(() => {
     const totalIncome = allTransactions.reduce((sum, tx) => sum + Number(tx.income || 0), 0);
     const totalExpense = allTransactions.reduce((sum, tx) => sum + Number(tx.expense || 0), 0);
-    
     const cashInHand = Number(ledgerData.openingCash) + totalIncome - totalExpense;
     const nextDayBalance = cashInHand - Number(ledgerData.amountToAccounting);
-
     return { totalIncome, totalExpense, cashInHand, nextDayBalance };
   }, [allTransactions, ledgerData]);
 
-  // 5. GUARDAR
   const saveToCloud = async () => {
     setSaving(true);
     try {
@@ -387,16 +390,12 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
           manual_transactions: ledgerData.manualTransactions,
           updated_at: new Date().toISOString()
       };
-
       const { error } = await supabase.from('daily_closings').upsert(payload, { onConflict: 'date, user_id' });
       if (error) throw error;
       toast({ title: "Guardado Correctamente", description: "El saldo ha sido registrado para mañana." });
       fetchCalendarDots();
-      
       setDebugInfo(prev => ({ ...prev, status: "Guardado ahora mismo", isSaved: true }));
-
     } catch (error) {
-      console.error(error);
       toast({ title: "Error", description: "No se pudo guardar.", variant: "destructive" });
     } finally { setSaving(false); }
   };
@@ -419,8 +418,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 max-w-[1200px] mx-auto pb-20 print:p-0 print:w-full">
-      
-      {/* HEADER */}
       <div className="flex flex-col md:flex-row justify-between items-center gap-4 print:hidden bg-white p-4 rounded-xl shadow-sm border border-slate-200">
          <div>
             <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">{isAdmin ? 'Auditoría de Cajas' : 'Reporte Diario de Caja'}</h2>
@@ -432,7 +429,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
          </div>
       </div>
 
-      {/* CALENDARIO */}
       {viewMode === 'calendar' && (
          <div className="space-y-6 animate-in fade-in duration-500">
             {isAdmin && (
@@ -462,7 +458,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
          </div>
       )}
 
-      {/* REPORTE DIARIO */}
       {viewMode === 'report' && (
         <>
             <div className="flex justify-between items-center mb-2 print:hidden">
@@ -479,7 +474,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             </div>
 
             {loading ? (
-                <div className="text-center py-20 text-slate-400 bg-white rounded-xl border border-dashed"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />Calculando saldos históricos...</div>
+                <div className="text-center py-20 text-slate-400 bg-white rounded-xl border border-dashed"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />Calculando saldos...</div>
             ) : (
                 <div className="bg-white shadow-xl print:shadow-none min-h-[800px] flex flex-col font-sans text-xs md:text-sm border-2 border-slate-900">
                     <div className="bg-blue-300 border-b-2 border-slate-900 p-3 flex justify-between items-center print:bg-blue-300 print:print-color-adjust-exact">
@@ -507,7 +502,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                         {allTransactions.map((tx, idx) => (
                             <div 
                                 key={tx.id} 
-                                // 🔥 AGREGAMOS EL EVENTO ONCLICK Y ESTILOS VISUALES PARA ÓRDENES CLICKABLES
                                 onClick={() => { 
                                     if (!tx.isManual && tx.originalOrder && onViewOrder) {
                                         onViewOrder(tx.originalOrder); 
@@ -517,14 +511,16 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                     "grid grid-cols-[40px_1fr_100px_100px_100px_200px_40px] border-b border-slate-300 divide-x divide-slate-300 transition-colors group", 
                                     idx % 2 === 0 ? "bg-white" : "bg-slate-50", 
                                     tx.isAnulada ? "bg-red-50" : "",
-                                    !tx.isManual ? "cursor-pointer hover:bg-blue-100" : "hover:bg-yellow-50" // Indicador de que es clickable
+                                    tx.isVale ? "bg-red-50/50" : "", 
+                                    !tx.isManual && !tx.isVale ? "cursor-pointer hover:bg-blue-100" : "hover:bg-yellow-50" 
                                 )}
                             >
                                 <div className="py-2 font-bold text-center text-slate-500">{idx + 1}</div>
                                 <div className="py-1 px-2 flex flex-col justify-center">
                                     <div className="flex items-center gap-2">
                                         {tx.isAnulada && <Undo2 className="h-3 w-3 text-red-600" />}
-                                        <span className={cn("text-[10px] font-bold px-1 rounded border border-black uppercase print:border-black", tx.isAnulada ? 'bg-red-600 text-white border-red-800' : tx.type === 'VENTA' ? 'bg-green-200' : tx.type.includes('GASTO') ? 'bg-red-200' : 'bg-yellow-200')}>{tx.type}</span>
+                                        {tx.isVale && <Receipt className="h-3 w-3 text-red-600" />}
+                                        <span className={cn("text-[10px] font-bold px-1 rounded border border-black uppercase print:border-black", tx.isAnulada ? 'bg-red-600 text-white border-red-800' : tx.isVale ? 'bg-red-600 text-white' : tx.type === 'VENTA' ? 'bg-green-200' : tx.type.includes('GASTO') ? 'bg-red-200' : 'bg-yellow-200')}>{tx.type}</span>
                                         {tx.isManual && isEditable ? <input className="flex-1 bg-transparent border-b border-dotted outline-none font-semibold" value={tx.description} onChange={(e) => updateManualTransaction(tx.id, 'description', e.target.value)} /> : <span className="font-bold uppercase">{tx.description} {tx.details}</span>}
                                     </div>
                                 </div>
@@ -533,12 +529,11 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                 <div className="py-2 px-2 text-right font-bold text-red-700">{tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? `$${Number(tx.expense).toFixed(2)}` : '-')}</div>
                                 <div className="py-2 px-2 text-xs text-slate-600 truncate">{tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : tx.balanceNote}</div>
                                 
-                                {/* 🔥 AÑADIMOS EL ÍCONO DE "VER DETALLES" (O la X si es manual) */}
                                 <div className="flex items-center justify-center bg-slate-50 print:hidden">
                                     {tx.isManual && isEditable ? (
                                         <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button>
                                     ) : (
-                                        !tx.isManual && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
+                                        !tx.isManual && !tx.isVale && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
                                     )}
                                 </div>
                             </div>
@@ -549,7 +544,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                     <div className="border-t-2 border-slate-900">
                         <div className="bg-slate-800 text-white p-2 grid grid-cols-2 gap-4 text-center print:print-color-adjust-exact">
                             <div><div className="text-[10px] text-slate-400">TOTAL INGRESOS</div><div className="text-lg font-bold text-green-400">${totals.totalIncome.toFixed(2)}</div></div>
-                            <div><div className="text-[10px] text-slate-400">TOTAL EGRESOS</div><div className="text-lg font-bold text-red-400">${totals.totalExpense.toFixed(2)}</div></div>
+                            <div><div className="text-[10px] text-slate-400">TOTAL EGRESOS (INCL. VALES)</div><div className="text-lg font-bold text-red-400">${totals.totalExpense.toFixed(2)}</div></div>
                         </div>
                         <div className="flex flex-col md:flex-row border-t-2 border-slate-900 h-auto md:h-24 text-sm">
                             <div className="flex-1 border-r-2 border-slate-900 bg-blue-50 p-4 flex flex-col justify-center items-center">
@@ -573,7 +568,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             )}
             {!isEditable && <div className="text-xs text-amber-600 mt-4 print:hidden flex items-center gap-2 justify-center bg-amber-50 p-2 rounded border border-amber-200"><AlertCircle className="h-4 w-4" /> Reporte histórico. No se pueden realizar cambios.</div>}
             
-            {/* PANEL DE DIAGNÓSTICO (RAYOS X) - SOLO VISIBLE PARA ADMIN */}
             {isAdmin && debugInfo && (
                 <div className="bg-slate-900 text-slate-300 p-4 rounded-xl mt-8 font-mono text-xs shadow-2xl animate-in slide-in-from-bottom-10 print:hidden relative">
                     <div className="flex items-center gap-2 mb-2 text-green-400 font-bold uppercase"><Bug className="h-4 w-4"/> Diagnóstico del Cálculo</div>
@@ -590,7 +584,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                             <div className="pt-2 border-t border-slate-700 mt-1"><span className="text-slate-500">TOTAL CALCULADO:</span> <span className="text-white font-bold text-sm">${(debugInfo.totalCalculated || 0).toFixed(2)}</span></div>
                         </div>
                     </div>
-                    {/* BOTÓN DE EMERGENCIA PARA RECALCULAR */}
                     {debugInfo.isSaved && (
                         <div className="border-t border-slate-700 pt-4 flex justify-end">
                             <Button variant="destructive" size="sm" onClick={handleForceRecalculate} disabled={recalculating} className="gap-2">

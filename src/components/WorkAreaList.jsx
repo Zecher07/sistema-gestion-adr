@@ -1,6 +1,5 @@
-
 import React, { useState, useEffect, useMemo } from 'react';
-import { LayoutList, Kanban as KanbanIcon, CheckCircle2, Search, ChevronLeft, ChevronRight, Settings } from 'lucide-react';
+import { LayoutList, Kanban as KanbanIcon, CheckCircle2, Search, ChevronLeft, ChevronRight, Settings, Play } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import KanbanBoard from './KanbanBoard';
 import CompletedTasksList from './CompletedTasksList';
@@ -97,24 +96,25 @@ const WorkAreaList = ({
     return (order.id || '').toString().slice(-7).padStart(7, '0');
   };
 
+  // 🔥 NUEVA LÓGICA DE CÁLCULO DE PROGRESO 🔥
   const calculateProductStats = (order) => {
     const products = order.productos || [];
     const total = products.length;
-    // Assuming 'completed' flag exists or implied by status logic if items have statuses
-    // For now, based on provided logic, we might not have granular item status in order object 
-    // unless 'completed' prop exists on product items (which is updated in handleProductToggle in App.jsx)
-    const completed = products.filter(p => p.completed).length;
     
-    // Started items: Logic depends on implementation. 
-    // If order is in PRODUCCION, we assume it's started. 
-    // Or we count items that are completed.
-    // Based on user request "Ítems iniciados (items)", let's assume it counts items with some progress or just count of items if order started
-    // The screenshot shows "(1)" suggesting a count.
+    // Contamos los que están marcados como FINALIZADO según tu nueva lógica
+    const completed = products.filter(p => p.estado_prod === 'FINALIZADO').length;
+    
+    // Contamos los que están en proceso actualmente
+    const inProcess = products.filter(p => p.estado_prod === 'EN_PROCESO').length;
+    
+    // Iniciados son todos los que no son PENDIENTES
+    const startedCount = completed + inProcess; 
     
     return {
         total,
         completed,
-        startedCount: products.length // Simplified for now: if order is here, items are "started" generally
+        inProcess,
+        startedCount
     };
   };
 
@@ -219,24 +219,38 @@ const WorkAreaList = ({
                      {paginatedOrders.length > 0 ? (
                         paginatedOrders.map(order => {
                           const stats = calculateProductStats(order);
+                          
+                          // Lógica de color para el badge de producción
+                          const isFullyCompleted = stats.total > 0 && stats.completed === stats.total;
+                          const hasProgress = stats.startedCount > 0;
+
                           return (
                             <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group">
                                <td className="px-6 py-3">
                                   <button 
                                      onClick={() => onViewOrder(order)}
-                                     className="text-blue-500 hover:text-blue-700 font-medium hover:underline"
+                                     className="text-blue-600 hover:text-blue-800 font-bold hover:underline bg-blue-50 px-2 py-1 rounded"
                                   >
-                                     {formatOrderId(order)}
+                                     #{formatOrderId(order)}
                                   </button>
                                </td>
                                <td className="px-6 py-3 text-slate-600">
                                    <div className="flex items-center gap-2">
-                                     <Settings className="h-4 w-4 text-slate-400" />
-                                     <span>({stats.startedCount})</span>
+                                     <Play className={cn("h-4 w-4", hasProgress ? "text-blue-500" : "text-slate-300")} />
+                                     <span className={hasProgress ? "font-bold text-slate-800" : ""}>({stats.startedCount})</span>
                                    </div>
                                </td>
                                <td className="px-6 py-3 text-slate-700 font-medium">
-                                   {stats.completed} / {stats.total}
+                                   <span className={cn(
+                                       "px-2.5 py-1 rounded-full text-xs font-bold inline-flex items-center border",
+                                       isFullyCompleted 
+                                          ? "bg-green-100 text-green-700 border-green-200" 
+                                          : hasProgress 
+                                            ? "bg-blue-100 text-blue-700 border-blue-200"
+                                            : "bg-slate-100 text-slate-500 border-slate-200"
+                                   )}>
+                                       {stats.completed} / {stats.total}
+                                   </span>
                                </td>
                                <td className="px-6 py-3 text-slate-600">
                                   {formatDate(order.fechaEntrega)}
@@ -272,7 +286,7 @@ const WorkAreaList = ({
                   
                   <div className="flex items-center gap-1">
                       <span className="mr-2 text-slate-500">
-                         {currentPage > 1 ? 'Anterior' : 'Anterior'}
+                         Anterior
                       </span>
                       <Button 
                          variant="outline" 
@@ -298,7 +312,7 @@ const WorkAreaList = ({
                          <ChevronRight className="h-4 w-4" />
                       </Button>
                       <span className="ml-2 text-slate-500">
-                         {currentPage < totalPages ? 'Siguiente' : 'Siguiente'}
+                         Siguiente
                       </span>
                   </div>
                </div>

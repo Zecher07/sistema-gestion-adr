@@ -9,8 +9,9 @@ const Notifications = ({
   archivedIds = [], 
   onArchive, 
   onViewOrder,
-  realtimeEvents = [], // 🔥 NUEVO: Eventos que llegan al instante
-  onClearEvent         // 🔥 NUEVO: Función para borrar la notificación
+  realtimeEvents = [], // Eventos que llegan al instante
+  onClearEvent,        // Función para borrar la notificación
+  onViewChange         // 🔥 NUEVA PROPIEDAD PARA REDIRIGIR AL ÁREA DE TRABAJO
 }) => {
   const [isOpen, setIsOpen] = useState(false);
   const dropdownRef = useRef(null);
@@ -27,7 +28,6 @@ const Notifications = ({
   }, []);
 
   // 1. NOTIFICACIONES PASIVAS (Tareas Pendientes)
-  // Esta lógica se mantiene igual: Calcula qué tienes pendiente de trabajar.
   const getWorkItems = () => {
     if (!user || !orders) return [];
 
@@ -56,12 +56,11 @@ const Notifications = ({
 
   const workItems = getWorkItems();
   
-  // 🔥 COMBINAR CONTADORES
+  // COMBINAR CONTADORES
   const totalCount = realtimeEvents.length + workItems.length;
 
   // Handler para abrir orden
   const handleOpenOrder = (orderId) => {
-    // Buscamos la orden completa en el array si solo tenemos el ID
     const orderObj = typeof orderId === 'string' || typeof orderId === 'number' 
         ? orders.find(o => o.id === orderId) 
         : orderId;
@@ -69,6 +68,14 @@ const Notifications = ({
     if (orderObj) {
         onViewOrder(orderObj);
         setIsOpen(false);
+    }
+  };
+
+  // 🔥 NUEVA FUNCIÓN PARA EL BOTÓN INFERIOR 🔥
+  const handleViewAll = () => {
+    setIsOpen(false);
+    if (onViewChange) {
+      onViewChange('trabajo-listado');
     }
   };
 
@@ -150,7 +157,7 @@ const Notifications = ({
                   ))}
                 </div>
               ) : (
-                /* Mensaje si no hay tareas, pero puede haber eventos realtime arriba */
+                /* Mensaje si no hay tareas */
                 workItems.length === 0 && realtimeEvents.length === 0 && (
                     <div className="p-8 text-center text-slate-400 text-sm">
                         <p>¡Todo al día! 🎉</p>
@@ -160,14 +167,16 @@ const Notifications = ({
               )}
             </div>
 
-            <div className="bg-slate-50 p-2 text-center border-t border-slate-200">
-              <button 
-                onClick={() => setIsOpen(false)}
-                className="text-xs font-semibold text-blue-600 hover:text-blue-700 transition-colors"
-              >
-                Cerrar
-              </button>
+            {/* 🔥 NUEVO BOTÓN "VER TODAS LAS TAREAS" (REEMPLAZA A "CERRAR") 🔥 */}
+            <div 
+              className="bg-blue-50 p-3 text-center border-t border-blue-100 hover:bg-blue-100 transition-colors cursor-pointer group" 
+              onClick={handleViewAll}
+            >
+              <span className="text-xs font-bold text-blue-700 uppercase tracking-wider group-hover:text-blue-800">
+                Ver todas las tareas
+              </span>
             </div>
+
           </motion.div>
         )}
       </AnimatePresence>
