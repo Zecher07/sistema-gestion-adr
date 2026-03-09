@@ -180,6 +180,14 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                   floatingSum += saldoCobrado;
                   floatingCount++;
               }
+              
+              // SUMAR ABONOS EN DÍAS INTERMEDIOS
+              (o.abonos || []).forEach(abono => {
+                  const abonoDateStr = toLocalDateStr(abono.fecha);
+                  if (abonoDateStr > lastReportDateStr && abonoDateStr < date && abono.cobrador === userName) {
+                      floatingSum += Number(abono.monto || 0);
+                  }
+              });
           });
       }
 
@@ -255,6 +263,14 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             const dateStr = toLocalDateStr(o.created_at || o.createdAt);
             if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr);
         }
+        
+        // Puntos por Abonos
+        (o.abonos || []).forEach(abono => {
+            if (abono.cobrador === targetUserName) {
+                const adate = toLocalDateStr(abono.fecha);
+                if (adate >= firstDay && adate <= lastDay) activityDates.add(adate);
+            }
+        });
     });
 
     setDaysWithReport(activityDates);
@@ -295,8 +311,12 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const automaticTransactions = useMemo(() => {
     const txs = [];
     
+    // Filtramos solo las que tocó este vendedor (por anticipo, por saldo, o por ABONO)
     const relevantOrders = orders.filter(o => 
-        o.vendedor === targetUserName || o.recibido_por_anticipo === targetUserName || o.recibido_por_saldo === targetUserName
+        o.vendedor === targetUserName || 
+        o.recibido_por_anticipo === targetUserName || 
+        o.recibido_por_saldo === targetUserName ||
+        (o.abonos && o.abonos.some(a => a.cobrador === targetUserName))
     );
 
     relevantOrders.forEach(o => {
@@ -313,6 +333,21 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
               });
           }
       }
+
+      // 🔥 LÓGICA DE ABONOS (SE MUESTRAN COMO INGRESO DEL DÍA) 🔥
+      (o.abonos || []).forEach(abono => {
+          const abonoDateStr = toLocalDateStr(abono.fecha);
+          if (abonoDateStr === selectedDate && abono.cobrador === targetUserName) {
+               const numOrden = o.order_number || o.orderNumber || o.id;
+               txs.push({
+                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, 
+                  details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`,
+                  orderNumber: numOrden, income: Number(abono.monto), expense: 0, 
+                  balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false,
+                  originalOrder: o
+               });
+          }
+      });
     });
 
     relevantOrders.forEach(o => {
@@ -321,13 +356,17 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
 
-      if (paymentDate === selectedDate && isRelevantStatus && saldoCobrado > 0) {
+      // Descontar abonos del saldo final para que no se cobre dos veces
+      const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+      const saldoFinalReal = saldoCobrado - totalAbonado;
+
+      if (paymentDate === selectedDate && isRelevantStatus && saldoFinalReal > 0) {
           const quienCobroSaldo = o.recibido_por_saldo || o.vendedor;
           if (quienCobroSaldo === targetUserName) {
               const numOrden = o.order_number || o.orderNumber || o.id;
               txs.push({
                 id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`,
-                orderNumber: numOrden, income: saldoCobrado, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false,
+                orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false,
                 originalOrder: o 
               });
           }
@@ -520,7 +559,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                     <div className="flex items-center gap-2">
                                         {tx.isAnulada && <Undo2 className="h-3 w-3 text-red-600" />}
                                         {tx.isVale && <Receipt className="h-3 w-3 text-red-600" />}
-                                        <span className={cn("text-[10px] font-bold px-1 rounded border border-black uppercase print:border-black", tx.isAnulada ? 'bg-red-600 text-white border-red-800' : tx.isVale ? 'bg-red-600 text-white' : tx.type === 'VENTA' ? 'bg-green-200' : tx.type.includes('GASTO') ? 'bg-red-200' : 'bg-yellow-200')}>{tx.type}</span>
+                                        <span className={cn("text-[10px] font-bold px-1 rounded border border-black uppercase print:border-black", tx.isAnulada ? 'bg-red-600 text-white border-red-800' : tx.isVale ? 'bg-red-600 text-white' : tx.type === 'VENTA' ? 'bg-green-200' : tx.type === 'ABONO' ? 'bg-blue-200' : tx.type.includes('GASTO') ? 'bg-red-200' : 'bg-yellow-200')}>{tx.type}</span>
                                         {tx.isManual && isEditable ? <input className="flex-1 bg-transparent border-b border-dotted outline-none font-semibold" value={tx.description} onChange={(e) => updateManualTransaction(tx.id, 'description', e.target.value)} /> : <span className="font-bold uppercase">{tx.description} {tx.details}</span>}
                                     </div>
                                 </div>
