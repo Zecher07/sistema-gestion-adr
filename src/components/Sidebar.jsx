@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package } from 'lucide-react';
+import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package, ShieldCheck } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
@@ -61,6 +61,12 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     },
     { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
     
+    // 🔥 NUEVO MENÚ DE CONTABILIDAD 🔥
+    { id: 'contabilidad', label: 'Contabilidad', icon: ShieldCheck, submenu: [
+        { label: 'Cierre Contable', id: 'contabilidad-cierre' }
+      ]
+    },
+    
     { id: 'inventario', label: 'Inventario', icon: Package, submenu: [
         { label: 'Ver Inventario', id: 'inventario-ver' },
         ...(user?.role === 'Administrador' || user?.role === 'Producción' ? [{ label: 'Gestionar Inventario', id: 'inventario-gestionar' }] : []),
@@ -91,9 +97,14 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
   // 🔥 LÓGICA BLINDADA PARA PERMISOS 🔥
   const isAllowed = (id) => {
       if (allowedViews.includes(id)) return true;
+      
       // Siempre permitir vales y órdenes a los Vendedores
       if (id === 'vales' && user?.role === 'Vendedor') return true;
       if (id === 'ordenes' && user?.role === 'Vendedor') return true;
+      
+      // Siempre permitir Cierre Contable a Contabilidad
+      if ((id === 'contabilidad' || id === 'contabilidad-cierre') && user?.role === 'Contabilidad') return true;
+
       return false;
   };
 

@@ -31,6 +31,7 @@ import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 import InventoryPanel from '@/components/InventoryPanel';
 import CatalogPanel from '@/components/CatalogPanel';
 import ValesCajaPanel from './components/ValesCajaPanel'; 
+import AccountingPanel from '@/components/AccountingPanel'; // 🔥 IMPORTADO AQUÍ
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -359,6 +360,9 @@ function App() {
     if (currentView === 'configuracion') return <AnulationConfig />;
     
     if (currentView === 'vales') return <ValesCajaPanel user={user} />;
+    
+    // 🔥 PANTALLA DE CIERRE CONTABLE 🔥
+    if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
 
     if (currentView.startsWith('ordenes-')) {
        let filtered = orders.filter(o => o.status !== 'ARCHIVADA');
@@ -403,23 +407,14 @@ function App() {
     <>
       <div className="min-h-screen bg-slate-50 flex">
         <div className="hidden md:block w-64 flex-shrink-0"><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={handleViewChange} allowedViews={allowedViews} /></div>
-        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden">
-          <span className="font-bold">Sistema Producción</span>
-          <div className="flex items-center gap-3">
+        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3">
             <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} />
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button>
-          </div>
+            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div>
         </div>
         {isMobileMenuOpen && (<div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsMobileMenuOpen(false)}><div className="w-64 bg-slate-900 h-full shadow-2xl" onClick={e => e.stopPropagation()}><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} allowedViews={allowedViews} /></div></div>)}
-        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col">
-          <div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden">
-            <div className="flex items-center gap-4">
-              <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} />
-              <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span>
-            </div>
-          </div>
-          <div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div>
-        </div>
+        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4">
+            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} />
+            <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
       {(showForm || cloningOrder || editingOrder) && (
