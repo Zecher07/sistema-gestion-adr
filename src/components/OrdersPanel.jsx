@@ -21,6 +21,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
+// Definimos todos los estados posibles para el filtro
 const FILTER_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA', 'ANULADA', 'ARCHIVADA'];
 
 const OrdersPanel = ({ 
@@ -37,15 +38,19 @@ const OrdersPanel = ({
   currentView,
   onAbonoOrder // 🔥 Prop recibida de App.jsx
 }) => {
+  // --- Estados de UI ---
   const [deleteConfirm, setDeleteConfirm] = useState(null);
 
+  // --- Estados de Filtros y Paginación ---
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('TODOS');
+  // Eliminados clientFilter y vendorFilter ya que se unifican en searchTerm
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
+  // --- Helpers de Formato y Lógica ---
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -65,53 +70,126 @@ const OrdersPanel = ({
   };
 
   const formatOrderId = (order) => {
+      // Manejo seguro para que siempre devuelva string
       const num = order.orderNumber || order.order_number || order.id || '';
       return String(num).padStart(7, '0');
   };
 
-  const getOrderTypeLabel = (typeString) => {
-    if (!typeString) return 'VPVC';
-    if (typeString.includes('(VC)')) return 'VC';
+  // 🔥 ESTA ES LA FUNCIÓN MODIFICADA CON EL RASTREADOR 🔥
+  const getOrderTypeLabel = (order) => {
+    const tipo1 = order.tipoOrden;
+    const tipo2 = order.tipo_trabajo;
+    const tipo3 = order.tipoLetrero;
+    
+    const tipoDefinitivo = String(tipo1 || tipo2 || tipo3 || '').toUpperCase();
+    
+    console.log(`🔍 [DIAGNÓSTICO ORDEN #${order.orderNumber || order.id}]`, {
+        "1. tipoOrden": tipo1,
+        "2. tipo_trabajo": tipo2,
+        "3. tipoLetrero": tipo3,
+        "Valor Evaluado Final": tipoDefinitivo,
+        "Objeto Completo": order
+    });
+
+    if (tipoDefinitivo.includes('(VC)') || tipoDefinitivo === 'VC' || tipoDefinitivo === 'VENTA CORTA') {
+        return 'VC';
+    }
     return 'VPVC';
   };
 
+  // --- Check Roles ---
   const isAdmin = user.role === 'Administrador';
   
+  // --- Configuración de Acciones según Vista Actual ---
   const actionConfig = useMemo(() => {
-    const config = { showView: true, showClone: false, showEdit: false, showDelete: false, showPayment: false, showArchive: false, showUnarchive: false };
+    const config = {
+      showView: true,
+      showClone: false,
+      showEdit: false,
+      showDelete: false, // Anular
+      showPayment: false, 
+      showArchive: false,
+      showUnarchive: false
+    };
+
     const allowModify = isAdmin;
 
     switch (currentView) {
-      case 'ordenes-todas': config.showClone = allowModify; config.showEdit = allowModify; config.showPayment = allowModify; break;
-      case 'ordenes-activas': config.showClone = allowModify; config.showEdit = allowModify; config.showDelete = allowModify; config.showPayment = allowModify; break;
-      case 'ordenes-archivadas': config.showClone = allowModify; config.showUnarchive = allowModify; break;
-      default: config.showClone = allowModify; config.showEdit = allowModify; config.showDelete = allowModify; config.showPayment = allowModify; config.showArchive = allowModify; config.showUnarchive = allowModify; break;
+      case 'ordenes-todas':
+        config.showClone = allowModify;
+        config.showEdit = allowModify;
+        config.showPayment = allowModify; 
+        break;
+      
+      case 'ordenes-activas':
+        config.showClone = allowModify;
+        config.showEdit = allowModify;
+        config.showDelete = allowModify;
+        config.showPayment = allowModify;
+        break;
+        
+      case 'ordenes-sin-factura':
+      case 'ordenes-con-factura':
+      case 'ordenes-credito':
+      case 'ordenes-finalizadas':
+      case 'ordenes-anuladas':
+        break;
+        
+      case 'ordenes-archivadas':
+        config.showClone = allowModify;
+        config.showUnarchive = allowModify;
+        break;
+
+      default:
+        config.showClone = allowModify;
+        config.showEdit = allowModify;
+        config.showDelete = allowModify;
+        config.showPayment = allowModify;
+        config.showArchive = allowModify;
+        config.showUnarchive = allowModify;
+        break;
     }
     return config;
   }, [currentView, isAdmin]);
 
+
+  // --- Filtrado Principal ---
   const roleFilteredOrders = useMemo(() => {
     return orders.filter(order => {
       if (user.role === 'Administrador' || user.role === 'Vendedor' || user.role === 'Contabilidad') return true;
-      if (user.role === 'Producción') return order.status === 'PRODUCCION';
+      if (user.role === 'Producción') {
+        return order.status === 'PRODUCCION';
+      }
       return false;
     });
   }, [orders, user.role]);
 
+  // --- FILTRADO UNIFICADO ---
   const filteredOrders = useMemo(() => {
     return roleFilteredOrders.filter(order => {
+      // 1. Text Search UNIFICADO (ID, Cliente, RUC, Vendedor, Título)
       const searchLower = searchTerm.toLowerCase();
+      
+      // Convertimos explícitamente a String() para evitar errores
       const idStr = String(order.orderNumber || order.order_number || order.id || '');
       const clienteStr = String(order.cliente || order.cliente_nombre || '');
-      const rucStr = String(order.ruc || order.cedula || ''); 
+      const rucStr = String(order.ruc || order.cedula || ''); // Busca por RUC/Cedula
       const tituloStr = String(order.tipoLetrero || order.tipo_trabajo || '');
       const vendedorStr = String(order.vendedor || '');
 
-      const matchesSearch = idStr.toLowerCase().includes(searchLower) || clienteStr.toLowerCase().includes(searchLower) || rucStr.toLowerCase().includes(searchLower) || tituloStr.toLowerCase().includes(searchLower) || vendedorStr.toLowerCase().includes(searchLower);
+      const matchesSearch = 
+        idStr.toLowerCase().includes(searchLower) ||
+        clienteStr.toLowerCase().includes(searchLower) ||
+        rucStr.toLowerCase().includes(searchLower) ||
+        tituloStr.toLowerCase().includes(searchLower) ||
+        vendedorStr.toLowerCase().includes(searchLower);
 
       if (!matchesSearch) return false;
+
+      // 2. Dropdown Filters (Solo Estado)
       if (statusFilter !== 'TODOS' && order.status !== statusFilter) return false;
       
+      // 3. Date Range Filter
       if (startDate) {
         const orderDate = new Date(order.createdAt || order.created_at);
         const start = new Date(startDate + 'T00:00:00'); 
@@ -127,11 +205,12 @@ const OrdersPanel = ({
     });
   }, [roleFilteredOrders, searchTerm, statusFilter, startDate, endDate]);
 
+  // --- Totales Dinámicos ---
   const dynamicTotals = useMemo(() => {
     return filteredOrders.reduce((acc, order) => {
       const financials = order.financials || {};
       
-      // 🔥 LÓGICA DE TOTALES MEJORADA PARA INCLUIR ABONOS 🔥
+      // LÓGICA DE TOTALES MEJORADA PARA INCLUIR ABONOS
       const anticipoInicial = parseFloat(order.anticipo) || 0;
       const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
       const abonoTotal = anticipoInicial + abonosPosteriores;
@@ -147,21 +226,31 @@ const OrdersPanel = ({
     }, { abono: 0, saldo: 0, total: 0 });
   }, [filteredOrders]);
 
+  // --- Paginación ---
   const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
-  const paginatedOrders = filteredOrders.slice((currentPage - 1) * itemsPerPage, currentPage * itemsPerPage);
+  const paginatedOrders = filteredOrders.slice(
+    (currentPage - 1) * itemsPerPage,
+    currentPage * itemsPerPage
+  );
 
-  useEffect(() => { setCurrentPage(1); }, [searchTerm, statusFilter, startDate, endDate, itemsPerPage]);
+  useEffect(() => {
+    setCurrentPage(1);
+  }, [searchTerm, statusFilter, startDate, endDate, itemsPerPage]);
 
   const handleStatusChange = (order, direction, e) => {
     e.stopPropagation();
     if (!isAdmin) return;
+
     if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return;
 
     const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
     const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
     
-    const tipo = order.tipoOrden || order.tipo_trabajo || '';
-    const workflow = tipo.includes('(VC)') ? WORKFLOW_VC : WORKFLOW_VPVC;
+    // Validacion inteligente para botones de flechas
+    const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
+    const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
+
+    const workflow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
     const currentIndex = workflow.indexOf(order.status);
     
     if (currentIndex === -1) return;
@@ -174,22 +263,39 @@ const OrdersPanel = ({
     onUpdateStatus(order.id, workflow[newIndex]);
   };
 
-  const handleResetFilters = () => { setSearchTerm(''); setStatusFilter('TODOS'); setStartDate(''); setEndDate(''); };
+  const handleResetFilters = () => {
+    setSearchTerm('');
+    setStatusFilter('TODOS');
+    setStartDate('');
+    setEndDate('');
+  };
 
-  const handlePrint = () => { window.print(); };
+  const handlePrint = () => {
+    window.print();
+  };
 
   const handleExportCSV = () => {
     const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'RUC/Cedula', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
     const rows = filteredOrders.map(o => {
         const fin = o.financials || {};
         return [
-          formatOrderId(o), formatDate(o.createdAt || o.created_at), getOrderTypeLabel(o.tipoOrden || o.tipo_trabajo),
-          `"${o.cliente || o.cliente_nombre || ''}"`, `"${o.ruc || o.cedula || ''}"`, `"${o.tipoLetrero || o.tipo_trabajo || ''}"`,
-          o.status, o.vendedor || '-', (fin.total || 0).toFixed(2), (o.anticipo || 0).toFixed(2), (fin.saldo || 0).toFixed(2)
+          formatOrderId(o),
+          formatDate(o.createdAt || o.created_at),
+          getOrderTypeLabel(o), // 🔥 ACTUALIZADO AQUÍ PARA CSV 🔥
+          `"${o.cliente || o.cliente_nombre || ''}"`,
+          `"${o.ruc || o.cedula || ''}"`,
+          `"${o.tipoLetrero || o.tipo_trabajo || ''}"`,
+          o.status,
+          o.vendedor || '-',
+          (fin.total || 0).toFixed(2),
+          (o.anticipo || 0).toFixed(2),
+          (fin.saldo || 0).toFixed(2)
         ];
     });
     
-    const csvContent = "data:text/csv;charset=utf-8," + ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+    const csvContent = "data:text/csv;charset=utf-8," + 
+      ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
+      
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
@@ -207,6 +313,7 @@ const OrdersPanel = ({
   const deleteOrderData = getOrderToDelete();
   const isPermanentDelete = deleteOrderData?.status === 'ANULADA';
 
+  // Strict Permission Helpers
   const canDelete = isAdmin;
   const canEdit = (status) => isAdmin;
   const canRegisterPayment = () => isAdmin;
@@ -217,7 +324,9 @@ const OrdersPanel = ({
 
   return (
     <div className="space-y-4">
+      {/* --- BARRA DE HERRAMIENTAS --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4 print:hidden">
+        {/* Fila Superior: Botones de Acción Global */}
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-100 pb-4">
           <div className="w-full md:w-auto">
             {canCreate && (
@@ -236,7 +345,10 @@ const OrdersPanel = ({
           </div>
         </div>
 
+        {/* Fila Media: Búsqueda y Filtros Simplificados */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
+          
+          {/* 1. BUSCADOR GLOBAL (Más Ancho) */}
           <div className="md:col-span-12 lg:col-span-4">
             <label className="text-xs font-semibold text-slate-500 mb-1 block">Buscar (Cliente, RUC, Vendedor...)</label>
             <div className="relative">
@@ -251,6 +363,7 @@ const OrdersPanel = ({
             </div>
           </div>
           
+          {/* 2. ESTADO */}
           <div className="md:col-span-4 lg:col-span-2">
             <label className="text-xs font-semibold text-slate-500 mb-1 block">Estado</label>
             <select 
@@ -263,8 +376,9 @@ const OrdersPanel = ({
             </select>
           </div>
 
+          {/* 3. FECHAS (En línea) */}
           <div className="md:col-span-4 lg:col-span-2">
-            <label className="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-1">
+            <label className="text-xs font-semibold text-slate-500 mb-1 block flex items-center gap-1">
               <CalendarIcon className="h-3 w-3" /> Desde
             </label>
             <input 
@@ -276,7 +390,7 @@ const OrdersPanel = ({
           </div>
 
           <div className="md:col-span-4 lg:col-span-2">
-            <label className="text-xs font-semibold text-slate-500 mb-1 flex items-center gap-1">
+            <label className="text-xs font-semibold text-slate-500 mb-1 block flex items-center gap-1">
               <CalendarIcon className="h-3 w-3" /> Hasta
             </label>
             <input 
@@ -287,6 +401,7 @@ const OrdersPanel = ({
             />
           </div>
 
+          {/* 4. RESET */}
           <div className="md:col-span-4 lg:col-span-2">
             <Button variant="ghost" onClick={handleResetFilters} className="w-full text-slate-500 hover:text-red-600 hover:bg-red-50 gap-2 h-[38px] border border-transparent hover:border-red-100">
               <RotateCcw className="h-4 w-4" /> Reset
@@ -294,6 +409,7 @@ const OrdersPanel = ({
           </div>
         </div>
 
+        {/* Fila Inferior: Totales Dinámicos */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-100">
           <div className="bg-green-50 p-3 rounded-lg border border-green-100 flex justify-between items-center">
              <span className="text-xs font-bold text-green-700 uppercase">Total Abonos</span>
@@ -310,7 +426,9 @@ const OrdersPanel = ({
         </div>
       </div>
 
+      {/* --- TABLA --- */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+        {/* Paginación Superior */}
         <div className="flex flex-col sm:flex-row justify-between items-center p-4 border-b border-slate-100 bg-slate-50/50 gap-4 print:hidden">
            <div className="flex items-center gap-2 text-sm text-slate-600">
              <span>Mostrar</span>
@@ -373,14 +491,15 @@ const OrdersPanel = ({
                   const financials = order.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0 };
                   const isAnulada = order.status === 'ANULADA';
                   const isArchivada = order.status === 'ARCHIVADA';
-                  const typeLabel = getOrderTypeLabel(order.tipoOrden || order.tipo_trabajo);
                   
-                  // Calcular Abonos y Saldo para cada fila
+                  // 🔥 ACTUALIZADO AQUÍ PARA LLAMAR CON LA ORDEN COMPLETA 🔥
+                  const typeLabel = getOrderTypeLabel(order);
+                  
                   const anticipoInicial = parseFloat(order.anticipo) || 0;
                   const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
                   const abonoTotal = anticipoInicial + abonosPosteriores;
                   const saldoReal = Math.max(0, (parseFloat(financials.total) || 0) - abonoTotal);
-                  
+
                   return (
                     <tr key={order.id} className={`transition-colors ${isAnulada ? 'bg-red-50 hover:bg-red-100' : isArchivada ? 'bg-slate-100 opacity-75' : 'hover:bg-slate-50'}`}>
                       <td className="px-4 py-3 font-mono text-slate-500">
@@ -401,6 +520,7 @@ const OrdersPanel = ({
                         {order.tipoLetrero || order.tipo_trabajo}
                       </td>
                       <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente || order.cliente_nombre}>
+                        {/* Se muestra Cliente y un pequeño RUC si existe */}
                         <div>{order.cliente || order.cliente_nombre}</div>
                         {(order.ruc || order.cedula) && <div className="text-[10px] text-slate-400">{order.ruc || order.cedula}</div>}
                       </td>
@@ -466,58 +586,48 @@ const OrdersPanel = ({
                         )}
                       </td>
                       <td className="px-4 py-3 print:hidden">
-                        {/* 🔥 BOTONES DE ACCIÓN PARA CADA ORDEN 🔥 */}
                         <div className="flex gap-1 justify-end opacity-50 hover:opacity-100 transition-opacity">
-                          
                           {actionConfig.showView && (
                             <Button variant="ghost" size="icon" onClick={() => onViewOrder(order)} className="h-8 w-8 text-blue-600 hover:bg-blue-50" title="Ver detalles">
                               <Eye className="h-4 w-4" />
                             </Button>
                           )}
-                          
                           {actionConfig.showEdit && canEdit(order.status) && (
                             <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-8 w-8 text-amber-600 hover:bg-amber-50" title="Editar orden">
                               <Edit className="h-4 w-4" />
                             </Button>
                           )}
-
-                          {/* 🔥 BOTÓN DE ABONO - AHORA EN SU LUGAR CORRECTO 🔥 */}
+                          {/* 🔥 BOTÓN DE ABONOS 🔥 */}
                           {saldoReal > 0 && onAbonoOrder && (
                             <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-8 w-8 text-emerald-600 hover:bg-emerald-50">
                                 <Coins className="h-4 w-4" />
                             </Button>
                           )}
-
                           {actionConfig.showClone && (
                             <Button variant="ghost" size="icon" onClick={() => onCloneOrder(order)} className="h-8 w-8 text-purple-600 hover:bg-purple-50" title="Clonar orden">
                               <Copy className="h-4 w-4" />
                             </Button>
                           )}
-                          
                           {actionConfig.showPayment && canRegisterPayment() && (
                             <Button variant="ghost" size="icon" onClick={() => onPaymentOrder(order)} className="h-8 w-8 text-green-600 hover:bg-green-50" title="Registrar pago">
                               <CreditCard className="h-4 w-4" />
                             </Button>
                           )}
-                          
                           {actionConfig.showArchive && canArchive(order.status) && (
                             <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-8 w-8 text-slate-600 hover:bg-slate-100" title="Archivar orden">
                               <Archive className="h-4 w-4" />
                             </Button>
                           )}
-                          
                           {actionConfig.showUnarchive && canUnarchive(order.status) && (
                             <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-8 w-8 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
                               <RotateCw className="h-4 w-4" />
                             </Button>
                           )}
-                          
                           {actionConfig.showDelete && canDelete && (
                             <Button variant="ghost" size="icon" onClick={() => setDeleteConfirm(order.id)} className="h-8 w-8 text-red-600 hover:bg-red-50" title="Anular orden">
                               <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
-
                         </div>
                       </td>
                     </tr>
@@ -534,25 +644,35 @@ const OrdersPanel = ({
           </table>
         </div>
 
+        {/* Paginación Inferior */}
         <div className="flex flex-col sm:flex-row justify-between items-center p-4 border-t border-slate-100 bg-slate-50/50 gap-4 print:hidden">
            <div className="text-sm text-slate-600">
              Mostrando <span className="font-semibold">{paginatedOrders.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> a <span className="font-semibold">{Math.min(currentPage * itemsPerPage, filteredOrders.length)}</span> de <span className="font-semibold">{filteredOrders.length}</span> órdenes
            </div>
            
            <div className="flex items-center gap-2">
-             <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))} disabled={currentPage === 1}>
+             <Button 
+               variant="outline" size="icon" className="h-8 w-8" 
+               onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
+               disabled={currentPage === 1}
+             >
                <ChevronLeft className="h-4 w-4" />
              </Button>
              <span className="text-sm font-medium text-slate-600">
                Página <span className="text-slate-900">{currentPage}</span> de {totalPages || 1}
              </span>
-             <Button variant="outline" size="icon" className="h-8 w-8" onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))} disabled={currentPage >= totalPages}>
+             <Button 
+               variant="outline" size="icon" className="h-8 w-8" 
+               onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
+               disabled={currentPage >= totalPages}
+             >
                <ChevronRight className="h-4 w-4" />
              </Button>
            </div>
         </div>
       </div>
 
+      {/* --- DIÁLOGO DE CONFIRMACIÓN DE ELIMINACIÓN --- */}
       <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
@@ -570,8 +690,11 @@ const OrdersPanel = ({
             <AlertDialogCancel>Cancelar</AlertDialogCancel>
             <AlertDialogAction 
               onClick={() => {
-                if (isPermanentDelete) onDeleteOrder(deleteConfirm);
-                else onUpdateStatus(deleteConfirm, 'ANULADA');
+                if (isPermanentDelete) {
+                  onDeleteOrder(deleteConfirm);
+                } else {
+                  onUpdateStatus(deleteConfirm, 'ANULADA');
+                }
                 setDeleteConfirm(null);
               }}
               className="bg-red-600 hover:bg-red-700"

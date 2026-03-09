@@ -106,24 +106,20 @@ const OrderForm = ({
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
 
-  // --- LÓGICA BUSCADOR CLIENTES ---
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [localClients, setLocalClients] = useState(clients);
   const searchRef = useRef(null);
 
-  // --- LÓGICA AUTOCOMPLETADO DE PRODUCTOS ---
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
 
-  // --- ESTADO DEL FORMULARIO ---
   const [paymentMode, setPaymentMode] = useState('partial'); 
   const [applyRetention, setApplyRetention] = useState(false);
 
-  // --- ESTADOS LOCALES ---
   const [localDiscountVal, setLocalDiscountVal] = useState('');
   const [localDiscountPercent, setLocalDiscountPercent] = useState('');
   const [localAnticipo, setLocalAnticipo] = useState(''); 
@@ -163,7 +159,6 @@ const OrderForm = ({
     subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0
   });
 
-  // --- 1. CARGAR IVA GLOBAL ---
   useEffect(() => {
     const fetchGlobalConfig = async () => {
       if (!initialData || (initialData && initialData.aplicarIva === undefined)) {
@@ -178,11 +173,8 @@ const OrderForm = ({
     fetchGlobalConfig();
   }, [initialData]);
 
-  // --- 2. CARGAR DATOS (Edición o Conversión de Proforma a Orden) ---
   useEffect(() => {
     if (initialData) {
-      
-      // 🔥 1. EXTRAER FINANZAS DE FORMA 100% SEGURA 🔥
       let finData = {};
       if (initialData.financials) {
           if (typeof initialData.financials === 'string') {
@@ -211,31 +203,31 @@ const OrderForm = ({
           savedReference = parts[1] || '';
       }
 
-      // 🔥 2. MAGIA: CÁLCULO DE DÍAS LABORABLES TOMANDO FECHA DE HOY 🔥
       let calculatedFechaEntrega = initialData.fecha_entrega || initialData.fechaEntrega || '';
       const isProformaConversion = !initialData.order_number && !initialData.orderNumber;
       
-      // Busca los días en la columna directa o en el JSON parseado
       const diasLaborales = parseInt(initialData.dias_entrega || finData.diasEntrega || 0, 10);
       
       if (isProformaConversion && !calculatedFechaEntrega && diasLaborales > 0) {
-          let date = new Date(); // <--- INICIA EXACTAMENTE HOY
+          let date = new Date();
           let added = 0;
           
           while (added < diasLaborales) {
               date.setDate(date.getDate() + 1);
-              // 0 = Domingo, 6 = Sábado. Solo suma si es día de semana (Lunes a Viernes).
               if (date.getDay() !== 0 && date.getDay() !== 6) { 
                   added++;
               }
           }
           
-          // Formateamos la fecha calculada para que el input type="datetime-local" la entienda
           const yyyy = date.getFullYear();
           const mm = String(date.getMonth() + 1).padStart(2, '0');
           const dd = String(date.getDate()).padStart(2, '0');
-          calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`; // Por defecto, te pondrá las 5:00 PM
+          calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`;
       }
+
+      // Evaluamos de forma más estricta si la orden original era VC
+      const tipoOriginal = String(initialData.tipo_trabajo || initialData.tipoOrden || initialData.tipoLetrero || '').toUpperCase();
+      const isVentaCorta = tipoOriginal.includes('(VC)') || tipoOriginal === 'VC' || tipoOriginal === 'VENTA CORTA';
 
       setFormData(prev => ({
         ...prev,
@@ -245,10 +237,12 @@ const OrderForm = ({
         clienteId: initialData.cliente_id || initialData.clienteId,
         
         tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || initialData.titulo || '',
+        tipoOrden: isVentaCorta ? ORDER_TYPES[1] : ORDER_TYPES[0], // Setea correctamente el Dropdown
+        
         origenProformaInfo: initialData.origenProformaInfo || initialData.proformaNumber || initialData.numero || '',
         productos: initialData.productos || initialData.items || [],
         
-        fechaEntrega: calculatedFechaEntrega, // Asignamos la fecha calculada
+        fechaEntrega: calculatedFechaEntrega,
         
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
         aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true,
@@ -293,7 +287,6 @@ const OrderForm = ({
     }
   }, []);
 
-  // --- CÁLCULOS ---
   useEffect(() => {
     const subtotal = formData.productos.reduce((sum, p) => {
       if (!p.descripcion) return sum;
@@ -378,7 +371,6 @@ const OrderForm = ({
       }
   };
 
-  // --- HANDLERS DE BÚSQUEDA DE PRODUCTOS (AUTOCOMPLETADO) ---
   const handleProductSearchRequest = async (index, value) => {
       handleProductChange(index, 'descripcion', value);
       
@@ -389,32 +381,18 @@ const OrderForm = ({
       }
       
       setActiveProductSearchRow(index);
-      const { data } = await supabase
-          .from('catalogo_productos')
-          .select('*')
-          .ilike('nombre', `%${value}%`)
-          .limit(8);
-          
+      const { data } = await supabase.from('catalogo_productos').select('*').ilike('nombre', `%${value}%`).limit(8);
       setProductSuggestions(data || []);
   };
 
   const handleSelectProductSuggestion = (index, product) => {
       const desc = product.nombre + (product.descripcion ? ` - ${product.descripcion}` : '');
-      
       setFormData(prev => {
           const newProducts = [...prev.productos];
-          newProducts[index] = { 
-              ...newProducts[index], 
-              descripcion: desc, 
-              precio: product.precio 
-          };
-          // Si es la última fila, agregamos una nueva vacía automáticamente
-          if (index === newProducts.length - 1) {
-              newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
-          }
+          newProducts[index] = { ...newProducts[index], descripcion: desc, precio: product.precio };
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
           return { ...prev, productos: newProducts };
       });
-
       setProductSuggestions([]);
       setActiveProductSearchRow(null);
   };
@@ -423,10 +401,7 @@ const OrderForm = ({
     setFormData(prev => {
         const newProducts = [...prev.productos];
         newProducts[index] = { ...newProducts[index], [field]: value };
-        
-        if (index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
-        }
+        if (index === newProducts.length - 1 && value !== '') newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
         return { ...prev, productos: newProducts };
     });
   };
@@ -459,9 +434,7 @@ const OrderForm = ({
 
   useEffect(() => {
     function handleClickOutside(event) {
-      if (searchRef.current && !searchRef.current.contains(event.target)) {
-        setIsSearching(false);
-      }
+      if (searchRef.current && !searchRef.current.contains(event.target)) setIsSearching(false);
     }
     document.addEventListener("mousedown", handleClickOutside);
     return () => document.removeEventListener("mousedown", handleClickOutside);
@@ -471,10 +444,7 @@ const OrderForm = ({
       setIsProcessingImages(true);
       const newImages = [];
       for (const file of files) {
-          if (file.size > 15000000) { 
-              toast({ title: "Archivo demasiado grande", description: `"${file.name}" supera el límite.`, variant: "destructive" });
-              continue;
-          }
+          if (file.size > 15000000) { toast({ title: "Archivo demasiado grande", description: `"${file.name}" supera el límite.`, variant: "destructive" }); continue; }
           try {
               const compressed = await compressImage(file);
               newImages.push(compressed);
@@ -516,11 +486,25 @@ const OrderForm = ({
         finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
     }
 
+    // 🔥 LA MAGIA OCURRE AQUÍ 🔥
+    let finalTitle = formData.tipoLetrero || '';
+    const isVentaCortaSelected = formData.tipoOrden === ORDER_TYPES[1] || formData.tipoOrden === 'VC';
+    
+    // Si seleccionó VC y el título no tiene (VC), se lo agregamos
+    if (isVentaCortaSelected && !finalTitle.toUpperCase().includes('(VC)')) {
+        finalTitle = `${finalTitle} (VC)`;
+    } 
+    // Si seleccionó VPVC y el título TIENE (VC) (porque lo editó o lo copió), se lo quitamos
+    else if (!isVentaCortaSelected && finalTitle.toUpperCase().includes('(VC)')) {
+        finalTitle = finalTitle.replace(/\(VC\)/gi, '').trim();
+    }
+
     try {
         const payload = {
             cliente_id: formData.clienteId,
             cliente_nombre: formData.cliente,
-            tipo_trabajo: formData.tipoLetrero,
+            tipo_trabajo: finalTitle, 
+            tipoOrden: formData.tipoOrden, 
             fecha_entrega: formData.fechaEntrega || null,
             vendedor: formData.vendedor, 
             notas: formData.notas,
@@ -606,7 +590,7 @@ const OrderForm = ({
                 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tipo de Orden:</label>
                 <div className="col-span-12 md:col-span-4">
-                   <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isReadOnly}>
+                   <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white font-semibold text-purple-900 border-purple-200 bg-purple-50 focus:ring-purple-500 transition-colors" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isReadOnly}>
                      {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                    </select>
                 </div>

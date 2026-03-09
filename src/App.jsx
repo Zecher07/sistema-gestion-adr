@@ -333,13 +333,27 @@ function App() {
       }
   };
   const handleAdvanceWorkflow = async (order) => {
-    const flow = (order.tipo_trabajo?.includes('(VC)') || order.tipoOrden?.includes('(VC)')) ? WORKFLOW_VC : WORKFLOW_VPVC;
+    // 🔥 Ahora detecta múltiples formas de escribir Venta Corta
+    const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
+    const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
+
+    const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
+    const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
+
+    const flow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
     const currentStatus = order.status;
     const idx = flow.indexOf(currentStatus);
+    
     if (idx !== -1 && idx < flow.length - 1) {
         const nextStatus = flow[idx + 1];
-        const { error } = await supabase.from('ordenes').update({ status: nextStatus }).eq('id', order.id);
-        if(!error) { toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` }); }
+        try {
+            const { error } = await supabase.from('ordenes').update({ status: nextStatus }).eq('id', order.id);
+            if(error) throw error;
+            toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` });
+        } catch (error) {
+            console.error("Error actualizando estado:", error);
+            toast({ title: "Error", description: "No se pudo actualizar el estado.", variant: "destructive" });
+        }
     }
   };
 
