@@ -31,7 +31,8 @@ import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 import InventoryPanel from '@/components/InventoryPanel';
 import CatalogPanel from '@/components/CatalogPanel';
 import ValesCajaPanel from './components/ValesCajaPanel'; 
-import AccountingPanel from '@/components/AccountingPanel'; // 🔥 IMPORTADO AQUÍ
+import AccountingPanel from '@/components/AccountingPanel'; 
+import AbonosModal from '@/components/AbonosModal'; // 🔥 IMPORTADO AQUÍ
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -59,6 +60,7 @@ function App() {
   const [paymentOrder, setPaymentOrder] = useState(null);
   const [cloningOrder, setCloningOrder] = useState(null);
   const [viewOrder, setViewOrder] = useState(null);
+  const [abonoOrder, setAbonoOrder] = useState(null); // 🔥 ESTADO PARA ABONOS AÑADIDO
   const [viewOrderSource, setViewOrderSource] = useState(null);
 
   const [showProformaForm, setShowProformaForm] = useState(false);
@@ -235,10 +237,6 @@ function App() {
       setRealtimeEvents(prev => prev.filter(e => e.id !== id));
   };
 
-  useEffect(() => { localStorage.setItem('archivedNotifications', JSON.stringify(archivedNotifications)); }, [archivedNotifications]);
-  useEffect(() => { localStorage.setItem('kanbanTasksDB', JSON.stringify(kanbanTasks)); }, [kanbanTasks]);
-  useEffect(() => { localStorage.setItem('invoicesDB', JSON.stringify(invoices)); }, [invoices]);
-
   const fetchUserPermissions = async (role) => {
     if (role === 'Administrador') return; 
     try { const { data } = await supabase.from('role_permissions').select('allowed_views').eq('role', role).single(); if (data) setAllowedViews(data.allowed_views || []); } catch (error) { console.error(error); }
@@ -384,6 +382,7 @@ function App() {
               onCreateOrder={() => setShowForm(true)}
               onViewOrder={(o) => handleViewOrder(o, null)} 
               currentView={currentView}
+              onAbonoOrder={setAbonoOrder} // 🔥 CONECTADO EL BOTÓN DE ABONO A ORDERS PANEL 🔥
             />
           </div>
        );
@@ -416,6 +415,16 @@ function App() {
             <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} />
             <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
+
+      {/* 🔥 MODAL DE ABONOS AÑADIDO AL FINAL DE LA APLICACIÓN 🔥 */}
+      {abonoOrder && (
+          <AbonosModal 
+              order={abonoOrder} 
+              user={user} 
+              onClose={() => setAbonoOrder(null)} 
+              onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} 
+          />
+      )}
 
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
