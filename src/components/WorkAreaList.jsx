@@ -56,10 +56,10 @@ const WorkAreaList = ({
     const lowerTerm = searchTerm.toLowerCase();
     
     return rawFilteredOrders.filter(order => {
-      const orderId = (order.orderNumber || order.id || '').toString();
-      const client = (order.cliente || '').toLowerCase();
-      const title = (order.tipoLetrero || '').toLowerCase();
-      const date = (order.fechaEntrega || '').toLowerCase();
+      const orderId = (order.order_number || order.orderNumber || order.id || '').toString();
+      const client = (order.cliente || order.cliente_nombre || '').toLowerCase();
+      const title = (order.tipoLetrero || order.tipo_trabajo || '').toLowerCase();
+      const date = (order.fechaEntrega || order.fecha_entrega || '').toLowerCase();
       
       return orderId.includes(lowerTerm) || 
              client.includes(lowerTerm) || 
@@ -90,15 +90,14 @@ const WorkAreaList = ({
   };
 
   const formatOrderId = (order) => {
-    if (order.orderNumber) {
-        return order.orderNumber.toString().padStart(7, '0');
-    }
+    if (order.order_number) return order.order_number.toString().padStart(7, '0');
+    if (order.orderNumber) return order.orderNumber.toString().padStart(7, '0');
     return (order.id || '').toString().slice(-7).padStart(7, '0');
   };
 
   // 🔥 NUEVA LÓGICA DE CÁLCULO DE PROGRESO 🔥
   const calculateProductStats = (order) => {
-    const products = order.productos || [];
+    const products = order.productos || order.products || [];
     const total = products.length;
     
     // Contamos los que están marcados como FINALIZADO según tu nueva lógica
@@ -253,13 +252,13 @@ const WorkAreaList = ({
                                    </span>
                                </td>
                                <td className="px-6 py-3 text-slate-600">
-                                  {formatDate(order.fechaEntrega)}
+                                  {formatDate(order.fechaEntrega || order.fecha_entrega)}
                                </td>
                                <td className="px-6 py-3 text-slate-800 uppercase text-xs font-semibold">
-                                  {order.cliente}
+                                  {order.cliente || order.cliente_nombre}
                                </td>
                                <td className="px-6 py-3 text-slate-600 uppercase text-xs">
-                                  {order.tipoLetrero}
+                                  {order.tipoLetrero || order.tipo_trabajo}
                                </td>
                             </tr>
                           );
@@ -322,13 +321,13 @@ const WorkAreaList = ({
          {viewMode === 'board' && (
             <div className="animate-in fade-in duration-300">
                <KanbanBoard 
-                  tasks={kanbanTasks || []}
-                  orders={orders}
-                  staffUsers={staffUsers}
-                  onTaskUpdate={onKanbanUpdate}
-                  onTaskCreate={onKanbanCreate}
-                  onTaskDelete={onKanbanDelete}
-                  onViewOrder={onViewOrder}
+                 tasks={kanbanTasks || []}
+                 orders={orders}
+                 staffUsers={staffUsers}
+                 onTaskUpdate={onKanbanUpdate}
+                 onTaskCreate={onKanbanCreate}
+                 onTaskDelete={onKanbanDelete}
+                 onViewOrder={onViewOrder}
                />
             </div>
          )}
@@ -336,9 +335,9 @@ const WorkAreaList = ({
          {viewMode === 'completed' && (
             <div className="animate-in fade-in duration-300">
                <CompletedTasksList 
-                  tasks={completedTasks}
-                  orders={orders}
-                  onViewOrder={onViewOrder}
+                 tasks={completedTasks}
+                 orders={orders}
+                 onViewOrder={onViewOrder}
                />
             </div>
          )}

@@ -81,13 +81,16 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     try {
       const { data: todosLosValesDB } = await supabase.from('vales_caja').select('*');
           
+      // 🔥 FILTRADO MEJORADO DE VALES (Solo APROBADOS del día) 🔥
       const valesFiltrados = (todosLosValesDB || []).filter(v => {
           const fechaValeLimpia = v.fecha ? v.fecha.split('T')[0] : "";
           const coincideFecha = fechaValeLimpia === date;
           const vendedorDB = v.vendedor?.toLowerCase().trim() || "";
           const vendedorBuscado = userName?.toLowerCase().trim() || "";
           const coincideVendedor = vendedorDB === vendedorBuscado;
-          return coincideFecha && coincideVendedor;
+          const estaAprobado = v.status === 'APROBADO'; // Nueva condición de seguridad
+          
+          return coincideFecha && coincideVendedor && estaAprobado;
       });
       
       setValesDelDia(valesFiltrados);
@@ -180,14 +183,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                   floatingSum += saldoCobrado;
                   floatingCount++;
               }
-              
-              // SUMAR ABONOS EN DÍAS INTERMEDIOS
-              (o.abonos || []).forEach(abono => {
-                  const abonoDateStr = toLocalDateStr(abono.fecha);
-                  if (abonoDateStr > lastReportDateStr && abonoDateStr < date && abono.cobrador === userName) {
-                      floatingSum += Number(abono.monto || 0);
-                  }
-              });
           });
       }
 
@@ -249,10 +244,12 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
         const { data } = await supabase.from('daily_closings').select('date').eq('user_id', targetUserId).gte('date', firstDay).lte('date', lastDay);
         if (data) data.forEach(item => activityDates.add(item.date));
         
-        const { data: vales } = await supabase.from('vales_caja').select('fecha, vendedor').gte('fecha', firstDay).lte('fecha', lastDay);
+        const { data: vales } = await supabase.from('vales_caja').select('fecha, vendedor, status').gte('fecha', firstDay).lte('fecha', lastDay);
         if (vales) {
             vales.forEach(v => {
-                if (v.vendedor?.toLowerCase().trim() === targetUserName?.toLowerCase().trim()) activityDates.add(v.fecha);
+                if (v.vendedor?.toLowerCase().trim() === targetUserName?.toLowerCase().trim() && v.status === 'APROBADO') {
+                    activityDates.add(v.fecha);
+                }
             });
         }
     } catch (e) {}
@@ -263,14 +260,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             const dateStr = toLocalDateStr(o.created_at || o.createdAt);
             if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr);
         }
-        
-        // Puntos por Abonos
-        (o.abonos || []).forEach(abono => {
-            if (abono.cobrador === targetUserName) {
-                const adate = toLocalDateStr(abono.fecha);
-                if (adate >= firstDay && adate <= lastDay) activityDates.add(adate);
-            }
-        });
     });
 
     setDaysWithReport(activityDates);
@@ -311,12 +300,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const automaticTransactions = useMemo(() => {
     const txs = [];
     
-    // Filtramos solo las que tocó este vendedor (por anticipo, por saldo, o por ABONO)
     const relevantOrders = orders.filter(o => 
-        o.vendedor === targetUserName || 
-        o.recibido_por_anticipo === targetUserName || 
-        o.recibido_por_saldo === targetUserName ||
-        (o.abonos && o.abonos.some(a => a.cobrador === targetUserName))
+        o.vendedor === targetUserName || o.recibido_por_anticipo === targetUserName || o.recibido_por_saldo === targetUserName
     );
 
     relevantOrders.forEach(o => {
@@ -333,8 +318,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
               });
           }
       }
-
-      // 🔥 LÓGICA DE ABONOS (SE MUESTRAN COMO INGRESO DEL DÍA) 🔥
+      
+      // ABONOS
       (o.abonos || []).forEach(abono => {
           const abonoDateStr = toLocalDateStr(abono.fecha);
           if (abonoDateStr === selectedDate && abono.cobrador === targetUserName) {
@@ -356,7 +341,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
 
-      // Descontar abonos del saldo final para que no se cobre dos veces
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
       const saldoFinalReal = saldoCobrado - totalAbonado;
 
@@ -388,12 +372,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
         }
     });
     
+    // VALES APROBADOS
     valesDelDia.forEach(vale => {
         txs.push({
             id: `vale-${vale.id}`, 
             type: 'VALE CAJA', 
             description: vale.concepto, 
-            details: '',
+            details: '(Aprobado)',
             orderNumber: 'VALE', 
             income: 0, 
             expense: Number(vale.monto), 

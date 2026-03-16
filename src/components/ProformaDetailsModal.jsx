@@ -1,8 +1,6 @@
 import React, { useState } from 'react';
-import { X, Printer, CheckCircle2, FileText, User, Calendar, DollarSign, AlertCircle } from 'lucide-react';
+import { X, Printer, CheckCircle2, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-// import { ScrollArea } from '@/components/ui/scroll-area'; <--- LINEA ELIMINADA PORQUE DABA ERROR
-import ProformaPrintTemplate from './ProformaPrintTemplate';
 
 const ProformaDetailsModal = ({ 
   proforma, 
@@ -18,31 +16,47 @@ const ProformaDetailsModal = ({
   // Helpers de formato
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   const formatDate = (dateString) => {
-    try { return new Date(dateString).toLocaleDateString('es-ES'); } catch { return '-'; }
+    try { 
+        const d = new Date(dateString);
+        return d.toLocaleDateString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric' }); 
+    } catch { return '-'; }
   };
 
-  // Mapeo seguro de datos
+  // Mapeo seguro de datos y lectura de financials
+  const fin = proforma.financials || {};
   const data = {
     numero: proforma.proformaNumber || proforma.numero || proforma.id,
     cliente: proforma.cliente_nombre || 'Cliente General',
-    ruc: proforma.cliente_identificacion || proforma.ruc || '',
+    ruc: proforma.cliente_identificacion || proforma.ruc || '9999999999999',
     telefono: proforma.cliente_telefono || '',
-    direccion: proforma.cliente_direccion || '',
+    direccion: proforma.cliente_direccion || 'S/N',
     email: proforma.cliente_email || '',
     autor: proforma.responsable || proforma.responsable_nombre || 'Sistema',
-    fechaCreacion: proforma.createdAt || proforma.created_at,
+    fechaCreacion: proforma.createdAt || proforma.created_at || new Date(),
     descripcion: proforma.notas || '',
+    titulo: proforma.titulo || proforma.tipo_trabajo || '',
     status: proforma.status,
     financials: {
-        subtotal: Number(proforma.subtotal || proforma.financials?.subtotal || 0),
-        iva: Number(proforma.iva || proforma.financials?.iva || 0),
-        total: Number(proforma.total || proforma.financials?.total || 0),
-        ivaPercentage: Number(proforma.iva_percentage || proforma.financials?.ivaPercentage || 15)
+        subtotal: Number(proforma.subtotal || fin.subtotal || 0),
+        descuentoVal: Number(fin.descuento || 0),
+        descuentoPorc: Number(fin.descuentoPorc || 0),
+        iva: Number(proforma.iva || fin.iva || 0),
+        total: Number(proforma.total || fin.total || 0),
+        ivaPercentage: Number(proforma.iva_percentage || fin.ivaPercentage || 15),
+        anticipoPorc: Number(fin.anticipoPorc || 50),
+        anticipoValor: Number(fin.anticipoValor || 0),
+        saldoPorc: Number(fin.saldoPorc || 50),
+        saldoValor: Number(fin.saldoValor || 0),
+        diasEntrega: Number(fin.diasEntrega || proforma.dias_entrega || 0)
     },
     productos: proforma.items || []
   };
 
-  // Handler para convertir
+  if (data.financials.anticipoValor === 0 && data.financials.total > 0) {
+      data.financials.anticipoValor = data.financials.total * (data.financials.anticipoPorc / 100);
+      data.financials.saldoValor = data.financials.total - data.financials.anticipoValor;
+  }
+
   const handleConvertClick = async () => {
     setConverting(true);
     await onConvert(proforma); 
@@ -51,51 +65,47 @@ const ProformaDetailsModal = ({
 
   return (
     <>
-      {/* ESTE COMPONENTE SOLO SE VE AL IMPRIMIR */}
-      <ProformaPrintTemplate data={data} />
-
+      {/* VISTA EN PANTALLA (MODAL NORMAL) */}
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 print:hidden">
         <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
           
-          {/* HEADER */}
           <div className="flex justify-between items-center p-6 border-b border-slate-100 bg-slate-50/50 flex-shrink-0">
             <div>
               <div className="flex items-center gap-3 mb-1">
                   <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                       <FileText className="h-6 w-6 text-slate-400"/>
-                      Proforma #{String(data.numero).padStart(6, '0')}
+                      Cotización / Proforma #{String(data.numero).padStart(6, '0')}
                   </h2>
                   <span className={`px-2 py-1 rounded text-xs font-bold border ${data.status === 'APROBADA' ? 'bg-green-100 text-green-700 border-green-200' : 'bg-slate-100 text-slate-600 border-slate-200'}`}>
                     {data.status}
                   </span>
               </div>
-              <p className="text-slate-500 text-sm flex items-center gap-2">
-                  <Calendar className="h-3 w-3" /> Creada el {formatDate(data.fechaCreacion)} por {data.autor}
-              </p>
             </div>
-            <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-slate-200">
-              <X className="h-6 w-6 text-slate-500" />
-            </Button>
+            <div className="flex gap-2">
+                <Button variant="outline" size="sm" onClick={() => window.print()} className="gap-2 border-slate-300">
+                    <Printer className="h-4 w-4" /> Imprimir (SRI)
+                </Button>
+                <Button variant="ghost" size="icon" onClick={onClose} className="rounded-full hover:bg-slate-200 text-slate-500">
+                  <X className="h-5 w-5" />
+                </Button>
+            </div>
           </div>
 
-          {/* CONTENIDO CON SCROLL (CORREGIDO: Usamos un div normal en lugar de ScrollArea) */}
           <div className="flex-1 overflow-y-auto p-6 space-y-8 bg-white">
-
-              {/* DATOS CLIENTE */}
               <div className="bg-slate-50 p-4 rounded-xl border border-slate-100 grid grid-cols-1 md:grid-cols-2 gap-4">
                   <div>
                       <span className="text-xs font-bold text-slate-400 uppercase tracking-wider block mb-1">Cliente</span>
-                      <div className="font-bold text-slate-800 text-lg">{data.cliente}</div>
+                      <div className="font-bold text-slate-800 text-lg uppercase">{data.cliente}</div>
                       {data.ruc && <div className="text-sm text-slate-500">ID: {data.ruc}</div>}
                   </div>
                   <div className="text-sm text-slate-600 space-y-1">
+                      {data.titulo && <div><strong>Proyecto:</strong> {data.titulo}</div>}
+                      {data.financials.diasEntrega > 0 && <div><strong>Entrega:</strong> {data.financials.diasEntrega} Días Laborables</div>}
                       {data.email && <div>✉️ {data.email}</div>}
                       {data.telefono && <div>📞 {data.telefono}</div>}
-                      {data.direccion && <div>📍 {data.direccion}</div>}
                   </div>
               </div>
 
-              {/* TABLA PRODUCTOS */}
               <div>
                   <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Items Cotizados</h3>
                   <div className="border border-slate-200 rounded-lg overflow-hidden">
@@ -122,13 +132,39 @@ const ProformaDetailsModal = ({
                   </div>
               </div>
 
-              {/* TOTALES */}
-              <div className="flex justify-end">
-                  <div className="w-64 bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2">
+              <div className="flex flex-col md:flex-row justify-between items-start gap-6">
+                  <div className="w-full md:w-1/2 space-y-4">
+                      {data.descripcion && (
+                          <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-lg text-sm text-yellow-800">
+                              <span className="font-bold block mb-1">Notas / Condiciones Comerciales:</span>
+                              <span className="whitespace-pre-line">{data.descripcion}</span>
+                          </div>
+                      )}
+                      
+                      <div className="bg-slate-50 border border-slate-200 p-4 rounded-lg text-sm text-slate-700">
+                          <span className="font-bold block mb-2 uppercase text-xs text-slate-500 tracking-wider">Forma de Pago</span>
+                          <div className="flex justify-between items-center font-bold mb-1">
+                              <span>Anticipo {data.financials.anticipoPorc}%:</span>
+                              <span>{formatCurrency(data.financials.anticipoValor)}</span>
+                          </div>
+                          <div className="flex justify-between items-center text-slate-500">
+                              <span>Saldo contra entrega {data.financials.saldoPorc}%:</span>
+                              <span>{formatCurrency(data.financials.saldoValor)}</span>
+                          </div>
+                      </div>
+                  </div>
+
+                  <div className="w-full md:w-64 bg-slate-50 p-4 rounded-xl border border-slate-200 space-y-2 shrink-0">
                       <div className="flex justify-between text-sm text-slate-600">
                           <span>Subtotal</span>
                           <span>{formatCurrency(data.financials.subtotal)}</span>
                       </div>
+                      {data.financials.descuentoVal > 0 && (
+                          <div className="flex justify-between text-sm text-red-500 font-bold">
+                              <span>Dscto {data.financials.descuentoPorc > 0 ? `(${data.financials.descuentoPorc}%)` : ''}</span>
+                              <span>-{formatCurrency(data.financials.descuentoVal)}</span>
+                          </div>
+                      )}
                       <div className="flex justify-between text-sm text-slate-600">
                           <span>IVA ({data.financials.ivaPercentage}%)</span>
                           <span>{formatCurrency(data.financials.iva)}</span>
@@ -139,32 +175,16 @@ const ProformaDetailsModal = ({
                       </div>
                   </div>
               </div>
-
-              {/* NOTAS */}
-              {data.descripcion && (
-                  <div className="bg-yellow-50 border border-yellow-100 p-4 rounded-lg text-sm text-yellow-800">
-                      <span className="font-bold block mb-1">Notas / Condiciones:</span>
-                      {data.descripcion}
-                  </div>
-              )}
-
           </div>
 
-          {/* FOOTER ACCIONES */}
-          <div className="p-4 border-t border-slate-200 bg-slate-50 flex justify-between items-center gap-3 flex-shrink-0">
+          <div className="p-4 border-t border-slate-200 bg-white flex justify-between items-center gap-3 flex-shrink-0 print:hidden">
               <div className="flex gap-2">
-                  <Button variant="outline" onClick={() => window.print()} className="gap-2">
-                      <Printer className="h-4 w-4" /> Imprimir Proforma
-                  </Button>
                   {data.status === 'BORRADOR' && onEdit && (
-                      <Button variant="ghost" onClick={() => onEdit(proforma)}>Editar</Button>
+                      <Button variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => onEdit(proforma)}>Editar Cotización</Button>
                   )}
               </div>
-
               <div className="flex gap-2">
                   <Button variant="secondary" onClick={onClose}>Cerrar</Button>
-                  
-                  {/* BOTÓN MÁGICO: APROBAR */}
                   {data.status === 'BORRADOR' && (
                       <Button 
                           onClick={handleConvertClick} 
@@ -177,8 +197,185 @@ const ProformaDetailsModal = ({
                   )}
               </div>
           </div>
-
         </div>
+      </div>
+
+      {/* ======================================================== */}
+      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI) OCULTA EN PANTALLA  */}
+      {/* ======================================================== */}
+      <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh' }}>
+          <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
+                
+                {/* SECCIÓN SUPERIOR: DATOS EMISOR Y DOCUMENTO */}
+                <div className="grid grid-cols-2 gap-4 mb-4 w-full">
+                    {/* IZQUIERDA: LOGO Y DATOS DE LA EMPRESA */}
+                    <div className="w-full flex flex-col gap-2">
+                        <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
+                            {/* EL LOGO: Asegúrate de tener logo.png en tu carpeta 'public' */}
+                            <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
+                        </div>
+                        <div className="border border-black rounded-xl p-3">
+                            <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
+                            <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
+                            <div className="mb-1"><span className="font-bold">Dirección Sucursal:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
+                            <div className="mt-3"><span className="font-bold">OBLIGADO A LLEVAR CONTABILIDAD:</span> NO</div>
+                        </div>
+                    </div>
+
+                    {/* DERECHA: DATOS DEL DOCUMENTO */}
+                    <div className="w-full border border-black rounded-xl p-3">
+                        <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
+                        <div className="text-lg font-bold my-2 tracking-widest">PROFORMA</div>
+                        <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> 001-001-{String(data.numero).padStart(9, '0')}</div>
+                        
+                        <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
+                        <div className="mb-2 text-[10px]">DOCUMENTO NO TRIBUTARIO - INFORMATIVO</div>
+                        
+                        <div className="flex justify-between mb-2">
+                            <span className="font-bold">FECHA EMISIÓN:</span>
+                            <span>{formatDate(data.fechaCreacion)}</span>
+                        </div>
+                        
+                        <div className="mb-1"><span className="font-bold">AMBIENTE:</span> PRODUCCIÓN</div>
+                        <div className="mb-3"><span className="font-bold">EMISIÓN:</span> NORMAL</div>
+                        
+                        <div className="font-bold mb-1">CLAVE DE ACCESO</div>
+                        <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
+                            [ Espacio para Clave de Acceso SRI ]
+                        </div>
+                    </div>
+                </div>
+
+                {/* SECCIÓN CLIENTE */}
+                <div className="border border-black rounded-xl p-3 mb-4 w-full">
+                    <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
+                        <div className="space-y-1">
+                            <div><span className="font-bold">Razón Social / Nombres:</span> <span className="uppercase">{data.cliente}</span></div>
+                            <div><span className="font-bold">Identificación:</span> {data.ruc}</div>
+                            <div><span className="font-bold">Fecha:</span> {formatDate(data.fechaCreacion)}</div>
+                            <div><span className="font-bold">Dirección:</span> {data.direccion}</div>
+                        </div>
+                        <div className="space-y-1">
+                            <div><span className="font-bold">Guía Remisión:</span></div>
+                            <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{data.titulo}</span></div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* TABLA DE PRODUCTOS */}
+                <div className="mb-4 w-full min-h-[150px]">
+                    <table className="w-full border-collapse border border-black">
+                        <thead>
+                            <tr className="border-b border-black bg-gray-100">
+                                <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
+                                <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
+                                <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
+                                <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
+                                <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
+                                <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {data.productos.map((prod, idx) => (
+                                <tr key={idx} className="border-b border-black">
+                                    <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
+                                    <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
+                                    <td className="border-r border-black p-1.5 uppercase">{prod.descripcion}</td>
+                                    <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precioUnitario)}</td>
+                                    <td className="border-r border-black p-1.5 text-right">$0.00</td>
+                                    <td className="p-1.5 text-right">{formatCurrency(prod.cantidad * prod.precioUnitario)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* SECCIÓN INFERIOR */}
+                <div className="grid grid-cols-3 gap-4 w-full items-start">
+                    
+                    <div className="col-span-2 flex flex-col gap-4 w-full">
+                        <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
+                            <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
+                            <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
+                                <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
+                                <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
+                                <span className="font-bold">Vendedor:</span> <span>{data.autor}</span>
+                                <span className="font-bold">T. Entrega:</span> <span>{data.financials.diasEntrega > 0 ? `${data.financials.diasEntrega} Días Laborables` : 'Por Definir'}</span>
+                                {data.descripcion && (
+                                    <>
+                                        <span className="font-bold">Notas:</span>
+                                        <span className="whitespace-pre-line">{data.descripcion}</span>
+                                    </>
+                                )}
+                            </div>
+                        </div>
+
+                        <div className="border border-black rounded-xl overflow-hidden w-full">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="border-b border-black bg-gray-100">
+                                        <th className="p-2 font-bold border-r border-black w-[70%]">Forma de Pago (Condiciones)</th>
+                                        <th className="p-2 font-bold text-right w-[30%]">Valor</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    <tr className="border-b border-black">
+                                        <td className="p-2 border-r border-black">ANTICIPO REQUERIDO ({data.financials.anticipoPorc}%)</td>
+                                        <td className="p-2 text-right font-bold">{formatCurrency(data.financials.anticipoValor)}</td>
+                                    </tr>
+                                    <tr>
+                                        <td className="p-2 border-r border-black">SALDO CONTRA ENTREGA ({data.financials.saldoPorc}%)</td>
+                                        <td className="p-2 text-right">{formatCurrency(data.financials.saldoValor)}</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+
+                    <div className="col-span-1 w-full">
+                        <table className="w-full border-collapse border border-black text-[11px]">
+                            <tbody>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">SUBTOTAL {data.financials.ivaPercentage}%</td>
+                                    <td className="p-1.5 text-right">{formatCurrency(data.financials.subtotal)}</td>
+                                </tr>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
+                                    <td className="p-1.5 text-right">$0.00</td>
+                                </tr>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">SUBTOTAL No obj. IVA</td>
+                                    <td className="p-1.5 text-right">$0.00</td>
+                                </tr>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">SUBTOTAL Exento IVA</td>
+                                    <td className="p-1.5 text-right">$0.00</td>
+                                </tr>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
+                                    <td className="p-1.5 text-right">{formatCurrency(data.financials.subtotal)}</td>
+                                </tr>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
+                                    <td className="p-1.5 text-right">{formatCurrency(data.financials.descuentoVal)}</td>
+                                </tr>
+                                <tr className="border-b border-black">
+                                    <td className="p-1.5 border-r border-black">ICE</td>
+                                    <td className="p-1.5 text-right">$0.00</td>
+                                </tr>
+                                <tr className="border-b border-black bg-gray-50">
+                                    <td className="p-1.5 border-r border-black font-bold">IVA {data.financials.ivaPercentage}%</td>
+                                    <td className="p-1.5 text-right font-bold">{formatCurrency(data.financials.iva)}</td>
+                                </tr>
+                                <tr>
+                                    <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
+                                    <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(data.financials.total)}</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+          </div>
       </div>
     </>
   );

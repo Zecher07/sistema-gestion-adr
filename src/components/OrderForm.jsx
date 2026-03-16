@@ -4,7 +4,7 @@ import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Upload, Calendar as CalendarIcon, User, Search, Calculator, 
   FileText, Loader2, UserPlus, Image as ImageIcon, Mail, 
-  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info
+  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -13,6 +13,16 @@ import { Input } from '@/components/ui/Text';
 import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '../supabaseClient';
 import ClientForm from './ClientForm';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
 
 const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Cheque', 'Depósito', 'Tarjeta', 'Crédito', 'No aplica'];
 
@@ -114,6 +124,9 @@ const OrderForm = ({
 
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
+
+  const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
+  const [cancelReason, setCancelReason] = useState('');
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
 
@@ -225,7 +238,6 @@ const OrderForm = ({
           calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`;
       }
 
-      // Evaluamos de forma más estricta si la orden original era VC
       const tipoOriginal = String(initialData.tipo_trabajo || initialData.tipoOrden || initialData.tipoLetrero || '').toUpperCase();
       const isVentaCorta = tipoOriginal.includes('(VC)') || tipoOriginal === 'VC' || tipoOriginal === 'VENTA CORTA';
 
@@ -237,9 +249,10 @@ const OrderForm = ({
         clienteId: initialData.cliente_id || initialData.clienteId,
         
         tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || initialData.titulo || '',
-        tipoOrden: isVentaCorta ? ORDER_TYPES[1] : ORDER_TYPES[0], // Setea correctamente el Dropdown
+        tipoOrden: isVentaCorta ? ORDER_TYPES[1] : ORDER_TYPES[0], 
         
         origenProformaInfo: initialData.origenProformaInfo || initialData.proformaNumber || initialData.numero || '',
+        
         productos: initialData.productos || initialData.items || [],
         
         fechaEntrega: calculatedFechaEntrega,
@@ -461,6 +474,32 @@ const OrderForm = ({
     setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) }));
   };
 
+  const handleCancelOrder = async () => {
+    if (!cancelReason.trim()) {
+        toast({ title: "Atención", description: "Debe ingresar el motivo de la anulación.", variant: "destructive" });
+        return;
+    }
+    setLoading(true);
+    try {
+        const { error } = await supabase.from('ordenes').update({
+            status: 'ANULADA',
+            motivoAnulacion: cancelReason,
+            updated_at: new Date().toISOString()
+        }).eq('id', initialData.id);
+
+        if (error) throw error;
+        
+        toast({ title: "Orden Anulada", description: "La orden ha sido cancelada correctamente." });
+        setIsCancelModalOpen(false);
+        if(onSuccess) onSuccess();
+    } catch (error) {
+        console.error(error);
+        toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
+    } finally {
+        setLoading(false);
+    }
+  };
+
   // --- SUBMIT ---
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -486,15 +525,12 @@ const OrderForm = ({
         finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
     }
 
-    // 🔥 LA MAGIA OCURRE AQUÍ 🔥
     let finalTitle = formData.tipoLetrero || '';
     const isVentaCortaSelected = formData.tipoOrden === ORDER_TYPES[1] || formData.tipoOrden === 'VC';
     
-    // Si seleccionó VC y el título no tiene (VC), se lo agregamos
     if (isVentaCortaSelected && !finalTitle.toUpperCase().includes('(VC)')) {
         finalTitle = `${finalTitle} (VC)`;
     } 
-    // Si seleccionó VPVC y el título TIENE (VC) (porque lo editó o lo copió), se lo quitamos
     else if (!isVentaCortaSelected && finalTitle.toUpperCase().includes('(VC)')) {
         finalTitle = finalTitle.replace(/\(VC\)/gi, '').trim();
     }
@@ -509,6 +545,7 @@ const OrderForm = ({
             vendedor: formData.vendedor, 
             notas: formData.notas,
             prioridad: 'Normal',
+            origenProformaInfo: formData.origenProformaInfo,
             productos: validProducts,
             financials: { 
                 ...financials, 
@@ -531,8 +568,6 @@ const OrderForm = ({
         };
 
         if (!initialData || !initialData.id || initialData.status === 'BORRADOR') {
-            const num = formData.orderNumber || nextOrderNumber; 
-            payload.order_number = num;
             payload.status = 'VENTAS';
             payload.created_at = new Date().toISOString();
             payload.recibido_por_anticipo = currentUser.name; 
@@ -559,7 +594,14 @@ const OrderForm = ({
     }
   };
 
-  const getDisplayedOrderNumber = () => (formData.orderNumber || nextOrderNumber || '').toString().padStart(7, '0');
+  const getDisplayedOrderNumber = () => {
+    if (initialData && initialData.order_number) return String(initialData.order_number).padStart(7, '0');
+    if (initialData && initialData.orderNumber) return String(initialData.orderNumber).padStart(7, '0');
+    return 'Automático'; 
+  };
+
+  // 🔥 Permitir anular a CUALQUIER usuario, siempre que la orden no esté ya anulada 🔥
+  const canCancelOrder = initialData && initialData.id && initialData.status !== 'ANULADA';
 
   return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-white shadow-xl rounded-lg flex flex-col h-full border border-slate-300 relative">
@@ -832,19 +874,69 @@ const OrderForm = ({
         </form>
       </div>
 
-      <div className="bg-slate-50 border-t border-slate-300 p-4 flex justify-end gap-3">
-         <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
-         <Button type="submit" form="orderForm" disabled={loading} className="bg-[#004080] hover:bg-blue-900 text-white px-8">
-            {loading ? 'Guardando...' : (mode === 'create' ? 'Guardar Orden' : 'Actualizar Orden')}
-         </Button>
+      <div className="bg-slate-50 border-t border-slate-300 p-4 flex justify-between items-center gap-3">
+         {/* 🔥 BOTÓN DE ANULAR ORDEN (Sin restricciones de rol, solo que no esté ya anulada) 🔥 */}
+         <div>
+            {canCancelOrder && (
+              <Button type="button" variant="outline" className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 gap-2" onClick={() => setIsCancelModalOpen(true)}>
+                 <Ban className="h-4 w-4" /> Anular Orden
+              </Button>
+            )}
+         </div>
+
+         <div className="flex gap-3">
+             <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
+             <Button type="submit" form="orderForm" disabled={loading} className="bg-[#004080] hover:bg-blue-900 text-white px-8 shadow-md">
+                {loading ? 'Guardando...' : (mode === 'create' ? 'Guardar Orden' : 'Actualizar Orden')}
+             </Button>
+         </div>
       </div>
 
+      {/* MODAL PARA CREAR NUEVO CLIENTE */}
       {showNewClientModal && (
         <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200 p-4">
             <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-lg">Nuevo Cliente</h3><Button size="sm" variant="ghost" onClick={()=>setShowNewClientModal(false)}><X/></Button></div>
             <div className="flex-1 overflow-y-auto"><ClientForm onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={{nombre: searchTerm}} /></div>
         </div>
       )}
+
+      {/* 🔥 MODAL PARA PEDIR MOTIVO DE ANULACIÓN 🔥 */}
+      <AlertDialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-600 flex items-center gap-2">
+               <Ban className="h-5 w-5" /> Anular Orden #{getDisplayedOrderNumber()}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Está seguro de que desea anular esta orden? Una vez anulada no se podrá recuperar ni procesar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="my-4">
+             <label className="text-sm font-bold text-slate-700 mb-2 block">Motivo de la anulación *</label>
+             <textarea 
+                className="w-full border border-slate-300 rounded-md p-3 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none resize-none"
+                rows="3"
+                placeholder="Ej: El cliente canceló el proyecto, error en datos..."
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                autoFocus
+             />
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setIsCancelModalOpen(false); setCancelReason(''); }}>Volver</AlertDialogCancel>
+            <AlertDialogAction 
+                onClick={handleCancelOrder} 
+                disabled={loading || !cancelReason.trim()}
+                className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+            >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar Anulación'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </motion.div>
   );
 };

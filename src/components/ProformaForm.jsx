@@ -13,7 +13,7 @@ const ProformaForm = ({
   clients = [], 
   user, 
   initialData = null,
-  nextProformaNumber,
+  nextProformaNumber, // Esta prop se queda para mostrarla en la UI, aunque no la mandemos a guardar
   onCreateClient 
 }) => {
   const { toast } = useToast();
@@ -21,7 +21,7 @@ const ProformaForm = ({
 
   // --- ESTADOS ---
   const [titulo, setTitulo] = useState(''); 
-  const [diasEntrega, setDiasEntrega] = useState(''); // NUEVO ESTADO: Días Laborables
+  const [diasEntrega, setDiasEntrega] = useState(''); 
   
   const [clientSearch, setClientSearch] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
@@ -41,18 +41,28 @@ const ProformaForm = ({
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
 
-  const [financials, setFinancials] = useState({ subtotal: 0, iva: 0, total: 0 });
+  // --- LÓGICA FINANCIERA AMPLIADA ---
+  const [financials, setFinancials] = useState({ 
+      subtotal: 0, 
+      iva: 0, 
+      total: 0,
+      descuento: 0,
+      descuentoPorc: 0,
+      anticipoPorc: 50,
+      anticipoValor: 0,
+      saldoPorc: 50,
+      saldoValor: 0
+  });
+  
   const [notes, setNotes] = useState('');
   const [ivaPercentage, setIvaPercentage] = useState(15); 
   const [applyIva, setApplyIva] = useState(true);
 
-  // --- HELPER PARA ENCONTRAR EL ID (RUC/CEDULA) ---
   const findClientId = (c) => {
       if (!c) return '';
       return c.ruc || c.cedula || c.identificacion || c.dni || c.empresa || ''; 
   };
 
-  // --- 1. CARGAR CONFIGURACIÓN ---
   useEffect(() => {
     const fetchGlobalConfig = async () => {
       try {
@@ -68,7 +78,6 @@ const ProformaForm = ({
     fetchGlobalConfig();
   }, [initialData]);
 
-  // --- 2. CARGAR DATOS (EDICIÓN) ---
   useEffect(() => {
     if (initialData) {
       setTitulo(initialData.titulo || initialData.tipo_trabajo || ''); 
@@ -83,28 +92,56 @@ const ProformaForm = ({
       const items = Array.isArray(initialData.items) ? initialData.items : [];
       setProducts(items.length > 0 ? items : [{ cantidad: 1, descripcion: '', precioUnitario: 0, total: 0 }]);
       setNotes(initialData.notas || '');
+      setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
       
-      // Cargar los días laborables si ya existían
-      setDiasEntrega(initialData.financials?.diasEntrega || '');
+      // Restaurar valores financieros si existen
+      if (initialData.financials) {
+          setFinancials(prev => ({
+              ...prev,
+              descuento: initialData.financials.descuento || 0,
+              descuentoPorc: initialData.financials.descuentoPorc || 0,
+              anticipoPorc: initialData.financials.anticipoPorc || 50,
+          }));
+      }
     }
   }, [initialData]);
 
-  // --- 3. CÁLCULOS ---
+  // --- 3. CÁLCULOS FINANCIEROS COMPLETOS ---
   useEffect(() => {
-    const subtotal = products.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-    const iva = applyIva ? subtotal * (ivaPercentage / 100) : 0;
-    const total = subtotal + iva;
-    setFinancials({ subtotal, iva, total });
-  }, [products, ivaPercentage, applyIva]);
+    const subtotalBruto = products.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
+    
+    // Calcular descuento
+    let valorDescuento = financials.descuento;
+    if (financials.descuentoPorc > 0) {
+        valorDescuento = subtotalBruto * (financials.descuentoPorc / 100);
+    }
+    
+    const subtotalNeto = Math.max(0, subtotalBruto - valorDescuento);
+    const iva = applyIva ? subtotalNeto * (ivaPercentage / 100) : 0;
+    const total = subtotalNeto + iva;
+    
+    // Calcular Anticipo y Saldo
+    const anticipoValor = total * ((financials.anticipoPorc || 0) / 100);
+    const saldoPorc = 100 - (financials.anticipoPorc || 0);
+    const saldoValor = total - anticipoValor;
 
-  // --- HANDLERS CLIENTE ---
+    setFinancials(prev => ({ 
+        ...prev, 
+        subtotal: subtotalBruto, 
+        descuento: valorDescuento,
+        iva, 
+        total,
+        anticipoValor,
+        saldoPorc,
+        saldoValor
+    }));
+  }, [products, ivaPercentage, applyIva, financials.descuentoPorc, financials.descuento, financials.anticipoPorc]);
+
   const filteredClients = clients.filter(c => {
     const term = clientSearch.toLowerCase().trim();
     if (!term) return false;
-    
     const name = (c.nombre || c.razonSocial || c.full_name || '').toLowerCase();
     const id = String(findClientId(c));
-
     return name.includes(term) || id.includes(term);
   });
 
@@ -129,7 +166,6 @@ const ProformaForm = ({
     }
   };
 
-  // --- HANDLERS PRODUCTOS ---
   const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', precioUnitario: 0, total: 0 }]);
   const removeProduct = (idx) => setProducts(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
   
@@ -199,12 +235,19 @@ const ProformaForm = ({
         iva: financials.iva,
         total: financials.total,
         iva_percentage: applyIva ? ivaPercentage : 0,
+        dias_entrega: Number(diasEntrega) || 0,
         financials: { 
             subtotal: financials.subtotal, 
             iva: financials.iva, 
             total: financials.total, 
             ivaPercentage: applyIva ? ivaPercentage : 0,
-            diasEntrega: Number(diasEntrega) || 0 // 🔥 SE GUARDA COMO NÚMERO
+            diasEntrega: Number(diasEntrega) || 0,
+            descuento: financials.descuento,
+            descuentoPorc: financials.descuentoPorc,
+            anticipoPorc: financials.anticipoPorc,
+            anticipoValor: financials.anticipoValor,
+            saldoPorc: financials.saldoPorc,
+            saldoValor: financials.saldoValor
         },
         notas: notes,
         responsable_nombre: user.name, 
@@ -213,8 +256,7 @@ const ProformaForm = ({
       };
 
       if (!initialData) {
-          payload.numero = nextProformaNumber;
-          payload.proformaNumber = nextProformaNumber;
+          // 🔥 AQUÍ ESTÁ LA MAGIA: Eliminamos payload.numero para que Supabase use la secuencia.
           payload.created_at = new Date().toISOString();
           payload.creado_por = user.id;
       }
@@ -239,10 +281,20 @@ const ProformaForm = ({
     }
   };
 
+  const getDisplayedProformaNumber = () => {
+    if (initialData && (initialData.numero || initialData.proformaNumber)) {
+      return String(initialData.numero || initialData.proformaNumber).padStart(6, '0');
+    }
+    return 'Automático'; // Avisamos en la UI que será automático
+  };
+
   return (
     <div className="flex flex-col h-full bg-slate-50">
       <div className="bg-white px-6 py-4 border-b border-slate-200 flex justify-between items-center sticky top-0 z-10 shadow-sm">
-        <div><h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" />{initialData ? 'Editar Proforma' : 'Nueva Cotización'}</h2><p className="text-sm text-slate-500">{initialData ? `Editando #${String(initialData.numero || initialData.proformaNumber).padStart(6,'0')}` : `Consecutivo #${String(nextProformaNumber || '...').padStart(6,'0')}`}</p></div>
+        <div>
+           <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" />{initialData ? 'Editar Proforma' : 'Nueva Cotización'}</h2>
+           <p className="text-sm text-slate-500">{initialData ? `Editando #${getDisplayedProformaNumber()}` : `Consecutivo #${getDisplayedProformaNumber()}`}</p>
+        </div>
         <Button variant="ghost" onClick={onCancel} className="hover:bg-slate-100 rounded-full h-10 w-10 p-0"><X className="h-6 w-6 text-slate-500" /></Button>
       </div>
 
@@ -253,16 +305,14 @@ const ProformaForm = ({
               <div className="flex items-center justify-between mb-4 border-b pb-2"><div className="flex items-center gap-2 text-blue-700 font-semibold"><User className="h-5 w-5" /> Datos Generales</div></div>
               
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                {/* TÍTULO */}
                 <div className="md:col-span-1">
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Título / Referencia del Trabajo <span className="text-red-500">*</span></label>
                     <Input placeholder="Ej: Letrero luminoso..." value={titulo} onChange={(e) => setTitulo(e.target.value)} className="font-semibold text-blue-800" />
                 </div>
 
-                {/* DÍAS LABORALES (SOLO NÚMERO) */}
                 <div className="md:col-span-1">
                     <label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1">
-                        <Clock className="h-3 w-3 text-orange-500"/> Días Laborables
+                        <Clock className="h-3 w-3 text-orange-500"/> Días Laborables para Entrega
                     </label>
                     <Input type="number" min="0" placeholder="Ej: 5" value={diasEntrega} onChange={(e) => setDiasEntrega(e.target.value)} className="font-semibold text-orange-700 bg-orange-50/50 border-orange-200" />
                 </div>
@@ -301,10 +351,10 @@ const ProformaForm = ({
           <Card className="shadow-sm border-slate-200">
             <CardContent className="p-6">
               <div className="flex justify-between items-center mb-4 border-b pb-2">
-                <div className="flex items-center gap-2 text-blue-700 font-semibold"><Calculator className="h-5 w-5" /> Items</div>
+                <div className="flex items-center gap-2 text-blue-700 font-semibold"><Calculator className="h-5 w-5" /> Items a Cotizar</div>
                 <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50"><Plus className="h-4 w-4 mr-1" /> Agregar Item</Button>
               </div>
-              <div className="overflow-visible border rounded-lg pb-24"> 
+              <div className="overflow-visible border rounded-lg pb-10"> 
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 text-slate-600 font-semibold">
                     <tr><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center w-24">Cant.</th><th className="px-3 py-2 text-right w-32">P. Unit</th><th className="px-3 py-2 text-right w-32">Total</th><th className="px-3 py-2 w-10"></th></tr>
@@ -352,15 +402,71 @@ const ProformaForm = ({
           </Card>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-            <div className="md:col-span-2"><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Notas</label><textarea className="w-full border border-slate-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 resize-none" placeholder="Condiciones..." value={notes} onChange={(e) => setNotes(e.target.value)} /></div>
+            <div className="md:col-span-2">
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Condiciones / Notas Comerciales</label>
+                <textarea className="w-full border border-slate-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 resize-none" placeholder="El cliente debe enviar el logo en curvas..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+            
             <Card className="bg-slate-50 border-slate-200 h-fit">
-              <CardContent className="p-5 space-y-4">
+              <CardContent className="p-5 space-y-3">
                 <div className="flex justify-between text-sm text-slate-600"><span>Subtotal:</span><span className="font-medium">${financials.subtotal.toFixed(2)}</span></div>
+                
+                {/* DESCUENTO */}
+                <div className="flex justify-between items-center text-sm text-slate-600">
+                  <span className="flex items-center gap-1">
+                    Dscto
+                    <input 
+                      type="number" 
+                      className="w-12 h-6 border rounded text-center ml-1 text-xs" 
+                      placeholder="%" 
+                      value={financials.descuentoPorc || ''} 
+                      onChange={e => setFinancials(prev => ({...prev, descuentoPorc: Number(e.target.value), descuento: 0}))} 
+                    />%
+                  </span>
+                  <div className="flex items-center">
+                    <span className="text-red-500 font-bold mr-1">- $</span>
+                    <input 
+                      type="number" 
+                      className="w-16 h-6 border rounded text-right text-xs text-red-500 font-bold" 
+                      value={financials.descuento || ''} 
+                      onChange={e => setFinancials(prev => ({...prev, descuento: Number(e.target.value), descuentoPorc: 0}))} 
+                    />
+                  </div>
+                </div>
+
                 <div className="flex justify-between items-center text-sm text-slate-600 bg-white p-2 rounded border border-slate-100">
                   <div className="flex items-center gap-2"><Switch checked={applyIva} onCheckedChange={setApplyIva} className="scale-75 data-[state=checked]:bg-blue-600" /><span className={!applyIva ? 'text-slate-400 line-through' : 'font-medium'}>IVA ({ivaPercentage}%)</span></div>
                   <span className={`font-medium ${!applyIva ? 'text-slate-300' : ''}`}>${financials.iva.toFixed(2)}</span>
                 </div>
+                
                 <div className="border-t border-slate-300 pt-3 flex justify-between items-center"><span className="font-bold text-lg text-slate-800">TOTAL:</span><span className="font-bold text-2xl text-blue-700">${financials.total.toFixed(2)}</span></div>
+                
+                {/* FORMA DE PAGO (ANTICIPO / SALDO) */}
+                <div className="border-t border-blue-200 mt-4 pt-3 space-y-2">
+                    <span className="text-xs font-bold text-blue-800 uppercase block mb-2">Forma de Pago Requerida</span>
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="flex items-center text-slate-600">
+                            Anticipo 
+                            <input 
+                                type="number" 
+                                className="w-12 h-6 border rounded text-center ml-2 text-xs font-bold text-blue-700 bg-blue-50" 
+                                value={financials.anticipoPorc} 
+                                onChange={e => {
+                                    let val = Number(e.target.value);
+                                    if(val > 100) val = 100;
+                                    if(val < 0) val = 0;
+                                    setFinancials(prev => ({...prev, anticipoPorc: val}));
+                                }} 
+                            />%
+                        </span>
+                        <span className="font-bold text-slate-700">${financials.anticipoValor.toFixed(2)}</span>
+                    </div>
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="text-slate-500">Saldo ({financials.saldoPorc}%)</span>
+                        <span className="font-bold text-slate-700">${financials.saldoValor.toFixed(2)}</span>
+                    </div>
+                </div>
+
               </CardContent>
             </Card>
           </div>
@@ -369,7 +475,7 @@ const ProformaForm = ({
 
       <div className="bg-white border-t border-slate-200 p-4 flex justify-end gap-3 sticky bottom-0 z-20">
         <Button variant="outline" onClick={onCancel} disabled={loading}>Cancelar</Button>
-        <Button onClick={handleSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[160px]">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} {initialData ? 'Actualizar' : 'Guardar'}</Button>
+        <Button onClick={handleSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[160px]">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} {initialData ? 'Actualizar' : 'Guardar Cotización'}</Button>
       </div>
     </div>
   );
