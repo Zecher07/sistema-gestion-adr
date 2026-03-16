@@ -1,15 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Eye, Edit, Trash2, CreditCard, 
+  Eye, Edit, Trash2,
   ArrowLeft, ArrowRight,
   Search,
   Printer, Plus,
   ChevronLeft, ChevronRight, RotateCcw,
   FileSpreadsheet, Calendar as CalendarIcon,
-  Archive, RotateCw, Copy, Coins
+  Archive, RotateCw, Coins, Loader2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
+import { useToast } from '@/components/ui/use-toast';
+import { supabase } from '../supabaseClient';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -21,7 +23,6 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-// Definimos todos los estados posibles para el filtro
 const FILTER_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA', 'ANULADA', 'ARCHIVADA'];
 
 const OrdersPanel = ({ 
@@ -31,26 +32,24 @@ const OrdersPanel = ({
   onDeleteOrder, 
   onUpdateOrder, 
   onEditOrder, 
-  onCloneOrder,
-  onPaymentOrder,
   onCreateOrder,
   onViewOrder,
   currentView,
-  onAbonoOrder // 🔥 Prop recibida de App.jsx
+  onAbonoOrder 
 }) => {
-  // --- Estados de UI ---
-  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const { toast } = useToast();
 
-  // --- Estados de Filtros y Paginación ---
+  const [deleteConfirm, setDeleteConfirm] = useState(null);
+  const [cancelReason, setCancelReason] = useState('');
+  const [isCancelling, setIsCancelling] = useState(false);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [statusFilter, setStatusFilter] = useState('TODOS');
-  // Eliminados clientFilter y vendorFilter ya que se unifican en searchTerm
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
-  // --- Helpers de Formato y Lógica ---
   const formatDate = (dateString) => {
     if (!dateString) return '-';
     try {
@@ -70,90 +69,33 @@ const OrdersPanel = ({
   };
 
   const formatOrderId = (order) => {
-      // Manejo seguro para que siempre devuelva string
       const num = order.orderNumber || order.order_number || order.id || '';
       return String(num).padStart(7, '0');
   };
 
-  // 🔥 ESTA ES LA FUNCIÓN MODIFICADA CON EL RASTREADOR 🔥
   const getOrderTypeLabel = (order) => {
     const tipo1 = order.tipoOrden;
     const tipo2 = order.tipo_trabajo;
     const tipo3 = order.tipoLetrero;
-    
     const tipoDefinitivo = String(tipo1 || tipo2 || tipo3 || '').toUpperCase();
     
-    console.log(`🔍 [DIAGNÓSTICO ORDEN #${order.orderNumber || order.id}]`, {
-        "1. tipoOrden": tipo1,
-        "2. tipo_trabajo": tipo2,
-        "3. tipoLetrero": tipo3,
-        "Valor Evaluado Final": tipoDefinitivo,
-        "Objeto Completo": order
-    });
-
     if (tipoDefinitivo.includes('(VC)') || tipoDefinitivo === 'VC' || tipoDefinitivo === 'VENTA CORTA') {
         return 'VC';
     }
     return 'VPVC';
   };
 
-  // --- Check Roles ---
   const isAdmin = user.role === 'Administrador';
-  
-  // --- Configuración de Acciones según Vista Actual ---
+
   const actionConfig = useMemo(() => {
-    const config = {
+    return {
       showView: true,
-      showClone: false,
-      showEdit: false,
-      showDelete: false, // Anular
-      showPayment: false, 
-      showArchive: false,
-      showUnarchive: false
+      showEdit: true,
+      showArchive: true,
+      showUnarchive: true
     };
+  }, []);
 
-    const allowModify = isAdmin;
-
-    switch (currentView) {
-      case 'ordenes-todas':
-        config.showClone = allowModify;
-        config.showEdit = allowModify;
-        config.showPayment = allowModify; 
-        break;
-      
-      case 'ordenes-activas':
-        config.showClone = allowModify;
-        config.showEdit = allowModify;
-        config.showDelete = allowModify;
-        config.showPayment = allowModify;
-        break;
-        
-      case 'ordenes-sin-factura':
-      case 'ordenes-con-factura':
-      case 'ordenes-credito':
-      case 'ordenes-finalizadas':
-      case 'ordenes-anuladas':
-        break;
-        
-      case 'ordenes-archivadas':
-        config.showClone = allowModify;
-        config.showUnarchive = allowModify;
-        break;
-
-      default:
-        config.showClone = allowModify;
-        config.showEdit = allowModify;
-        config.showDelete = allowModify;
-        config.showPayment = allowModify;
-        config.showArchive = allowModify;
-        config.showUnarchive = allowModify;
-        break;
-    }
-    return config;
-  }, [currentView, isAdmin]);
-
-
-  // --- Filtrado Principal ---
   const roleFilteredOrders = useMemo(() => {
     return orders.filter(order => {
       if (user.role === 'Administrador' || user.role === 'Vendedor' || user.role === 'Contabilidad') return true;
@@ -164,16 +106,13 @@ const OrdersPanel = ({
     });
   }, [orders, user.role]);
 
-  // --- FILTRADO UNIFICADO ---
   const filteredOrders = useMemo(() => {
     return roleFilteredOrders.filter(order => {
-      // 1. Text Search UNIFICADO (ID, Cliente, RUC, Vendedor, Título)
       const searchLower = searchTerm.toLowerCase();
       
-      // Convertimos explícitamente a String() para evitar errores
       const idStr = String(order.orderNumber || order.order_number || order.id || '');
       const clienteStr = String(order.cliente || order.cliente_nombre || '');
-      const rucStr = String(order.ruc || order.cedula || ''); // Busca por RUC/Cedula
+      const rucStr = String(order.ruc || order.cedula || ''); 
       const tituloStr = String(order.tipoLetrero || order.tipo_trabajo || '');
       const vendedorStr = String(order.vendedor || '');
 
@@ -185,11 +124,8 @@ const OrdersPanel = ({
         vendedorStr.toLowerCase().includes(searchLower);
 
       if (!matchesSearch) return false;
-
-      // 2. Dropdown Filters (Solo Estado)
       if (statusFilter !== 'TODOS' && order.status !== statusFilter) return false;
       
-      // 3. Date Range Filter
       if (startDate) {
         const orderDate = new Date(order.createdAt || order.created_at);
         const start = new Date(startDate + 'T00:00:00'); 
@@ -205,12 +141,10 @@ const OrdersPanel = ({
     });
   }, [roleFilteredOrders, searchTerm, statusFilter, startDate, endDate]);
 
-  // --- Totales Dinámicos ---
   const dynamicTotals = useMemo(() => {
     return filteredOrders.reduce((acc, order) => {
       const financials = order.financials || {};
       
-      // LÓGICA DE TOTALES MEJORADA PARA INCLUIR ABONOS
       const anticipoInicial = parseFloat(order.anticipo) || 0;
       const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
       const abonoTotal = anticipoInicial + abonosPosteriores;
@@ -226,7 +160,6 @@ const OrdersPanel = ({
     }, { abono: 0, saldo: 0, total: 0 });
   }, [filteredOrders]);
 
-  // --- Paginación ---
   const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
   const paginatedOrders = filteredOrders.slice(
     (currentPage - 1) * itemsPerPage,
@@ -239,14 +172,12 @@ const OrdersPanel = ({
 
   const handleStatusChange = (order, direction, e) => {
     e.stopPropagation();
-    if (!isAdmin) return;
 
     if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return;
 
     const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
     const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
     
-    // Validacion inteligente para botones de flechas
     const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
     const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
 
@@ -275,17 +206,19 @@ const OrdersPanel = ({
   };
 
   const handleExportCSV = () => {
-    const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'RUC/Cedula', 'Titulo', 'Estado', 'Vendedor', 'Total', 'Abono', 'Saldo'];
+    const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'RUC/Cedula', 'Titulo', 'Estado', 'Proforma Origen', 'Vendedor', 'Total', 'Abono', 'Saldo'];
     const rows = filteredOrders.map(o => {
         const fin = o.financials || {};
+        const origen = o.origenProformaInfo || o.origenProformaId || '-';
         return [
           formatOrderId(o),
           formatDate(o.createdAt || o.created_at),
-          getOrderTypeLabel(o), // 🔥 ACTUALIZADO AQUÍ PARA CSV 🔥
+          getOrderTypeLabel(o), 
           `"${o.cliente || o.cliente_nombre || ''}"`,
           `"${o.ruc || o.cedula || ''}"`,
           `"${o.tipoLetrero || o.tipo_trabajo || ''}"`,
           o.status,
+          origen,
           o.vendedor || '-',
           (fin.total || 0).toFixed(2),
           (o.anticipo || 0).toFixed(2),
@@ -313,27 +246,56 @@ const OrdersPanel = ({
   const deleteOrderData = getOrderToDelete();
   const isPermanentDelete = deleteOrderData?.status === 'ANULADA';
 
-  // Strict Permission Helpers
-  const canDelete = isAdmin;
-  const canEdit = (status) => isAdmin;
-  const canRegisterPayment = () => isAdmin;
-  const canCreate = isAdmin || user.role === 'Vendedor';
+  const handleConfirmDelete = async () => {
+    if (isPermanentDelete) {
+        onDeleteOrder(deleteConfirm);
+        setDeleteConfirm(null);
+    } else {
+        if (!cancelReason.trim()) {
+            toast({ title: "Atención", description: "Debe ingresar el motivo de la anulación.", variant: "destructive" });
+            return;
+        }
+        setIsCancelling(true);
+        try {
+            const { error } = await supabase.from('ordenes').update({
+                status: 'ANULADA',
+                motivoAnulacion: cancelReason,
+                updated_at: new Date().toISOString()
+            }).eq('id', deleteConfirm);
+            
+            if (error) throw error;
+            toast({ title: "Orden Anulada", description: "La orden ha sido cancelada correctamente." });
+            onUpdateStatus(deleteConfirm, 'ANULADA'); 
+        } catch (e) {
+            console.error(e);
+            toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
+        } finally {
+            setIsCancelling(false);
+            setDeleteConfirm(null);
+            setCancelReason('');
+        }
+    }
+  };
+
+  // 🔥 REGLA DE EDICIÓN: Vendedor solo edita si está en VENTAS. Admin edita todo (excepto si está Anulada/Archivada) 🔥
+  const canEdit = (status) => {
+    if (status === 'ANULADA' || status === 'ARCHIVADA') return false;
+    if (isAdmin) return true;
+    return status === 'VENTAS';
+  };
+  
   const canArchive = (status) => isAdmin && status === 'FINALIZADA';
   const canUnarchive = (status) => isAdmin && status === 'ARCHIVADA';
-  const canMoveStatus = (order, direction) => isAdmin; 
+  const canMoveStatus = () => true; 
 
   return (
     <div className="space-y-4">
-      {/* --- BARRA DE HERRAMIENTAS --- */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4 print:hidden">
-        {/* Fila Superior: Botones de Acción Global */}
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-100 pb-4">
           <div className="w-full md:w-auto">
-            {canCreate && (
-              <Button onClick={onCreateOrder} className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white gap-2">
-                <Plus className="h-4 w-4" /> Añadir Orden de Producción
-              </Button>
-            )}
+             <Button onClick={onCreateOrder} className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white gap-2">
+               <Plus className="h-4 w-4" /> Añadir Orden de Producción
+             </Button>
           </div>
           <div className="flex gap-2 w-full md:w-auto">
             <Button variant="outline" size="sm" onClick={handleExportCSV} className="flex-1 md:flex-none gap-2 text-slate-600">
@@ -345,10 +307,7 @@ const OrdersPanel = ({
           </div>
         </div>
 
-        {/* Fila Media: Búsqueda y Filtros Simplificados */}
         <div className="grid grid-cols-1 md:grid-cols-12 gap-3 items-end">
-          
-          {/* 1. BUSCADOR GLOBAL (Más Ancho) */}
           <div className="md:col-span-12 lg:col-span-4">
             <label className="text-xs font-semibold text-slate-500 mb-1 block">Buscar (Cliente, RUC, Vendedor...)</label>
             <div className="relative">
@@ -363,7 +322,6 @@ const OrdersPanel = ({
             </div>
           </div>
           
-          {/* 2. ESTADO */}
           <div className="md:col-span-4 lg:col-span-2">
             <label className="text-xs font-semibold text-slate-500 mb-1 block">Estado</label>
             <select 
@@ -376,7 +334,6 @@ const OrdersPanel = ({
             </select>
           </div>
 
-          {/* 3. FECHAS (En línea) */}
           <div className="md:col-span-4 lg:col-span-2">
             <label className="text-xs font-semibold text-slate-500 mb-1 block flex items-center gap-1">
               <CalendarIcon className="h-3 w-3" /> Desde
@@ -401,7 +358,6 @@ const OrdersPanel = ({
             />
           </div>
 
-          {/* 4. RESET */}
           <div className="md:col-span-4 lg:col-span-2">
             <Button variant="ghost" onClick={handleResetFilters} className="w-full text-slate-500 hover:text-red-600 hover:bg-red-50 gap-2 h-[38px] border border-transparent hover:border-red-100">
               <RotateCcw className="h-4 w-4" /> Reset
@@ -409,7 +365,6 @@ const OrdersPanel = ({
           </div>
         </div>
 
-        {/* Fila Inferior: Totales Dinámicos */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-100">
           <div className="bg-green-50 p-3 rounded-lg border border-green-100 flex justify-between items-center">
              <span className="text-xs font-bold text-green-700 uppercase">Total Abonos</span>
@@ -426,9 +381,7 @@ const OrdersPanel = ({
         </div>
       </div>
 
-      {/* --- TABLA --- */}
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-        {/* Paginación Superior */}
         <div className="flex flex-col sm:flex-row justify-between items-center p-4 border-b border-slate-100 bg-slate-50/50 gap-4 print:hidden">
            <div className="flex items-center gap-2 text-sm text-slate-600">
              <span>Mostrar</span>
@@ -492,13 +445,14 @@ const OrdersPanel = ({
                   const isAnulada = order.status === 'ANULADA';
                   const isArchivada = order.status === 'ARCHIVADA';
                   
-                  // 🔥 ACTUALIZADO AQUÍ PARA LLAMAR CON LA ORDEN COMPLETA 🔥
                   const typeLabel = getOrderTypeLabel(order);
                   
                   const anticipoInicial = parseFloat(order.anticipo) || 0;
                   const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
                   const abonoTotal = anticipoInicial + abonosPosteriores;
                   const saldoReal = Math.max(0, (parseFloat(financials.total) || 0) - abonoTotal);
+
+                  const origenProformaInfo = order.origenProformaInfo || order.origenProformaId;
 
                   return (
                     <tr key={order.id} className={`transition-colors ${isAnulada ? 'bg-red-50 hover:bg-red-100' : isArchivada ? 'bg-slate-100 opacity-75' : 'hover:bg-slate-50'}`}>
@@ -520,7 +474,6 @@ const OrdersPanel = ({
                         {order.tipoLetrero || order.tipo_trabajo}
                       </td>
                       <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente || order.cliente_nombre}>
-                        {/* Se muestra Cliente y un pequeño RUC si existe */}
                         <div>{order.cliente || order.cliente_nombre}</div>
                         {(order.ruc || order.cedula) && <div className="text-[10px] text-slate-400">{order.ruc || order.cedula}</div>}
                       </td>
@@ -534,14 +487,15 @@ const OrdersPanel = ({
                         {formatCurrency(financials.total)}
                       </td>
                       <td className="px-4 py-3 text-center">
-                        {order.origenProformaId ? (
+                        {origenProformaInfo ? (
                            <span className="text-xs font-mono bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100">
-                              #{String(order.origenProformaId).padStart(7,'0')}
+                              #{String(origenProformaInfo).padStart(7,'0')}
                            </span>
                         ) : (
                            <span className="text-slate-400 text-xs">-</span>
                         )}
                       </td>
+
                       <td className="px-4 py-3 text-slate-600 text-xs">
                         {order.vendedor || 'N/A'}
                       </td>
@@ -585,8 +539,9 @@ const OrdersPanel = ({
                           </div>
                         )}
                       </td>
+                      
                       <td className="px-4 py-3 print:hidden">
-                        <div className="flex gap-1 justify-end opacity-50 hover:opacity-100 transition-opacity">
+                        <div className="flex gap-1 justify-end">
                           {actionConfig.showView && (
                             <Button variant="ghost" size="icon" onClick={() => onViewOrder(order)} className="h-8 w-8 text-blue-600 hover:bg-blue-50" title="Ver detalles">
                               <Eye className="h-4 w-4" />
@@ -597,22 +552,23 @@ const OrdersPanel = ({
                               <Edit className="h-4 w-4" />
                             </Button>
                           )}
-                          {/* 🔥 BOTÓN DE ABONOS 🔥 */}
                           {saldoReal > 0 && onAbonoOrder && (
                             <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-8 w-8 text-emerald-600 hover:bg-emerald-50">
                                 <Coins className="h-4 w-4" />
                             </Button>
                           )}
-                          {actionConfig.showClone && (
-                            <Button variant="ghost" size="icon" onClick={() => onCloneOrder(order)} className="h-8 w-8 text-purple-600 hover:bg-purple-50" title="Clonar orden">
-                              <Copy className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {actionConfig.showPayment && canRegisterPayment() && (
-                            <Button variant="ghost" size="icon" onClick={() => onPaymentOrder(order)} className="h-8 w-8 text-green-600 hover:bg-green-50" title="Registrar pago">
-                              <CreditCard className="h-4 w-4" />
-                            </Button>
-                          )}
+                          
+                          {/* 🔥 BASURERO SIEMPRE DISPONIBLE PARA ANULAR O ELIMINAR 🔥 */}
+                          <Button 
+                            variant="ghost" 
+                            size="icon" 
+                            onClick={() => { setDeleteConfirm(order.id); setCancelReason(''); }} 
+                            className="h-8 w-8 text-red-600 hover:bg-red-100 bg-red-50/50" 
+                            title={isAnulada ? "Eliminar permanentemente" : "Anular orden"}
+                          >
+                            <Trash2 className="h-4 w-4" />
+                          </Button>
+
                           {actionConfig.showArchive && canArchive(order.status) && (
                             <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-8 w-8 text-slate-600 hover:bg-slate-100" title="Archivar orden">
                               <Archive className="h-4 w-4" />
@@ -621,11 +577,6 @@ const OrdersPanel = ({
                           {actionConfig.showUnarchive && canUnarchive(order.status) && (
                             <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-8 w-8 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
                               <RotateCw className="h-4 w-4" />
-                            </Button>
-                          )}
-                          {actionConfig.showDelete && canDelete && (
-                            <Button variant="ghost" size="icon" onClick={() => setDeleteConfirm(order.id)} className="h-8 w-8 text-red-600 hover:bg-red-50" title="Anular orden">
-                              <Trash2 className="h-4 w-4" />
                             </Button>
                           )}
                         </div>
@@ -644,7 +595,6 @@ const OrdersPanel = ({
           </table>
         </div>
 
-        {/* Paginación Inferior */}
         <div className="flex flex-col sm:flex-row justify-between items-center p-4 border-t border-slate-100 bg-slate-50/50 gap-4 print:hidden">
            <div className="text-sm text-slate-600">
              Mostrando <span className="font-semibold">{paginatedOrders.length > 0 ? (currentPage - 1) * itemsPerPage + 1 : 0}</span> a <span className="font-semibold">{Math.min(currentPage * itemsPerPage, filteredOrders.length)}</span> de <span className="font-semibold">{filteredOrders.length}</span> órdenes
@@ -672,34 +622,41 @@ const OrdersPanel = ({
         </div>
       </div>
 
-      {/* --- DIÁLOGO DE CONFIRMACIÓN DE ELIMINACIÓN --- */}
       <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle>
-              {isPermanentDelete ? 'Eliminar Orden Anulada' : 'Anular Orden'}
+            <AlertDialogTitle className={isPermanentDelete ? 'text-slate-800' : 'text-red-600'}>
+              {isPermanentDelete ? 'Eliminar Orden Anulada' : `Anular Orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}`}
             </AlertDialogTitle>
             <AlertDialogDescription>
               {isPermanentDelete 
-                ? `¿Está seguro de que desea eliminar permanentemente la orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}? Esta acción no se puede deshacer.`
-                : `¿Está seguro de que desea anular la orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}? Se cambiará el estado a ANULADA.`
+                ? `¿Está seguro de que desea eliminar permanentemente la orden? Esta acción no se puede deshacer.`
+                : `¿Está seguro de que desea anular esta orden? Se cambiará el estado a ANULADA.`
               }
             </AlertDialogDescription>
           </AlertDialogHeader>
+          
+          {!isPermanentDelete && (
+              <div className="my-4">
+                 <label className="text-sm font-bold text-slate-700 mb-2 block">Motivo de la anulación *</label>
+                 <textarea 
+                    className="w-full border border-slate-300 rounded-md p-3 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none resize-none"
+                    rows="3"
+                    placeholder="Ej: El cliente canceló el proyecto..."
+                    value={cancelReason}
+                    onChange={(e) => setCancelReason(e.target.value)}
+                 />
+              </div>
+          )}
+
           <AlertDialogFooter>
-            <AlertDialogCancel>Cancelar</AlertDialogCancel>
+            <AlertDialogCancel onClick={() => setCancelReason('')}>Cancelar</AlertDialogCancel>
             <AlertDialogAction 
-              onClick={() => {
-                if (isPermanentDelete) {
-                  onDeleteOrder(deleteConfirm);
-                } else {
-                  onUpdateStatus(deleteConfirm, 'ANULADA');
-                }
-                setDeleteConfirm(null);
-              }}
-              className="bg-red-600 hover:bg-red-700"
+              onClick={handleConfirmDelete}
+              disabled={isCancelling || (!isPermanentDelete && !cancelReason.trim())}
+              className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white"
             >
-              {isPermanentDelete ? 'Eliminar' : 'Anular'}
+              {isCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : (isPermanentDelete ? 'Eliminar' : 'Confirmar Anulación')}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
