@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package, ShieldCheck } from 'lucide-react';
+import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package, ShieldCheck, BookOpen } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
@@ -54,26 +54,22 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
         { label: 'Sin Factura', id: 'ordenes-sin-factura' },
         { label: 'Con Factura', id: 'ordenes-con-factura' },
         { label: 'Crédito', id: 'ordenes-credito' },
-        { label: 'Vales de Caja', id: 'vales' }, 
-        { label: 'Archivadas', id: 'ordenes-archivadas' },
-        ...(user?.role === 'Administrador' ? [{ label: 'Configuración', id: 'configuracion', icon: Settings }] : [])
+        { label: 'Vales de Caja', id: 'vales' }, // <-- DEVUELTO AQUÍ
+        { label: 'Archivadas', id: 'ordenes-archivadas' }
       ]
     },
     { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
-    
-    // 🔥 NUEVO MENÚ DE CONTABILIDAD 🔥
     { id: 'contabilidad', label: 'Contabilidad', icon: ShieldCheck, submenu: [
-        { label: 'Cierre Contable', id: 'contabilidad-cierre' }
+        { label: 'Cierre Contable (Órdenes)', id: 'contabilidad-cierre' },
+        { label: 'Libro Diario General', id: 'libro-diario-general' }
       ]
     },
-    
     { id: 'inventario', label: 'Inventario', icon: Package, submenu: [
         { label: 'Ver Inventario', id: 'inventario-ver' },
-        ...(user?.role === 'Administrador' || user?.role === 'Producción' ? [{ label: 'Gestionar Inventario', id: 'inventario-gestionar' }] : []),
+        { label: 'Gestionar Inventario', id: 'inventario-gestionar' },
         { label: 'Catálogo / Precios', id: 'inventario-catalogo' }
       ]
     },
-
     { id: 'trabajo', label: 'Área de Trabajo', icon: Briefcase, submenu: [
         { label: 'Lista Tareas', id: 'trabajo-listado' }, 
         { label: 'Tablero Kanban', id: 'trabajo-mistareas' },
@@ -87,39 +83,38 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     },
     { id: 'estadisticas', label: 'Estadísticas', icon: BarChart2, submenu: [
         { label: 'Gráficos', id: 'estadisticas-graficos' }, 
-        { label: 'Reporte Diario', id: 'estadisticas-reporte' }
+        { label: 'Mi Reporte Diario', id: 'estadisticas-reporte' }
       ]
     }, 
     { id: 'mi-perfil', label: 'Mi Perfil', icon: UserCircle },
     { id: 'salir', label: 'Cerrar Sesión', icon: LogOut, action: onLogout },
   ];
 
-  // 🔥 LÓGICA BLINDADA PARA PERMISOS 🔥
   const isAllowed = (id) => {
-      if (allowedViews.includes(id)) return true;
-      
-      // Siempre permitir vales y órdenes a los Vendedores
-      if (id === 'vales' && user?.role === 'Vendedor') return true;
-      if (id === 'ordenes' && user?.role === 'Vendedor') return true;
-      
-      // Siempre permitir Cierre Contable a Contabilidad
-      if ((id === 'contabilidad' || id === 'contabilidad-cierre') && user?.role === 'Contabilidad') return true;
-
-      return false;
+      if (user?.role === 'Administrador') return true;
+      if (id === 'salir' || id === 'inicio' || id === 'mi-perfil') return true;
+      return allowedViews.includes(id);
   };
 
   const visibleItems = allMenuItems.map(item => {
     if (item.id === 'salir' || item.id === 'inicio' || item.id === 'mi-perfil') return item;
-    if (item.id === 'inventario') return item;
     if (user?.role === 'Administrador') return item; 
-
-    if (!isAllowed(item.id)) return null;
 
     if (item.submenu) {
         const filteredSub = item.submenu.filter(sub => isAllowed(sub.id));
-        if (filteredSub.length === 0) return null;
-        return { ...item, submenu: filteredSub };
+        
+        if (isAllowed(item.id) && filteredSub.length === 0) {
+             return item;
+        }
+
+        if (filteredSub.length > 0 || isAllowed(item.id)) {
+            return { ...item, submenu: filteredSub };
+        }
+        return null;
     }
+
+    if (!isAllowed(item.id)) return null;
+
     return item;
   }).filter(Boolean);
 
@@ -136,7 +131,14 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
       </div>
       <div className="flex-1 py-4">
         {visibleItems.map(item => (
-          <MenuItem key={item.label} item={item} isActive={currentView === item.id || (item.submenu && item.submenu.some(sub => sub.id === currentView))} currentView={currentView} onClick={(item) => item.id && !item.submenu && onViewChange(item.id)} onSubItemClick={(subId) => onViewChange(subId)} />
+          <MenuItem 
+            key={item.label} 
+            item={item} 
+            isActive={currentView === item.id || (item.submenu && item.submenu.some(sub => sub.id === currentView))} 
+            currentView={currentView} 
+            onClick={(item) => item.id && !item.submenu && onViewChange(item.id)} 
+            onSubItemClick={(subId) => onViewChange(subId)} 
+          />
         ))}
       </div>
       <div className="p-4 border-t border-slate-800 text-[10px] text-slate-600 text-center">Sistema v2.1 - Inventario Roles</div>
