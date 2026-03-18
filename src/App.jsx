@@ -32,7 +32,10 @@ import InventoryPanel from '@/components/InventoryPanel';
 import CatalogPanel from '@/components/CatalogPanel';
 import ValesCajaPanel from './components/ValesCajaPanel'; 
 import AccountingPanel from '@/components/AccountingPanel'; 
-import AbonosModal from '@/components/AbonosModal'; // 🔥 IMPORTADO AQUÍ
+import AbonosModal from '@/components/AbonosModal'; 
+
+// 🔥 NUEVA IMPORTACIÓN: LIBRO DIARIO GENERAL 🔥
+import GeneralLedgerPanel from './components/GeneralLedgerPanel';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -60,7 +63,7 @@ function App() {
   const [paymentOrder, setPaymentOrder] = useState(null);
   const [cloningOrder, setCloningOrder] = useState(null);
   const [viewOrder, setViewOrder] = useState(null);
-  const [abonoOrder, setAbonoOrder] = useState(null); // 🔥 ESTADO PARA ABONOS AÑADIDO
+  const [abonoOrder, setAbonoOrder] = useState(null);
   const [viewOrderSource, setViewOrderSource] = useState(null);
 
   const [showProformaForm, setShowProformaForm] = useState(false);
@@ -333,7 +336,6 @@ function App() {
       }
   };
   const handleAdvanceWorkflow = async (order) => {
-    // 🔥 Ahora detecta múltiples formas de escribir Venta Corta
     const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
     const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
 
@@ -367,13 +369,16 @@ function App() {
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
+    
+    // REPORTE DIARIO DE CAJA INDIVIDUAL (VENDEDORES)
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
+    
+    // 🔥 NUEVO: LIBRO DIARIO GENERAL DE LA EMPRESA (ADMIN / CONTAB) 🔥
+    if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
+
     if (currentView === 'clientes-lista') return <ClientsPanel />;
     if (currentView === 'configuracion') return <AnulationConfig />;
-    
     if (currentView === 'vales') return <ValesCajaPanel user={user} />;
-    
-    // 🔥 PANTALLA DE CIERRE CONTABLE 🔥
     if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
 
     if (currentView.startsWith('ordenes-')) {
@@ -396,7 +401,7 @@ function App() {
               onCreateOrder={() => setShowForm(true)}
               onViewOrder={(o) => handleViewOrder(o, null)} 
               currentView={currentView}
-              onAbonoOrder={setAbonoOrder} // 🔥 CONECTADO EL BOTÓN DE ABONO A ORDERS PANEL 🔥
+              onAbonoOrder={setAbonoOrder} 
             />
           </div>
        );
@@ -430,7 +435,6 @@ function App() {
             <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
-      {/* 🔥 MODAL DE ABONOS AÑADIDO AL FINAL DE LA APLICACIÓN 🔥 */}
       {abonoOrder && (
           <AbonosModal 
               order={abonoOrder} 

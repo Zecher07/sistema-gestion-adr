@@ -5,28 +5,35 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Shield, Save, Loader2, Edit2, Ban, Eye } from 'lucide-react';
 import { useToast } from '@/components/ui/use-toast';
 
-// --- DEFINICIÓN COMPLETA DE TODOS LOS PERMISOS DEL SISTEMA ---
 const ALL_MENU_ITEMS = [
   { id: 'inicio', label: 'Inicio / Dashboard (Vista Principal)', category: 'Inicio' },
   { id: 'clientes', label: 'Clientes (Menú Lateral)', category: 'Clientes' },
   { id: 'clientes-lista', label: 'Ver Lista de Clientes', category: 'Clientes' },
   { id: 'clientes-nuevo', label: 'Crear / Editar Clientes', category: 'Clientes' },
   { id: 'proformas', label: 'Cotizaciones / Proformas (Panel Completo)', category: 'Cotizaciones' },
-  { id: 'ordenes', label: 'Órdenes (Menú Lateral)', category: 'Producción' },
+  { id: 'ordenes', label: 'Órdenes Producción (Menú Lateral)', category: 'Producción' },
   { id: 'ordenes-todas', label: 'Ver Todas las Órdenes', category: 'Producción' },
   { id: 'ordenes-nueva', label: 'Crear Nueva Orden', category: 'Producción' },
   { id: 'ordenes-sin-factura', label: 'Filtro: Sin Factura', category: 'Producción' },
   { id: 'ordenes-con-factura', label: 'Filtro: Con Factura', category: 'Producción' },
   { id: 'ordenes-credito', label: 'Filtro: Crédito', category: 'Producción' },
+  { id: 'vales', label: 'Vales de Caja', category: 'Producción' }, // <-- DEVUELTO AQUÍ
   { id: 'ordenes-archivadas', label: 'Ver Archivo Muerto (Papelera)', category: 'Producción' },
   { id: 'facturacion-panel', label: 'Módulo de Facturación', category: 'Facturación' },
+  { id: 'contabilidad', label: 'Contabilidad (Menú Lateral)', category: 'Contabilidad y Finanzas' },
+  { id: 'contabilidad-cierre', label: 'Cierre Contable (Órdenes)', category: 'Contabilidad y Finanzas' },
+  { id: 'libro-diario-general', label: 'Libro Diario General de la Empresa', category: 'Contabilidad y Finanzas' },
+  { id: 'inventario', label: 'Inventario (Menú Lateral)', category: 'Inventario' },
+  { id: 'inventario-ver', label: 'Ver Existencias de Inventario', category: 'Inventario' },
+  { id: 'inventario-gestionar', label: 'Registrar Ingresos/Egresos Inventario', category: 'Inventario' },
+  { id: 'inventario-catalogo', label: 'Catálogo y Lista de Precios', category: 'Inventario' },
   { id: 'trabajo', label: 'Área de Trabajo (Menú Lateral)', category: 'Área de Trabajo' },
   { id: 'trabajo-listado', label: 'Vista Lista (Global)', category: 'Área de Trabajo' },
   { id: 'trabajo-mistareas', label: 'Vista Tablero (Kanban)', category: 'Área de Trabajo' },
   { id: 'trabajo-disponibilidad', label: 'Vista Calendario', category: 'Área de Trabajo' },
   { id: 'estadisticas', label: 'Estadísticas (Menú Lateral)', category: 'Reportes' },
   { id: 'estadisticas-graficos', label: 'Gráficos de Rendimiento', category: 'Reportes' },
-  { id: 'estadisticas-reporte', label: 'Cierre de Caja Diario', category: 'Reportes' },
+  { id: 'estadisticas-reporte', label: 'Mi Reporte de Caja Diario', category: 'Reportes' },
   { id: 'usuarios', label: 'Admin (Menú Lateral)', category: 'Administración' },
   { id: 'admin-usuarios', label: 'Gestión de Personal (Usuarios)', category: 'Administración' },
   { id: 'roles-permisos', label: 'Configurar Roles y Permisos', category: 'Administración' },
@@ -53,23 +60,20 @@ const RolesPermissions = () => {
 
   const fetchPermissions = async () => {
     try {
-      // 1. CARGAMOS TODO: VISTAS, EDITAR Y ANULAR
       const { data, error } = await supabase.from('role_permissions').select('*');
       if (error) throw error;
 
       const permObj = {};
       
-      // Inicializamos por defecto
       ROLES.forEach(r => { 
           permObj[r] = { allowed_views: [], can_edit: false, can_anulate: false }; 
       });
 
-      // Llenamos con lo que viene de la DB
       data.forEach(row => { 
           permObj[row.role] = {
               allowed_views: row.allowed_views || [],
-              can_edit: row.can_edit || false,       // <--- AQUÍ ESTÁ EL PERMISO DE EDITAR
-              can_anulate: row.can_anulate || false  // <--- AQUÍ ESTÁ EL PERMISO DE ANULAR
+              can_edit: row.can_edit || false,       
+              can_anulate: row.can_anulate || false  
           }; 
       });
 
@@ -82,7 +86,6 @@ const RolesPermissions = () => {
     }
   };
 
-  // --- LOGICA PARA VISTAS (CHECKBOXES DE LA MATRIZ) ---
   const toggleViewPermission = (role, viewId) => {
     if (role === 'Administrador') return; 
 
@@ -102,9 +105,8 @@ const RolesPermissions = () => {
     });
   };
 
-  // --- LÓGICA PARA ACCIONES (BOTONES EDITAR/ANULAR) ---
   const toggleActionPermission = (role, field) => {
-      if (role === 'Administrador') return; // Admin siempre true
+      if (role === 'Administrador') return; 
 
       setPermissions(prev => ({
           ...prev,
@@ -124,8 +126,8 @@ const RolesPermissions = () => {
           .upsert({ 
               role: role, 
               allowed_views: permissions[role].allowed_views,
-              can_edit: permissions[role].can_edit,       // GUARDAMOS EDITAR
-              can_anulate: permissions[role].can_anulate  // GUARDAMOS ANULAR
+              can_edit: permissions[role].can_edit,       
+              can_anulate: permissions[role].can_anulate  
           }, { onConflict: 'role' });
       });
 
@@ -133,7 +135,7 @@ const RolesPermissions = () => {
       
       toast({ 
         title: "✅ Permisos Actualizados", 
-        description: "Los cambios se aplicarán la próxima vez que los usuarios inicien sesión." 
+        description: "Los cambios se aplicarán al instante." 
       });
       
     } catch (error) {
@@ -148,8 +150,6 @@ const RolesPermissions = () => {
 
   return (
     <div className="space-y-6 animate-in fade-in duration-500 pb-20">
-      
-      {/* Encabezado */}
       <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
         <div>
             <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -163,7 +163,6 @@ const RolesPermissions = () => {
         </Button>
       </div>
 
-      {/* --- SECCIÓN NUEVA: PERMISOS DE ACCIÓN (EDITAR / ANULAR) --- */}
       <Card className="border-slate-200 shadow-md">
           <CardHeader className="bg-orange-50 border-b border-orange-100 py-3">
               <CardTitle className="text-base text-orange-800 flex items-center gap-2">
@@ -176,8 +175,6 @@ const RolesPermissions = () => {
                       <div key={role} className="bg-white p-4 rounded-lg border border-slate-200 shadow-sm hover:border-orange-200 transition-colors">
                           <h3 className="font-bold text-slate-800 mb-3 border-b pb-2 text-center bg-slate-50 rounded-t">{role}</h3>
                           <div className="space-y-4">
-                              
-                              {/* Switch Editar */}
                               <label className="flex items-center justify-between cursor-pointer group">
                                   <span className="text-sm text-slate-600 flex items-center gap-2 group-hover:text-blue-600">
                                       <Edit2 className="h-4 w-4 text-blue-500"/> Editar Órdenes
@@ -191,7 +188,6 @@ const RolesPermissions = () => {
                                   />
                               </label>
 
-                              {/* Switch Anular */}
                               <label className="flex items-center justify-between cursor-pointer group">
                                   <span className="text-sm text-slate-600 flex items-center gap-2 group-hover:text-red-600">
                                       <Ban className="h-4 w-4 text-red-500"/> Anular Órdenes
@@ -212,7 +208,6 @@ const RolesPermissions = () => {
           </CardContent>
       </Card>
 
-      {/* Matriz de Vistas (Tu código original) */}
       <Card className="border-slate-200 shadow-lg overflow-hidden">
         <CardHeader className="bg-slate-50 border-b border-slate-200">
             <CardTitle className="text-lg text-slate-700 flex items-center gap-2"><Eye className="h-5 w-5"/> Acceso a Pantallas</CardTitle>
@@ -232,13 +227,11 @@ const RolesPermissions = () => {
                 <tbody className="divide-y divide-slate-100">
                     {Object.keys(ITEMS_BY_CATEGORY).map((category) => (
                         <React.Fragment key={category}>
-                            {/* Título de Categoría */}
                             <tr className="bg-slate-50/80">
                                 <td colSpan={ROLES.length + 1} className="px-6 py-2 font-bold text-slate-800 text-xs uppercase tracking-wider border-y border-slate-200">
                                     {category}
                                 </td>
                             </tr>
-                            {/* Items de la Categoría */}
                             {ITEMS_BY_CATEGORY[category].map((item) => (
                                 <tr key={item.id} className="hover:bg-slate-50 transition-colors bg-white">
                                     <td className="px-6 py-3 font-medium text-slate-900 border-r border-slate-100">

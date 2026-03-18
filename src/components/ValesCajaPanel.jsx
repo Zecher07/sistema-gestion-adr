@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { motion } from 'framer-motion';
-import { cn } from '@/lib/utils'; // Asegúrate de tener este helper para las clases condicionales
+import { cn } from '@/lib/utils';
 
 const ValesCajaPanel = ({ user }) => {
   const { toast } = useToast();
@@ -14,6 +14,7 @@ const ValesCajaPanel = ({ user }) => {
   const [loading, setLoading] = useState(true);
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [approvingId, setApprovingId] = useState(null);
   const [searchTerm, setSearchTerm] = useState('');
   const [editingVale, setEditingVale] = useState(null); 
   const [staffList, setStaffList] = useState([]); 
@@ -59,6 +60,98 @@ const ValesCajaPanel = ({ user }) => {
     }
   };
 
+  // 🔥 CANDADO MATEMÁTICO: Calcula la caja exacta en tiempo real 🔥
+  const checkAvailableCash = async (vendedorNombre, fechaStr, montoRequerido, excludeValeId = null) => {
+      // 1. Obtener ID del vendedor para buscar su último cierre
+      let vId = user.id;
+      if (isAdmin && vendedorNombre !== user.name) {
+          const { data: p } = await supabase.from('profiles').select('id').eq('full_name', vendedorNombre).maybeSingle();
+          if (p) vId = p.id;
+      }
+
+      // 2. Buscar último reporte guardado antes de esta fecha
+      const { data: lastReport } = await supabase.from('daily_closings')
+          .select('date, final_balance').eq('user_id', vId).lt('date', fechaStr)
+          .order('date', { ascending: false }).limit(1).maybeSingle();
+
+      const baseCash = lastReport ? Number(lastReport.final_balance) : 0;
+      const lastDate = lastReport ? lastReport.date : '2000-01-01';
+
+      // 3. Buscar todas las órdenes donde este vendedor haya tocado dinero
+      const { data: userOrders } = await supabase.from('ordenes')
+          .select('*').or(`recibido_por_anticipo.eq.${vendedorNombre},recibido_por_saldo.eq.${vendedorNombre},vendedor.eq.${vendedorNombre}`);
+
+      let floatingSum = 0;
+      let todayIncome = 0;
+      let todayExpense = 0;
+
+      const toLocalDateStr = (iso) => {
+          if (!iso) return '';
+          const d = new Date(iso);
+          return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+      };
+
+      if (userOrders) {
+          userOrders.forEach(o => {
+              const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
+              const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
+              const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
+
+              const recibioAnticipo = o.recibido_por_anticipo === vendedorNombre || (!o.recibido_por_anticipo && o.vendedor === vendedorNombre);
+              const recibioSaldo = o.recibido_por_saldo === vendedorNombre || (!o.recibido_por_saldo && o.vendedor === vendedorNombre);
+              const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
+              const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+              const saldoFinalReal = saldoCobrado - totalAbonado;
+
+              // Dinero Flotante (Ingresos de días anteriores no cerrados)
+              if (createdDateStr > lastDate && createdDateStr < fechaStr && recibioAnticipo && o.status !== 'ANULADA') {
+                  floatingSum += Number(o.anticipo || 0);
+              }
+              if (balanceDateStr > lastDate && balanceDateStr < fechaStr && ['FINALIZADA', 'VENTAS POR RETIRAR', 'ENTREGADO'].includes(o.status) && saldoFinalReal > 0 && recibioSaldo) {
+                  floatingSum += saldoFinalReal;
+              }
+
+              // Ingresos de la Fecha del Vale
+              if (createdDateStr === fechaStr && recibioAnticipo && Number(o.anticipo) > 0 && o.status !== 'ANULADA') {
+                  todayIncome += Number(o.anticipo);
+              }
+              (o.abonos || []).forEach(abono => {
+                  if (toLocalDateStr(abono.fecha) === fechaStr && abono.cobrador === vendedorNombre) {
+                      todayIncome += Number(abono.monto);
+                  }
+              });
+              if (balanceDateStr === fechaStr && ['FINALIZADA', 'VENTAS POR RETIRAR', 'ENTREGADO'].includes(o.status) && saldoFinalReal > 0 && recibioSaldo) {
+                  todayIncome += saldoFinalReal;
+              }
+
+              // Egresos de la Fecha (Anulaciones)
+              if (o.status === 'ANULADA' && updatedDateStr === fechaStr && recibioAnticipo && Number(o.anticipo) > 0) {
+                  todayExpense += Number(o.anticipo);
+              }
+          });
+      }
+
+      // 4. Sumar otros Vales APROBADOS de esa misma fecha
+      const { data: valesHoy } = await supabase.from('vales_caja')
+          .select('id, monto').eq('vendedor', vendedorNombre).eq('fecha', fechaStr).eq('status', 'APROBADO');
+      
+      if (valesHoy) {
+          valesHoy.forEach(v => {
+              if (v.id !== excludeValeId) { // No contamos el vale que estamos editando actualmente
+                  todayExpense += Number(v.monto);
+              }
+          });
+      }
+
+      // 5. Cálculo Final
+      const cashInHand = baseCash + floatingSum + todayIncome - todayExpense;
+
+      if (montoRequerido > cashInHand) {
+          return { isValid: false, cashInHand };
+      }
+      return { isValid: true, cashInHand };
+  };
+
   const handleOpenModal = (vale = null) => {
       if (vale) {
           setEditingVale(vale);
@@ -85,12 +178,28 @@ const ValesCajaPanel = ({ user }) => {
 
     setSaving(true);
     try {
+      const montoRequerido = parseFloat(formData.monto);
+
+      // 🔥 VALIDACIÓN DE CAJA (Evita números negativos) 🔥
+      const excludeId = editingVale ? editingVale.id : null;
+      const { isValid, cashInHand } = await checkAvailableCash(formData.vendedor, formData.fecha, montoRequerido, excludeId);
+
+      if (!isValid) {
+          toast({ 
+              title: "Fondos insuficientes", 
+              description: `La caja actual de ${formData.vendedor} es de $${cashInHand.toFixed(2)}. No puede solicitar un vale por $${montoRequerido.toFixed(2)}.`, 
+              variant: "destructive" 
+          });
+          setSaving(false);
+          return;
+      }
+      // ----------------------------------------------------
+
       const payload = {
           fecha: formData.fecha,
           vendedor: formData.vendedor,
           concepto: formData.concepto.trim(),
-          monto: parseFloat(formData.monto),
-          // 🔥 Si es nuevo, siempre nace pendiente. Si se edita, vuelve a pendiente para revisión
+          monto: montoRequerido,
           status: 'PENDIENTE' 
       };
 
@@ -125,10 +234,25 @@ const ValesCajaPanel = ({ user }) => {
     }
   };
 
-  // 🔥 NUEVA FUNCIÓN: Aprobar o Rechazar Vale 🔥
-  const handleUpdateStatus = async (id, newStatus) => {
+  // 🔥 Aprobar o Rechazar Vale 🔥
+  const handleUpdateStatus = async (vale, newStatus) => {
+    setApprovingId(vale.id);
     try {
-      const { error } = await supabase.from('vales_caja').update({ status: newStatus }).eq('id', id);
+      if (newStatus === 'APROBADO') {
+          // Re-validar la caja por si el vendedor se gastó el dinero mientras el admin aprobaba
+          const { isValid, cashInHand } = await checkAvailableCash(vale.vendedor, vale.fecha, vale.monto, vale.id);
+          if (!isValid) {
+              toast({ 
+                  title: "No se puede aprobar", 
+                  description: `La caja actual de ${vale.vendedor} es de $${cashInHand.toFixed(2)}. Aprobar un vale de $${vale.monto.toFixed(2)} dejaría la caja en negativo.`, 
+                  variant: "destructive" 
+              });
+              setApprovingId(null);
+              return;
+          }
+      }
+
+      const { error } = await supabase.from('vales_caja').update({ status: newStatus }).eq('id', vale.id);
       if (error) throw error;
       
       toast({ 
@@ -139,6 +263,8 @@ const ValesCajaPanel = ({ user }) => {
       fetchVales();
     } catch (error) {
       toast({ title: "Error", description: "No se pudo cambiar el estado.", variant: "destructive" });
+    } finally {
+      setApprovingId(null);
     }
   };
 
@@ -194,6 +320,7 @@ const ValesCajaPanel = ({ user }) => {
                                         const isAprobado = vale.status === 'APROBADO';
                                         const isPendiente = vale.status === 'PENDIENTE' || !vale.status;
                                         const isRechazado = vale.status === 'RECHAZADO';
+                                        const isProcessingThis = approvingId === vale.id;
 
                                         return (
                                         <tr key={vale.id} className={cn("transition-colors group", isRechazado ? "bg-slate-50 opacity-60" : "hover:bg-red-50")}>
@@ -219,27 +346,33 @@ const ValesCajaPanel = ({ user }) => {
                                                 <td className="px-6 py-3 text-center">
                                                     <div className="flex items-center justify-center gap-2">
                                                         
-                                                        {/* Botones de Aprobación Rápida (Solo si está pendiente) */}
-                                                        {isPendiente && (
+                                                        {isProcessingThis ? (
+                                                            <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
+                                                        ) : (
                                                             <>
-                                                                <button onClick={() => handleUpdateStatus(vale.id, 'APROBADO')} className="bg-green-100 p-1.5 rounded text-green-600 hover:bg-green-600 hover:text-white transition-colors" title="Aprobar Vale">
-                                                                    <CheckCircle className="h-4 w-4" />
+                                                                {/* Botones de Aprobación Rápida (Solo si está pendiente) */}
+                                                                {isPendiente && (
+                                                                    <>
+                                                                        <button onClick={() => handleUpdateStatus(vale, 'APROBADO')} className="bg-green-100 p-1.5 rounded text-green-600 hover:bg-green-600 hover:text-white transition-colors" title="Aprobar Vale">
+                                                                            <CheckCircle className="h-4 w-4" />
+                                                                        </button>
+                                                                        <button onClick={() => handleUpdateStatus(vale, 'RECHAZADO')} className="bg-red-100 p-1.5 rounded text-red-600 hover:bg-red-600 hover:text-white transition-colors" title="Rechazar Vale">
+                                                                            <XCircle className="h-4 w-4" />
+                                                                        </button>
+                                                                    </>
+                                                                )}
+
+                                                                <div className="h-4 w-px bg-slate-200 mx-1"></div>
+
+                                                                {/* Editar y Borrar normal */}
+                                                                <button onClick={() => handleOpenModal(vale)} className="text-blue-400 hover:text-blue-600 transition-opacity" title="Editar">
+                                                                    <Edit2 className="h-4 w-4" />
                                                                 </button>
-                                                                <button onClick={() => handleUpdateStatus(vale.id, 'RECHAZADO')} className="bg-red-100 p-1.5 rounded text-red-600 hover:bg-red-600 hover:text-white transition-colors" title="Rechazar Vale">
-                                                                    <XCircle className="h-4 w-4" />
+                                                                <button onClick={() => handleDelete(vale.id)} className="text-red-400 hover:text-red-600 transition-opacity" title="Eliminar Permanente">
+                                                                    <Trash2 className="h-4 w-4" />
                                                                 </button>
                                                             </>
                                                         )}
-
-                                                        <div className="h-4 w-px bg-slate-200 mx-1"></div>
-
-                                                        {/* Editar y Borrar normal */}
-                                                        <button onClick={() => handleOpenModal(vale)} className="text-blue-400 hover:text-blue-600 transition-opacity" title="Editar">
-                                                            <Edit2 className="h-4 w-4" />
-                                                        </button>
-                                                        <button onClick={() => handleDelete(vale.id)} className="text-red-400 hover:text-red-600 transition-opacity" title="Eliminar Permanente">
-                                                            <Trash2 className="h-4 w-4" />
-                                                        </button>
                                                     </div>
                                                 </td>
                                             )}
