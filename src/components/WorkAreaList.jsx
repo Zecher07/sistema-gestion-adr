@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { LayoutList, Kanban as KanbanIcon, CheckCircle2, Search, ChevronLeft, ChevronRight, Settings, Play } from 'lucide-react';
+import { LayoutList, Kanban as KanbanIcon, CheckCircle2, Search, ChevronLeft, ChevronRight, Play, PackageSearch, PackageCheck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import KanbanBoard from './KanbanBoard';
 import CompletedTasksList from './CompletedTasksList';
@@ -18,6 +18,9 @@ const WorkAreaList = ({
 }) => {
   const [viewMode, setViewMode] = useState(initialMode); // 'list' | 'board' | 'completed'
   
+  // Filtro principal para la tabla (Ingresadas vs Por Retirar)
+  const [listFilter, setListFilter] = useState('ingresadas'); // 'ingresadas' | 'por_retirar'
+  
   // States for Search & Pagination
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(50);
@@ -28,26 +31,49 @@ const WorkAreaList = ({
   }, [initialMode]);
 
   useEffect(() => {
-    // Reset page on search
+    // Reset page on search or filter change
     setCurrentPage(1);
-  }, [searchTerm, itemsPerPage]);
+  }, [searchTerm, itemsPerPage, listFilter]);
 
-  // --- Filtering Logic ---
+  // --- LÓGICA ESTRICTA DE FILTRADO POR ROL (TAREAS ASIGNADAS) ---
   const rawFilteredOrders = useMemo(() => {
     return orders.filter(order => {
-      // Basic Status Filters
-      if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return false;
-      if (user.role === 'Administrador') return order.status === 'FINALIZADA';
-      if (order.status === 'FINALIZADA') return false;
+      // Ignorar siempre lo que ya no está activo
+      if (order.status === 'ANULADA' || order.status === 'ARCHIVADA' || order.status === 'FINALIZADA') return false;
       
-      // Role-based visibility
-      if (user.role === 'Producción') return order.status === 'PRODUCCION';
-      if (user.role === 'Contabilidad') return order.status === 'CONTABILIDAD';
-      if (user.role === 'Vendedor') return ['VENTAS', 'VENTAS POR RETIRAR'].includes(order.status);
+      // 1. PRODUCCIÓN: Solo ve lo que está físicamente en Producción
+      if (user.role === 'Producción') {
+          return order.status === 'PRODUCCION'; 
+      }
+      
+      // 2. CONTABILIDAD: Solo ve lo que llegó a Contabilidad
+      if (user.role === 'Contabilidad') {
+          return order.status === 'CONTABILIDAD'; 
+      }
+      
+      // 3. VENDEDOR: Solo ve SUS propias órdenes, y estrictamente lo que requiere su acción
+      if (user.role === 'Vendedor') {
+          if (order.vendedor !== user.name) return false; // Bloqueo: Solo ve lo suyo
+          
+          if (listFilter === 'ingresadas') {
+              return order.status === 'VENTAS'; // Solo ve lo recién ingresado (no ve Producción ni Contab)
+          } else if (listFilter === 'por_retirar') {
+              return order.status === 'VENTAS POR RETIRAR'; // Tareas de entrega
+          }
+      }
+
+      // 4. ADMINISTRADOR: Auditoría global, ve todo el flujo
+      if (user.role === 'Administrador') {
+          if (listFilter === 'ingresadas') {
+              return ['VENTAS', 'PRODUCCION', 'CONTABILIDAD'].includes(order.status);
+          } else if (listFilter === 'por_retirar') {
+              return order.status === 'VENTAS POR RETIRAR';
+          }
+      }
       
       return false;
     });
-  }, [orders, user.role]);
+  }, [orders, user.role, listFilter, user.name]);
 
   // --- Search Logic ---
   const searchFilteredOrders = useMemo(() => {
@@ -78,7 +104,6 @@ const WorkAreaList = ({
   // --- Formatters ---
   const formatDate = (dateString) => {
     if (!dateString) return '-';
-    // Format: YYYY-MM-DD HH:MM:SS
     const d = new Date(dateString);
     const year = d.getFullYear();
     const month = String(d.getMonth() + 1).padStart(2, '0');
@@ -95,30 +120,34 @@ const WorkAreaList = ({
     return (order.id || '').toString().slice(-7).padStart(7, '0');
   };
 
-  // 🔥 NUEVA LÓGICA DE CÁLCULO DE PROGRESO 🔥
+  // --- PROGRESS CALC ---
   const calculateProductStats = (order) => {
     const products = order.productos || order.products || [];
     const total = products.length;
     
-    // Contamos los que están marcados como FINALIZADO según tu nueva lógica
     const completed = products.filter(p => p.estado_prod === 'FINALIZADO').length;
-    
-    // Contamos los que están en proceso actualmente
     const inProcess = products.filter(p => p.estado_prod === 'EN_PROCESO').length;
-    
-    // Iniciados son todos los que no son PENDIENTES
     const startedCount = completed + inProcess; 
     
-    return {
-        total,
-        completed,
-        inProcess,
-        startedCount
-    };
+    return { total, completed, inProcess, startedCount };
   };
 
-  // Filter tasks for Completed View
   const completedTasks = kanbanTasks.filter(t => t.status === 'Completada');
+
+  // Cálculos precisos para las "burbujas" de contador según el rol
+  const countIngresadas = orders.filter(o => {
+      if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return false;
+      if (user.role === 'Vendedor') return o.status === 'VENTAS' && o.vendedor === user.name;
+      if (user.role === 'Administrador') return ['VENTAS', 'PRODUCCION', 'CONTABILIDAD'].includes(o.status);
+      return false;
+  }).length;
+
+  const countPorRetirar = orders.filter(o => {
+      if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return false;
+      if (user.role === 'Vendedor') return o.status === 'VENTAS POR RETIRAR' && o.vendedor === user.name;
+      if (user.role === 'Administrador') return o.status === 'VENTAS POR RETIRAR';
+      return false;
+  }).length;
 
   return (
     <div className="space-y-4">
@@ -167,11 +196,56 @@ const WorkAreaList = ({
 
        <div>
          {viewMode === 'list' && (
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in duration-300 min-h-[600px]">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden animate-in fade-in duration-300 min-h-[600px] flex flex-col">
                
-               {/* Controls Bar */}
-               <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-slate-50/50">
-                   {/* Left: Page Size */}
+               {/* BOTONES INDEPENDIENTES DE FILTRO (Solo para Vendedor/Admin) */}
+               {(user.role === 'Vendedor' || user.role === 'Administrador') && (
+                 <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-center">
+                    <button
+                        onClick={() => setListFilter('ingresadas')}
+                        className={cn(
+                            "px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border",
+                            listFilter === 'ingresadas' 
+                                ? "bg-blue-600 text-white border-blue-700 shadow-blue-200" 
+                                : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"
+                        )}
+                    >
+                        <PackageSearch className="h-5 w-5" />
+                        {user.role === 'Vendedor' ? 'ÓRDENES EN VENTAS' : 'ÓRDENES EN PROCESO'}
+                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'ingresadas' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>
+                           {countIngresadas}
+                        </span>
+                    </button>
+                    
+                    <button
+                        onClick={() => setListFilter('por_retirar')}
+                        className={cn(
+                            "px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border",
+                            listFilter === 'por_retirar' 
+                                ? "bg-green-600 text-white border-green-700 shadow-green-200" 
+                                : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100"
+                        )}
+                    >
+                        <PackageCheck className="h-5 w-5" />
+                        ÓRDENES POR RETIRAR
+                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'por_retirar' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>
+                           {countPorRetirar}
+                        </span>
+                    </button>
+                 </div>
+               )}
+
+               {/* Barra de título para Producción y Contabilidad */}
+               {(user.role === 'Producción' || user.role === 'Contabilidad') && (
+                 <div className="p-4 bg-slate-50 border-b border-slate-200">
+                    <h3 className="text-lg font-bold text-slate-700">
+                       Tus Tareas Asignadas - Departamento de {user.role}
+                    </h3>
+                 </div>
+               )}
+
+               {/* Controls Bar (Paginación y Buscador) */}
+               <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4 bg-white">
                    <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
                        <span>Mostrar</span>
                        <select 
@@ -187,13 +261,14 @@ const WorkAreaList = ({
                        <span>registros</span>
                    </div>
 
-                   {/* Right: Search */}
                    <div className="flex items-center gap-2 w-full md:w-auto">
                        <span className="text-sm font-bold text-slate-700">Buscar:</span>
                        <div className="relative">
+                          <Search className="absolute left-3 top-2 h-4 w-4 text-slate-400" />
                           <input 
                              type="text"
-                             className="border border-slate-300 rounded px-3 py-1 text-sm w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500"
+                             className="border border-slate-300 rounded pl-9 pr-3 py-1 text-sm w-full md:w-64 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all"
+                             placeholder="Nombre, ID, Cédula..."
                              value={searchTerm}
                              onChange={(e) => setSearchTerm(e.target.value)}
                           />
@@ -202,13 +277,13 @@ const WorkAreaList = ({
                </div>
 
                {/* Table */}
-               <div className="overflow-x-auto">
+               <div className="overflow-x-auto flex-1 bg-slate-50/30">
                <table className="w-full text-sm text-left">
                   <thead className="text-xs text-slate-700 font-bold border-b border-slate-200 bg-white">
                      <tr>
                         <th className="px-6 py-3 whitespace-nowrap">Orden</th>
-                        <th className="px-6 py-3 whitespace-nowrap">Iniciada (items)</th>
-                        <th className="px-6 py-3 whitespace-nowrap">Producidos / TOTAL</th>
+                        <th className="px-6 py-3 whitespace-nowrap">Estado Actual</th> 
+                        <th className="px-6 py-3 whitespace-nowrap text-center">Producidos / TOTAL</th>
                         <th className="px-6 py-3 whitespace-nowrap">Fecha ENTREGA</th>
                         <th className="px-6 py-3 whitespace-nowrap">Cliente</th>
                         <th className="px-6 py-3 whitespace-nowrap">Titulo</th>
@@ -219,29 +294,30 @@ const WorkAreaList = ({
                         paginatedOrders.map(order => {
                           const stats = calculateProductStats(order);
                           
-                          // Lógica de color para el badge de producción
                           const isFullyCompleted = stats.total > 0 && stats.completed === stats.total;
                           const hasProgress = stats.startedCount > 0;
 
                           return (
-                            <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group">
+                            <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer bg-white" onClick={() => onViewOrder(order)}>
                                <td className="px-6 py-3">
-                                  <button 
-                                     onClick={() => onViewOrder(order)}
-                                     className="text-blue-600 hover:text-blue-800 font-bold hover:underline bg-blue-50 px-2 py-1 rounded"
-                                  >
+                                  <span className="text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded border border-blue-100 group-hover:underline shadow-sm">
                                      #{formatOrderId(order)}
-                                  </button>
+                                  </span>
                                </td>
-                               <td className="px-6 py-3 text-slate-600">
-                                   <div className="flex items-center gap-2">
-                                     <Play className={cn("h-4 w-4", hasProgress ? "text-blue-500" : "text-slate-300")} />
-                                     <span className={hasProgress ? "font-bold text-slate-800" : ""}>({stats.startedCount})</span>
-                                   </div>
-                               </td>
-                               <td className="px-6 py-3 text-slate-700 font-medium">
+                               <td className="px-6 py-3 text-xs font-bold">
                                    <span className={cn(
-                                       "px-2.5 py-1 rounded-full text-xs font-bold inline-flex items-center border",
+                                       "px-2 py-1 rounded shadow-sm border",
+                                       order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' :
+                                       order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' :
+                                       order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' :
+                                       'bg-slate-50 text-slate-700 border-slate-200'
+                                   )}>
+                                       {order.status}
+                                   </span>
+                               </td>
+                               <td className="px-6 py-3 text-center text-slate-700 font-medium">
+                                   <span className={cn(
+                                       "px-3 py-1 rounded-full text-xs font-bold inline-flex items-center border shadow-sm",
                                        isFullyCompleted 
                                           ? "bg-green-100 text-green-700 border-green-200" 
                                           : hasProgress 
@@ -265,10 +341,21 @@ const WorkAreaList = ({
                         })
                      ) : (
                         <tr>
-                           <td colSpan="6" className="px-6 py-12 text-center text-slate-500 italic">
+                           <td colSpan="6" className="px-6 py-16 text-center text-slate-500 bg-white">
                               <div className="flex flex-col items-center gap-2">
-                                 <span className="text-lg font-medium text-slate-400">Sin resultados</span>
-                                 <span>No se encontraron registros que coincidan con la búsqueda.</span>
+                                 {listFilter === 'por_retirar' ? (
+                                     <>
+                                        <PackageCheck className="h-8 w-8 text-slate-300" />
+                                        <span className="text-lg font-medium text-slate-600">No hay órdenes listas</span>
+                                        <span className="text-sm">Aún no tienes órdenes marcadas como "Ventas por Retirar".</span>
+                                     </>
+                                 ) : (
+                                     <>
+                                        <Search className="h-8 w-8 text-slate-300" />
+                                        <span className="text-lg font-medium text-slate-600">Lista Limpia</span>
+                                        <span className="text-sm">No tienes tareas pendientes en este momento.</span>
+                                     </>
+                                 )}
                               </div>
                            </td>
                         </tr>
@@ -280,13 +367,10 @@ const WorkAreaList = ({
                {/* Pagination Footer */}
                <div className="px-6 py-3 border-t border-slate-200 bg-white text-xs text-slate-600 flex flex-col sm:flex-row justify-between items-center gap-4">
                   <div>
-                      Mostrando registros del <span className="font-semibold">{totalItems > 0 ? startIndex + 1 : 0}</span> al <span className="font-semibold">{endIndex}</span> de un total de <span className="font-semibold">{totalItems}</span> registros
+                      Mostrando del <span className="font-semibold">{totalItems > 0 ? startIndex + 1 : 0}</span> al <span className="font-semibold">{endIndex}</span> de un total de <span className="font-semibold text-slate-900">{totalItems}</span> registros
                   </div>
                   
                   <div className="flex items-center gap-1">
-                      <span className="mr-2 text-slate-500">
-                         Anterior
-                      </span>
                       <Button 
                          variant="outline" 
                          size="sm" 
@@ -294,11 +378,12 @@ const WorkAreaList = ({
                          onClick={() => setCurrentPage(prev => Math.max(prev - 1, 1))}
                          disabled={currentPage === 1}
                       >
-                         <ChevronLeft className="h-4 w-4" />
+                         <ChevronLeft className="h-4 w-4 mr-1" />
+                         Anterior
                       </Button>
                       
-                      <div className="px-3 py-1 bg-slate-100 border border-slate-200 rounded text-slate-700 font-medium min-w-[32px] text-center">
-                          {currentPage}
+                      <div className="px-3 py-1 bg-slate-50 border border-slate-200 rounded shadow-sm text-blue-700 font-bold min-w-[32px] text-center mx-2">
+                          {currentPage} <span className="text-slate-400 font-normal mx-1">/</span> {totalPages || 1}
                       </div>
 
                       <Button 
@@ -308,11 +393,9 @@ const WorkAreaList = ({
                          onClick={() => setCurrentPage(prev => Math.min(prev + 1, totalPages))}
                          disabled={currentPage >= totalPages}
                       >
-                         <ChevronRight className="h-4 w-4" />
-                      </Button>
-                      <span className="ml-2 text-slate-500">
                          Siguiente
-                      </span>
+                         <ChevronRight className="h-4 w-4 ml-1" />
+                      </Button>
                   </div>
                </div>
             </div>
