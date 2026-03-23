@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
 import { Search, Plus, FileDown, Printer, Pencil, Trash2, Eye, User, FileText, Phone, ShoppingCart, DollarSign, Wallet, ShieldAlert, History, X, Edit2 } from 'lucide-react'
 import { Button } from '@/components/ui/button'
-import { Input } from '@/components/ui/input'
+import { Input } from '@/components/ui/Text'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
