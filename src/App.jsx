@@ -33,8 +33,6 @@ import CatalogPanel from '@/components/CatalogPanel';
 import ValesCajaPanel from './components/ValesCajaPanel'; 
 import AccountingPanel from '@/components/AccountingPanel'; 
 import AbonosModal from '@/components/AbonosModal'; 
-
-// 🔥 NUEVA IMPORTACIÓN: LIBRO DIARIO GENERAL 🔥
 import GeneralLedgerPanel from './components/GeneralLedgerPanel';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
@@ -54,9 +52,12 @@ function App() {
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
-  const [showClientFormModal, setShowClientFormModal] = useState(false);
-  const [archivedNotifications, setArchivedNotifications] = useState([]);
   
+  // 🔥 ESTADOS PARA EL CONTROL DE CLIENTES 🔥
+  const [showClientFormModal, setShowClientFormModal] = useState(false);
+  const [editingClient, setEditingClient] = useState(null); 
+
+  const [archivedNotifications, setArchivedNotifications] = useState([]);
   const [realtimeEvents, setRealtimeEvents] = useState([]); 
 
   const [editingOrder, setEditingOrder] = useState(null); 
@@ -263,7 +264,7 @@ function App() {
     setCloningOrder(null);
   };
 
-  const handleClientSuccess = () => { fetchAllData(); setShowClientFormModal(false); };
+  const handleClientSuccess = () => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); };
   const getNextOrderNumber = () => { if (orders.length === 0) return 1; const nums = orders.map(o => parseInt(o.order_number || o.orderNumber || 0)); return Math.max(...nums) + 1; };
   const getNextProformaNumber = () => { if (proformas.length === 0) return 1; return Math.max(...proformas.map(p => parseInt(p.proformaNumber || p.numero || 0))) + 1; };
   const getNextInvoiceNumber = () => { if (invoices.length === 0) return 1; return Math.max(...invoices.map(i => parseInt(i.number || 0))) + 1; };
@@ -368,15 +369,23 @@ function App() {
     if (currentView === 'admin-usuarios') return <UserManagement />;
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
-    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
+    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     
-    // REPORTE DIARIO DE CAJA INDIVIDUAL (VENDEDORES)
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
-    
-    // 🔥 NUEVO: LIBRO DIARIO GENERAL DE LA EMPRESA (ADMIN / CONTAB) 🔥
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
 
-    if (currentView === 'clientes-lista') return <ClientsPanel />;
+    // 🔥 CONEXIÓN DE CLIENTES PANEL CON LA VENTANA EMERGENTE 🔥
+    if (currentView === 'clientes-lista') return (
+        <ClientsPanel 
+            clients={clients} 
+            orders={orders}
+            user={user} // Pasamos user
+            onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }}
+            onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }}
+            onViewOrder={(o) => handleViewOrder(o, 'clientes')}
+        />
+    );
+
     if (currentView === 'configuracion') return <AnulationConfig />;
     if (currentView === 'vales') return <ValesCajaPanel user={user} />;
     if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
@@ -408,10 +417,10 @@ function App() {
     }
 
     switch (currentView) {
-      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' /></div></div> );
-      case 'clientes-nuevo': return <ClientForm onSuccess={handleClientSuccess} onCancel={() => setCurrentView('clientes-lista')}/>;
-      case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' /></div>;
-      case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' /></div>;
+      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div></div> );
+      case 'clientes-nuevo': return <ClientForm user={user} onSuccess={handleClientSuccess} onCancel={() => setCurrentView('clientes-lista')}/>;
+      case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div>;
+      case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' onAbonoOrder={setAbonoOrder} /></div>;
       case 'trabajo-disponibilidad': return <div className="h-[calc(100vh-140px)]"><WorkAreaCalendar orders={orders} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /></div>;
       case 'inventario-ver': return <InventoryPanel user={user} mode="view" />;
       case 'inventario-gestionar': return <InventoryPanel user={user} mode="manage" />; 
@@ -454,14 +463,25 @@ function App() {
                 initialData={editingOrder || cloningOrder} 
                 nextOrderNumber={getNextOrderNumber()} 
                 onCheckAvailability={() => setShowAvailabilityModal(true)} 
-                onCreateClient={() => setShowClientFormModal(true)} 
+                onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} 
             />
           </div>
         </div>
       )}
 
       {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
-      {showClientFormModal && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-md bg-white rounded-xl shadow-2xl p-6 relative"><button onClick={() => setShowClientFormModal(false)} className="absolute top-4 right-4 text-slate-400 hover:text-slate-600"><X className="h-5 w-5" /></button><h3 className="text-lg font-bold mb-4">Registrar Nuevo Cliente</h3><ClientForm onSuccess={handleClientSuccess} onCancel={() => setShowClientFormModal(false)} /></div></div>)}
+      
+      {/* 🔥 MODAL DE CREACIÓN/EDICIÓN DE CLIENTE 🔥 */}
+      {showClientFormModal && (
+        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print">
+            <ClientForm 
+                user={user} // Pasamos user
+                clienteAEditar={editingClient} 
+                onSuccess={() => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); }} 
+                onCancel={() => { setShowClientFormModal(false); setEditingClient(null); }} 
+            />
+        </div>
+      )}
       
       {(showProformaForm || editingProforma) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
@@ -472,7 +492,7 @@ function App() {
                     onSuccess={() => { setShowProformaForm(false); setEditingProforma(null); fetchAllData(); }} 
                     onCancel={() => { setShowProformaForm(false); setEditingProforma(null); }} 
                     nextProformaNumber={getNextProformaNumber()} 
-                    onCreateClient={() => setShowClientFormModal(true)} 
+                    onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} 
                 />
             </div>
         </div>
