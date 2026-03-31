@@ -790,13 +790,11 @@ const OrderDetailsModal = ({
                           <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
                           <div className="mb-2 text-[10px]">PENDIENTE / INFORMATIVO</div>
                           
-                          <div className="flex justify-between mb-2">
+                          {/* Modificado para eliminar Ambiente y Emisión */}
+                          <div className="flex justify-between mb-4">
                               <span className="font-bold">FECHA Y HORA DE EMISIÓN:</span>
                               <span>{formatDateFull(order.createdAt || order.created_at)}</span>
                           </div>
-                          
-                          <div className="mb-1"><span className="font-bold">AMBIENTE:</span> PRODUCCIÓN</div>
-                          <div className="mb-3"><span className="font-bold">EMISIÓN:</span> NORMAL</div>
                           
                           <div className="font-bold mb-1">CLAVE DE ACCESO</div>
                           <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
@@ -895,21 +893,10 @@ const OrderDetailsModal = ({
                           <table className="w-full border-collapse border border-black text-[11px]">
                               <tbody>
                                   <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">SUBTOTAL {fin.ivaPercentage || 15}%</td>
-                                      <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
-                                  </tr>
-                                  <tr className="border-b border-black">
                                       <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
                                       <td className="p-1.5 text-right">$0.00</td>
                                   </tr>
-                                  <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">SUBTOTAL No obj. IVA</td>
-                                      <td className="p-1.5 text-right">$0.00</td>
-                                  </tr>
-                                  <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">SUBTOTAL Exento IVA</td>
-                                      <td className="p-1.5 text-right">$0.00</td>
-                                  </tr>
+                                  {/* Eliminados: No obj. IVA y Exento IVA */}
                                   <tr className="border-b border-black">
                                       <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
                                       <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
@@ -918,10 +905,7 @@ const OrderDetailsModal = ({
                                       <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
                                       <td className="p-1.5 text-right">{formatCurrency(fin.descuentoVal || 0)}</td>
                                   </tr>
-                                  <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">ICE</td>
-                                      <td className="p-1.5 text-right">$0.00</td>
-                                  </tr>
+                                  {/* Eliminado: ICE */}
                                   <tr className="border-b border-black bg-gray-50">
                                       <td className="p-1.5 border-r border-black font-bold">IVA {fin.ivaPercentage || 15}%</td>
                                       <td className="p-1.5 text-right font-bold">{formatCurrency(fin.iva || 0)}</td>
