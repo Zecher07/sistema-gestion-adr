@@ -369,17 +369,18 @@ function App() {
     if (currentView === 'admin-usuarios') return <UserManagement />;
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
-    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
+    
+    // 🔥 AQUÍ ESTÁ LA CORRECCIÓN: Se restableció `setShowProformaForm(true)` 🔥
+    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
 
-    // 🔥 CONEXIÓN DE CLIENTES PANEL CON LA VENTANA EMERGENTE 🔥
     if (currentView === 'clientes-lista') return (
         <ClientsPanel 
             clients={clients} 
             orders={orders}
-            user={user} // Pasamos user
+            user={user} 
             onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }}
             onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }}
             onViewOrder={(o) => handleViewOrder(o, 'clientes')}
@@ -471,11 +472,10 @@ function App() {
 
       {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
       
-      {/* 🔥 MODAL DE CREACIÓN/EDICIÓN DE CLIENTE 🔥 */}
       {showClientFormModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print">
             <ClientForm 
-                user={user} // Pasamos user
+                user={user} 
                 clienteAEditar={editingClient} 
                 onSuccess={() => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); }} 
                 onCancel={() => { setShowClientFormModal(false); setEditingClient(null); }} 
