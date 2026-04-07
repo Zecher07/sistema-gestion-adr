@@ -46,6 +46,17 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const [editingOpening, setEditingOpening] = useState(false);
   const isEditable = selectedDate === todayStr || isAdmin;
 
+  // 🔥 FUNCIÓN PARA RESUMIR EL MÉTODO DE PAGO 🔥
+  const formatPaymentMethod = (method) => {
+      if (!method) return 'EFECTIVO';
+      const upper = String(method).toUpperCase();
+      if (upper.includes('TRANS')) return 'TRANSFERENCIA';
+      if (upper.includes('TARJETA') || upper.includes('TC') || upper.includes('TD')) return 'TARJETA';
+      if (upper.includes('CHEQUE') || upper.includes('CHQ')) return 'CHEQUE';
+      if (upper.includes('EFECTIVO')) return 'EFECTIVO';
+      return upper; 
+  };
+
   useEffect(() => {
     if (isAdmin) {
         const fetchStaff = async () => {
@@ -81,14 +92,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     try {
       const { data: todosLosValesDB } = await supabase.from('vales_caja').select('*');
           
-      // 🔥 FILTRADO MEJORADO DE VALES (Solo APROBADOS del día) 🔥
       const valesFiltrados = (todosLosValesDB || []).filter(v => {
           const fechaValeLimpia = v.fecha ? v.fecha.split('T')[0] : "";
           const coincideFecha = fechaValeLimpia === date;
           const vendedorDB = v.vendedor?.toLowerCase().trim() || "";
           const vendedorBuscado = userName?.toLowerCase().trim() || "";
           const coincideVendedor = vendedorDB === vendedorBuscado;
-          const estaAprobado = v.status === 'APROBADO'; // Nueva condición de seguridad
+          const estaAprobado = v.status === 'APROBADO'; 
           
           return coincideFecha && coincideVendedor && estaAprobado;
       });
@@ -314,7 +324,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                 id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`,
                 orderNumber: numOrden, income: Number(o.anticipo), expense: 0, 
                 balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false,
-                originalOrder: o
+                originalOrder: o,
+                paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' 
               });
           }
       }
@@ -329,7 +340,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                   details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`,
                   orderNumber: numOrden, income: Number(abono.monto), expense: 0, 
                   balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false,
-                  originalOrder: o
+                  originalOrder: o,
+                  paymentMethod: abono.forma_pago || abono.formaPago || 'EFECTIVO' 
                });
           }
       });
@@ -351,7 +363,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
               txs.push({
                 id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`,
                 orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false,
-                originalOrder: o 
+                originalOrder: o,
+                paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' 
               });
           }
       }
@@ -366,13 +379,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                 txs.push({
                     id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Anulación #${numOrden}`,
                     orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true,
-                    originalOrder: o 
+                    originalOrder: o,
+                    paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO'
                 });
             }
         }
     });
     
-    // VALES APROBADOS
     valesDelDia.forEach(vale => {
         txs.push({
             id: `vale-${vale.id}`, 
@@ -382,10 +395,11 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             orderNumber: 'VALE', 
             income: 0, 
             expense: Number(vale.monto), 
-            balanceNote: 'EFECTIVO', 
+            balanceNote: 'EGRESO', 
             isManual: false, 
             isAnulada: false,
-            isVale: true 
+            isVale: true,
+            paymentMethod: 'EFECTIVO' 
         });
     });
 
@@ -428,7 +442,10 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const updateField = (field, value) => updateLedger({ ...ledgerData, [field]: value });
   
   const addManualTransaction = (type) => {
-    const newTx = { id: Date.now(), type, description: '', orderNumber: '', income: 0, expense: 0, balanceNote: '', isManual: true };
+    const newTx = { 
+        id: Date.now(), type, description: '', orderNumber: '', 
+        income: 0, expense: 0, balanceNote: '', paymentMethod: 'EFECTIVO', isManual: true 
+    };
     updateLedger({ ...ledgerData, manualTransactions: [...ledgerData.manualTransactions, newTx] });
   };
   const updateManualTransaction = (id, field, value) => {
@@ -518,8 +535,16 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-[40px_1fr_100px_100px_100px_200px_40px] bg-orange-300 border-b-2 border-slate-900 font-bold text-center divide-x-2 divide-slate-900 print:bg-orange-300 print:print-color-adjust-exact">
-                        <div className="py-2">#</div><div className="py-2">DESCRIPCION</div><div className="py-2 text-[10px] leading-tight flex items-center justify-center">ORDEN</div><div className="py-2">INGRESO</div><div className="py-2">EGRESO</div><div className="py-2">NOTA</div><div className="py-2 bg-slate-200 print:hidden"></div>
+                    <div className="grid grid-cols-[40px_1fr_80px_115px_90px_90px_140px_40px] bg-orange-300 border-b-2 border-slate-900 font-bold text-center divide-x-2 divide-slate-900 print:bg-orange-300 print:print-color-adjust-exact">
+                        <div className="py-2">#</div>
+                        <div className="py-2">DESCRIPCION</div>
+                        <div className="py-2 text-[10px] leading-tight flex items-center justify-center">ORDEN DE<br/>PRODUCCION</div>
+                        {/* 🔥 TÍTULO DE LA COLUMNA EN NEGRO 🔥 */}
+                        <div className="py-2 text-[10px] leading-tight flex items-center justify-center text-slate-900">MÉTODO PAGO</div>
+                        <div className="py-2">INGRESO</div>
+                        <div className="py-2">EGRESO</div>
+                        <div className="py-2">NOTA</div>
+                        <div className="py-2 bg-slate-200 print:hidden"></div>
                     </div>
 
                     <div className="flex-1 overflow-auto">
@@ -532,26 +557,57 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                     }
                                 }}
                                 className={cn(
-                                    "grid grid-cols-[40px_1fr_100px_100px_100px_200px_40px] border-b border-slate-300 divide-x divide-slate-300 transition-colors group", 
+                                    "grid grid-cols-[40px_1fr_80px_115px_90px_90px_140px_40px] border-b border-slate-300 divide-x divide-slate-300 transition-colors group", 
                                     idx % 2 === 0 ? "bg-white" : "bg-slate-50", 
                                     tx.isAnulada ? "bg-red-50" : "",
                                     tx.isVale ? "bg-red-50/50" : "", 
                                     !tx.isManual && !tx.isVale ? "cursor-pointer hover:bg-blue-100" : "hover:bg-yellow-50" 
                                 )}
                             >
-                                <div className="py-2 font-bold text-center text-slate-500">{idx + 1}</div>
+                                <div className="py-2 font-bold text-center text-slate-500 flex items-center justify-center">{idx + 1}</div>
+                                
                                 <div className="py-1 px-2 flex flex-col justify-center">
                                     <div className="flex items-center gap-2">
                                         {tx.isAnulada && <Undo2 className="h-3 w-3 text-red-600" />}
                                         {tx.isVale && <Receipt className="h-3 w-3 text-red-600" />}
                                         <span className={cn("text-[10px] font-bold px-1 rounded border border-black uppercase print:border-black", tx.isAnulada ? 'bg-red-600 text-white border-red-800' : tx.isVale ? 'bg-red-600 text-white' : tx.type === 'VENTA' ? 'bg-green-200' : tx.type === 'ABONO' ? 'bg-blue-200' : tx.type.includes('GASTO') ? 'bg-red-200' : 'bg-yellow-200')}>{tx.type}</span>
-                                        {tx.isManual && isEditable ? <input className="flex-1 bg-transparent border-b border-dotted outline-none font-semibold" value={tx.description} onChange={(e) => updateManualTransaction(tx.id, 'description', e.target.value)} /> : <span className="font-bold uppercase">{tx.description} {tx.details}</span>}
+                                        {tx.isManual && isEditable ? <input className="flex-1 bg-transparent border-b border-dotted outline-none font-semibold" value={tx.description} onChange={(e) => updateManualTransaction(tx.id, 'description', e.target.value)} /> : <span className="font-bold uppercase truncate">{tx.description} {tx.details}</span>}
                                     </div>
                                 </div>
-                                <div className="py-2 text-center font-mono font-bold text-slate-700">{tx.isManual && isEditable ? <input className="w-full text-center bg-transparent outline-none" value={tx.orderNumber} onChange={(e) => updateManualTransaction(tx.id, 'orderNumber', e.target.value)} /> : tx.orderNumber}</div>
-                                <div className="py-2 px-2 text-right font-bold text-green-700">{tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.income} onChange={(e) => updateManualTransaction(tx.id, 'income', e.target.value)} /> : (Number(tx.income) > 0 ? `$${Number(tx.income).toFixed(2)}` : '-')}</div>
-                                <div className="py-2 px-2 text-right font-bold text-red-700">{tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? `$${Number(tx.expense).toFixed(2)}` : '-')}</div>
-                                <div className="py-2 px-2 text-xs text-slate-600 truncate">{tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : tx.balanceNote}</div>
+                                
+                                <div className="py-2 text-center font-mono font-bold text-slate-700 flex items-center justify-center">
+                                   {tx.isManual && isEditable ? <input className="w-full text-center bg-transparent outline-none" value={tx.orderNumber} onChange={(e) => updateManualTransaction(tx.id, 'orderNumber', e.target.value)} /> : tx.orderNumber}
+                                </div>
+
+                                {/* 🔥 TEXTO NEGRO Y EN NEGRITA PARA EL MÉTODO DE PAGO 🔥 */}
+                                <div className="py-2 px-1 text-center text-xs font-bold text-black uppercase flex items-center justify-center">
+                                    {tx.isManual && isEditable ? (
+                                        <select 
+                                            className="w-full bg-transparent outline-none uppercase text-center font-black text-black cursor-pointer"
+                                            value={tx.paymentMethod || 'EFECTIVO'}
+                                            onChange={(e) => updateManualTransaction(tx.id, 'paymentMethod', e.target.value)}
+                                        >
+                                            <option value="EFECTIVO">EFECTIVO</option>
+                                            <option value="TRANSFERENCIA">TRANSFERENCIA</option>
+                                            <option value="TARJETA">TARJETA</option>
+                                            <option value="CHEQUE">CHEQUE</option>
+                                        </select>
+                                    ) : (
+                                        <span className="w-full text-center break-words leading-tight">{formatPaymentMethod(tx.paymentMethod)}</span>
+                                    )}
+                                </div>
+                                
+                                <div className="py-2 px-2 text-right font-bold text-green-700 flex items-center justify-end">
+                                   {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.income} onChange={(e) => updateManualTransaction(tx.id, 'income', e.target.value)} /> : (Number(tx.income) > 0 ? `$${Number(tx.income).toFixed(2)}` : '-')}
+                                </div>
+                                
+                                <div className="py-2 px-2 text-right font-bold text-red-700 flex items-center justify-end">
+                                   {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? `$${Number(tx.expense).toFixed(2)}` : '-')}
+                                </div>
+                                
+                                <div className="py-2 px-2 text-xs text-slate-600 truncate flex items-center justify-center">
+                                   {tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none text-center" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : <span className={cn(tx.balanceNote?.includes('DEBE') ? "text-red-600 bg-red-50 px-1 rounded" : "text-green-700")}>{tx.balanceNote}</span>}
+                                </div>
                                 
                                 <div className="flex items-center justify-center bg-slate-50 print:hidden">
                                     {tx.isManual && isEditable ? (
@@ -562,7 +618,12 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                 </div>
                             </div>
                         ))}
-                        {isEditable && isAdmin && (<div className="p-4 flex gap-4 bg-slate-100 print:hidden border-t border-slate-300"><Button variant="outline" onClick={() => addManualTransaction('GASTO')} className="border-red-300 text-red-700 hover:bg-red-50">+ Gasto</Button><Button variant="outline" onClick={() => addManualTransaction('INGRESO')} className="border-green-300 text-green-700 hover:bg-green-50">+ Ingreso Extra</Button></div>)}
+                        {isEditable && isAdmin && (
+                           <div className="p-4 flex gap-4 bg-slate-100 print:hidden border-t border-slate-300">
+                               <Button variant="outline" onClick={() => addManualTransaction('GASTO')} className="border-red-300 text-red-700 hover:bg-red-50">+ Gasto</Button>
+                               <Button variant="outline" onClick={() => addManualTransaction('INGRESO')} className="border-green-300 text-green-700 hover:bg-green-50">+ Ingreso Extra</Button>
+                           </div>
+                        )}
                     </div>
 
                     <div className="border-t-2 border-slate-900">

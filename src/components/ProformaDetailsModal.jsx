@@ -229,15 +229,12 @@ const ProformaDetailsModal = ({
                         <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> 001-001-{String(data.numero).padStart(9, '0')}</div>
                         
                         <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
-                        <div className="mb-2 text-[10px]">DOCUMENTO NO TRIBUTARIO - INFORMATIVO</div>
+                        <div className="mb-4 text-[10px]">DOCUMENTO NO TRIBUTARIO - INFORMATIVO</div>
                         
-                        <div className="flex justify-between mb-2">
+                        <div className="flex justify-between mb-4">
                             <span className="font-bold">FECHA EMISIÓN:</span>
                             <span>{formatDate(data.fechaCreacion)}</span>
                         </div>
-                        
-                        <div className="mb-1"><span className="font-bold">AMBIENTE:</span> PRODUCCIÓN</div>
-                        <div className="mb-3"><span className="font-bold">EMISIÓN:</span> NORMAL</div>
                         
                         <div className="font-bold mb-1">CLAVE DE ACCESO</div>
                         <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
@@ -344,24 +341,12 @@ const ProformaDetailsModal = ({
                                     <td className="p-1.5 text-right">$0.00</td>
                                 </tr>
                                 <tr className="border-b border-black">
-                                    <td className="p-1.5 border-r border-black">SUBTOTAL No obj. IVA</td>
-                                    <td className="p-1.5 text-right">$0.00</td>
-                                </tr>
-                                <tr className="border-b border-black">
-                                    <td className="p-1.5 border-r border-black">SUBTOTAL Exento IVA</td>
-                                    <td className="p-1.5 text-right">$0.00</td>
-                                </tr>
-                                <tr className="border-b border-black">
                                     <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
                                     <td className="p-1.5 text-right">{formatCurrency(data.financials.subtotal)}</td>
                                 </tr>
                                 <tr className="border-b border-black">
                                     <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
                                     <td className="p-1.5 text-right">{formatCurrency(data.financials.descuentoVal)}</td>
-                                </tr>
-                                <tr className="border-b border-black">
-                                    <td className="p-1.5 border-r border-black">ICE</td>
-                                    <td className="p-1.5 text-right">$0.00</td>
                                 </tr>
                                 <tr className="border-b border-black bg-gray-50">
                                     <td className="p-1.5 border-r border-black font-bold">IVA {data.financials.ivaPercentage}%</td>
