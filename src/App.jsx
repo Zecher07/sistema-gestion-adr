@@ -53,7 +53,6 @@ function App() {
   const [showForm, setShowForm] = useState(false);
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
   
-  // 🔥 ESTADOS PARA EL CONTROL DE CLIENTES 🔥
   const [showClientFormModal, setShowClientFormModal] = useState(false);
   const [editingClient, setEditingClient] = useState(null); 
 
@@ -369,9 +368,7 @@ function App() {
     if (currentView === 'admin-usuarios') return <UserManagement />;
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
-    
-    // 🔥 AQUÍ ESTÁ LA CORRECCIÓN: Se restableció `setShowProformaForm(true)` 🔥
-    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
+    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
@@ -445,15 +442,6 @@ function App() {
             <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
-      {abonoOrder && (
-          <AbonosModal 
-              order={abonoOrder} 
-              user={user} 
-              onClose={() => setAbonoOrder(null)} 
-              onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} 
-          />
-      )}
-
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
           <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
@@ -472,6 +460,7 @@ function App() {
 
       {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
       
+      {/* 🔥 MODAL DE CREACIÓN/EDICIÓN DE CLIENTE 🔥 */}
       {showClientFormModal && (
         <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print">
             <ClientForm 
@@ -513,7 +502,36 @@ function App() {
       
       {viewInvoice && (<InvoiceDetailsModal invoice={viewInvoice} onClose={() => setViewInvoice(null)} onAnulate={handleAnulateInvoice} onViewOrder={(id) => { const o = orders.find(x => x.id === id || x.orderNumber == id || x.order_number == id); if(o) { setViewInvoice(null); handleViewOrder(o); } }} />)}
       {showAvailabilityModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4"><div className="w-full max-w-5xl bg-white h-[85vh] rounded-xl shadow-2xl flex flex-col"><div className="p-4 border-b flex justify-between items-center bg-slate-50 rounded-t-xl"><h3 className="font-bold text-lg">Disponibilidad</h3><Button variant="ghost" size="icon" onClick={() => setShowAvailabilityModal(false)}><X className="h-5 w-5" /></Button></div><div className="flex-1 overflow-hidden p-4"><WorkAreaCalendar orders={orders} onViewOrder={(o) => { setShowAvailabilityModal(false); handleViewOrder(o, 'tasks'); }} /></div></div></div>)}
-      <OrderDetailsModal order={viewOrder} user={user} staffUsers={staffUsers} onClose={() => setViewOrder(null)} onProductToggle={handleProductToggle} isTaskView={viewOrderSource === 'tasks'} onAdvanceWorkflow={handleAdvanceWorkflow} onArchiveOrder={handleArchiveOrder} onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} onAnulateOrder={handleAnulateOrder} canAnulate={user.role === 'Administrador' || canUserAnulate} canEdit={user.role === 'Administrador' || canUserEdit} />
+      
+      <OrderDetailsModal 
+         order={viewOrder} 
+         user={user} 
+         staffUsers={staffUsers} 
+         onClose={() => setViewOrder(null)} 
+         onProductToggle={handleProductToggle} 
+         isTaskView={viewOrderSource === 'tasks'} 
+         onAdvanceWorkflow={handleAdvanceWorkflow} 
+         onArchiveOrder={handleArchiveOrder} 
+         onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} 
+         onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
+         onAnulateOrder={handleAnulateOrder} 
+         canAnulate={user.role === 'Administrador' || canUserAnulate} 
+         canEdit={user.role === 'Administrador' || canUserEdit} 
+         onAbonoOrder={setAbonoOrder}
+      />
+
+      {/* 🔥 MODAL DE COBROS MOVIDO AL FINAL PARA QUE APAREZCA POR ENCIMA 🔥 */}
+      {abonoOrder && (
+          <div className="relative z-[9999]">
+              <AbonosModal 
+                  order={abonoOrder} 
+                  user={user} 
+                  onClose={() => setAbonoOrder(null)} 
+                  onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} 
+              />
+          </div>
+      )}
+
       <Toaster />
     </>
   );

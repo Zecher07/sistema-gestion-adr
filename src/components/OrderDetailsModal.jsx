@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, Play, CheckCircle2, Search, Loader2 } from 'lucide-react';
+import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, Play, CheckCircle2, Search, Loader2, DollarSign } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
@@ -9,7 +9,7 @@ import { supabase } from '../supabaseClient';
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- SUB-COMPONENTE: Fila de Producto con control de Producción e Inventario ---
+// --- SUB-COMPONENTE: Fila de Producto ---
 const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) => {
     const { toast } = useToast();
     const isProduction = user?.role === 'Producción' || user?.role === 'Administrador';
@@ -227,9 +227,12 @@ const OrderDetailsModal = ({
   onArchiveOrder,
   onUpdateOrder,
   onGenerateInvoice,
-  canEdit
+  canEdit,
+  onAbonoOrder // 🔥 RECIBIMOS FUNCIÓN PARA COBRAR
 }) => {
   const [previewImage, setPreviewImage] = useState(null);
+  const [printType, setPrintType] = useState('sri'); 
+
   const { toast } = useToast();
 
   const [localProducts, setLocalProducts] = useState([]);
@@ -273,6 +276,19 @@ const OrderDetailsModal = ({
       return localProducts.every(p => p.estado_prod === 'FINALIZADO');
   }, [localProducts]);
 
+  // --- 🔥 CÁLCULO DEL SALDO REAL PARA TODA LA VENTANA 🔥 ---
+  const fin = order?.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0 };
+  const totalVal = Number(fin.total) || 0;
+  const anticipoVal = Number(order?.anticipo) || 0;
+  const retencionVal = Number(order?.retencion) || 0;
+  const abonosTotal = (order?.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+  
+  const saldoCalculado = Math.max(totalVal - anticipoVal - retencionVal - abonosTotal, 0);
+  const isCredito = (order?.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order?.formaPagoSaldo || '').toLowerCase().includes('credito') || (order?.formaPagoAnticipo || '').toLowerCase().includes('crédito');
+
+  // Bloqueo de avance si debe dinero y no es crédito
+  const lockToContabilidad = order?.status === 'VENTAS POR RETIRAR' && !isCredito && saldoCalculado > 0 && !isAdmin;
+
   const canAdvance = useMemo(() => {
       if (!order) return false;
       if (isAdmin) return true;
@@ -292,6 +308,13 @@ const OrderDetailsModal = ({
   }, [order, user, isAdmin]);
 
   if (!order) return null; 
+
+  const handlePrint = (type) => {
+      setPrintType(type);
+      setTimeout(() => {
+          window.print();
+      }, 100); 
+  };
 
   const handleResponsableChange = async (e) => {
     const nuevoVendedor = e.target.value;
@@ -356,7 +379,6 @@ const OrderDetailsModal = ({
   const isArchivada = order.status === 'ARCHIVADA';
   const isFinalizada = order.status === 'FINALIZADA';
 
-  const fin = order.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0 };
   const canArchive = isAdmin && isFinalizada;
   
   const canInvoice = 
@@ -439,7 +461,7 @@ const OrderDetailsModal = ({
                        0000000 {' - >'}
                     </span>
                 </div>
-                <div className="flex items-center gap-3">
+                <div className="flex items-center gap-2 flex-wrap justify-end">
                     {canInvoice && onGenerateInvoice && (
                        <Button size="sm" onClick={() => onGenerateInvoice(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2">
                           <FileText className="h-4 w-4" /> Generar Factura
@@ -450,11 +472,23 @@ const OrderDetailsModal = ({
                           <Edit2 className="h-4 w-4" /> Editar Orden
                        </Button>
                     )}
-                    {/* BOTÓN IMPRIMIR QUE ACTIVA LA VISTA DEL SRI */}
-                    <Button size="sm" className="bg-[#3b82f6] hover:bg-blue-600 text-white gap-2" onClick={() => window.print()}>
-                        <Printer className="h-4 w-4" /> Imprimir (SRI)
-                    </Button>
-                    <Button size="sm" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-50 gap-2" onClick={onClose}>
+                    
+                    <div className="flex bg-slate-100 rounded-md p-1 border border-slate-200">
+                        <Button size="sm" variant="ghost" className="text-blue-700 hover:bg-blue-200 hover:text-blue-800 gap-2 font-bold" onClick={() => handlePrint('sri')}>
+                            <Printer className="h-4 w-4" /> SRI
+                        </Button>
+                        
+                        {order.status === 'PRODUCCION' && (
+                            <>
+                                <div className="w-px bg-slate-300 mx-1"></div>
+                                <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-200 hover:text-amber-800 gap-2 font-bold" onClick={() => handlePrint('produccion')}>
+                                    <Printer className="h-4 w-4" /> Prod
+                                </Button>
+                            </>
+                        )}
+                    </div>
+
+                    <Button size="sm" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-50 gap-2 ml-1" onClick={onClose}>
                         <X className="h-4 w-4" /> Cerrar
                     </Button>
                 </div>
@@ -601,18 +635,26 @@ const OrderDetailsModal = ({
                             <span className="text-2xl font-bold text-slate-800">{Number(order.retencion || 0).toFixed(2)}</span>
                         </div>
 
-                        <div className="bg-white border border-blue-200 rounded p-4 shadow-sm">
+                        {/* 🔥 CAJA DE SALDO REAL DINÁMICO 🔥 */}
+                        <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col relative pb-12">
                             <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
-                                 <span className="text-blue-800 font-bold text-sm">Saldo Restante</span>
-                                 <span className={`text-lg font-bold ${fin.saldo > 0 ? 'text-red-600' : 'text-green-600'}`}>{fin.saldo?.toFixed(2)}</span>
+                                 <span className="text-blue-800 font-bold text-sm">Saldo Pendiente (Real)</span>
+                                 <span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span>
                             </div>
-                            <div className="space-y-1 text-xs text-slate-600">
+                            <div className="space-y-1 text-xs text-slate-600 mb-2">
                                  <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
-                                 {(order.formaPagoSaldo === 'Crédito' || fin.formaPagoSaldo === 'Crédito') && (
+                                 {isCredito && (
                                    <div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>
                                  )}
                                  {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
                             </div>
+                            {saldoCalculado > 0 && onAbonoOrder && (
+                                <div className="absolute bottom-3 left-4 right-4">
+                                    <Button size="sm" onClick={() => onAbonoOrder(order)} className="w-full bg-green-600 hover:bg-green-700 text-white shadow-sm flex items-center justify-center gap-2">
+                                        <DollarSign className="h-4 w-4"/> Registrar Cobro
+                                    </Button>
+                                </div>
+                            )}
                         </div>
                     </div>
                 </div>
@@ -681,6 +723,15 @@ const OrderDetailsModal = ({
                                    {workflowConfig.text}
                                    <Ban className="h-6 w-6 opacity-50" />
                                  </Button>
+                            ) : lockToContabilidad ? (
+                                 <Button 
+                                   size="lg"
+                                   className="bg-amber-500 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3"
+                                   title="Debes cobrar el saldo pendiente antes de pasar a Contabilidad"
+                                 >
+                                   {workflowConfig.text}
+                                   <Ban className="h-6 w-6 opacity-50" />
+                                 </Button>
                             ) : order.status === 'PRODUCCION' && !allProductsFinished ? (
                                  <Button 
                                    size="lg"
@@ -713,9 +764,11 @@ const OrderDetailsModal = ({
                             <span className="text-xs text-slate-500 font-medium px-2">
                                 {!canAdvance 
                                   ? '⚠️ Tu rol no permite avanzar esta etapa' 
-                                  : (order.status === 'PRODUCCION' && !allProductsFinished 
-                                      ? '⚠️ Debes finalizar todos los productos en la tabla superior' 
-                                      : workflowConfig.helper)}
+                                  : lockToContabilidad 
+                                      ? '⚠️ Debes registrar el cobro del saldo antes de enviar a Contabilidad'
+                                      : (order.status === 'PRODUCCION' && !allProductsFinished 
+                                          ? '⚠️ Debes finalizar todos los productos en la tabla superior' 
+                                          : workflowConfig.helper)}
                             </span>
                          </div>
                     </div>
@@ -760,165 +813,244 @@ const OrderDetailsModal = ({
 
 
         {/* ======================================================== */}
-        {/* 2. VISTA DE IMPRESIÓN (FACTURA SRI) OCULTA EN PANTALLA  */}
+        {/* 2. VISTAS DE IMPRESIÓN (OCULTAS EN PANTALLA)            */}
         {/* ======================================================== */}
         <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh' }}>
-            <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
-                  
-                  {/* SECCIÓN SUPERIOR: DATOS EMISOR Y DOCUMENTO */}
-                  <div className="grid grid-cols-2 gap-4 mb-4 w-full">
-                      {/* IZQUIERDA: LOGO Y DATOS DE LA EMPRESA */}
-                      <div className="w-full flex flex-col gap-2">
-                          <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
-                              {/* AQUÍ ESTÁ EL LOGO. Asegúrate de tener logo.png en tu carpeta 'public' */}
-                              <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
-                          </div>
-                          <div className="border border-black rounded-xl p-3">
-                              <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
-                              <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                              <div className="mb-1"><span className="font-bold">Dirección Sucursal:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                              <div className="mt-3"><span className="font-bold">OBLIGADO A LLEVAR CONTABILIDAD:</span> NO</div>
-                          </div>
-                      </div>
-
-                      {/* DERECHA: DATOS DEL DOCUMENTO */}
-                      <div className="w-full border border-black rounded-xl p-3">
-                          <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
-                          <div className="text-lg font-bold my-2 tracking-widest">FACTURA</div>
-                          <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> 001-001-{formatOrderId(order.id)}</div>
-                          
-                          <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
-                          <div className="mb-2 text-[10px]">PENDIENTE / INFORMATIVO</div>
-                          
-                          {/* Modificado para eliminar Ambiente y Emisión */}
-                          <div className="flex justify-between mb-4">
-                              <span className="font-bold">FECHA Y HORA DE EMISIÓN:</span>
-                              <span>{formatDateFull(order.createdAt || order.created_at)}</span>
-                          </div>
-                          
-                          <div className="font-bold mb-1">CLAVE DE ACCESO</div>
-                          <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
-                              [ Espacio para Clave de Acceso SRI ]
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* SECCIÓN CLIENTE */}
-                  <div className="border border-black rounded-xl p-3 mb-4 w-full">
-                      <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
-                          <div className="space-y-1">
-                              <div><span className="font-bold">Razón Social / Nombres:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                              <div><span className="font-bold">Identificación:</span> {order.ruc || order.cedula || order.cliente_identificacion || '9999999999999'}</div>
-                              <div><span className="font-bold">Fecha:</span> {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
-                              <div><span className="font-bold">Dirección:</span> {order.direccion || 'S/N'}</div>
-                          </div>
-                          <div className="space-y-1">
-                              <div><span className="font-bold">Guía Remisión:</span></div>
-                              <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                          </div>
-                      </div>
-                  </div>
-
-                  {/* TABLA DE PRODUCTOS */}
-                  <div className="mb-4 w-full min-h-[150px]">
-                      <table className="w-full border-collapse border border-black">
-                          <thead>
-                              <tr className="border-b border-black bg-gray-100">
-                                  <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
-                                  <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
-                                  <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
-                                  <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
-                                  <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
-                                  <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
-                              </tr>
-                          </thead>
-                          <tbody>
-                              {localProducts.map((prod, idx) => (
-                                  <tr key={idx} className="border-b border-black">
-                                      <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
-                                      <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
-                                      <td className="border-r border-black p-1.5 uppercase">{prod.descripcion}</td>
-                                      <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precio || prod.precioUnitario)}</td>
-                                      <td className="border-r border-black p-1.5 text-right">$0.00</td>
-                                      <td className="p-1.5 text-right">{formatCurrency(prod.cantidad * (prod.precio || prod.precioUnitario))}</td>
-                                  </tr>
-                              ))}
-                          </tbody>
-                      </table>
-                  </div>
-
-                  {/* SECCIÓN INFERIOR */}
-                  <div className="grid grid-cols-3 gap-4 w-full items-start">
-                      
-                      <div className="col-span-2 flex flex-col gap-4 w-full">
-                          <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
-                              <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
-                              <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
-                                  <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
-                                  <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
-                                  <span className="font-bold">Vendedor:</span> <span>{localVendedor || 'Sistema'}</span>
-                                  <span className="font-bold">F. Entrega:</span> <span>{order.fechaEntrega || order.fecha_entrega ? (order.fechaEntrega || order.fecha_entrega).split('T')[0] : 'Por Definir'}</span>
-                                  {order.notas && (
-                                      <>
-                                          <span className="font-bold">Notas:</span>
-                                          <span className="whitespace-pre-line">{order.notas}</span>
-                                      </>
-                                  )}
+            
+            {/* ---------------- VISTA SRI (FACTURA) ---------------- */}
+            {printType === 'sri' && (
+                <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
+                      <div className="grid grid-cols-2 gap-4 mb-4 w-full">
+                          <div className="w-full flex flex-col gap-2">
+                              <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
+                                  <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
+                              </div>
+                              <div className="border border-black rounded-xl p-3">
+                                  <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
+                                  <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
+                                  <div className="mb-1"><span className="font-bold">Dirección Sucursal:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
+                                  <div className="mt-3"><span className="font-bold">OBLIGADO A LLEVAR CONTABILIDAD:</span> NO</div>
                               </div>
                           </div>
 
-                          <div className="border border-black rounded-xl overflow-hidden w-full">
-                              <table className="w-full text-left border-collapse">
-                                  <thead>
-                                      <tr className="border-b border-black bg-gray-100">
-                                          <th className="p-2 font-bold border-r border-black w-[70%]">Formas de Pago</th>
-                                          <th className="p-2 font-bold text-right w-[30%]">Valor</th>
+                          <div className="w-full border border-black rounded-xl p-3">
+                              <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
+                              <div className="text-lg font-bold my-2 tracking-widest">FACTURA</div>
+                              <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> 001-001-{formatOrderId(order.id)}</div>
+                              
+                              <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
+                              <div className="mb-2 text-[10px]">PENDIENTE / INFORMATIVO</div>
+                              
+                              <div className="flex justify-between mb-4">
+                                  <span className="font-bold">FECHA Y HORA DE EMISIÓN:</span>
+                                  <span>{formatDateFull(order.createdAt || order.created_at)}</span>
+                              </div>
+                              
+                              <div className="font-bold mb-1">CLAVE DE ACCESO</div>
+                              <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
+                                  [ Espacio para Clave de Acceso SRI ]
+                              </div>
+                          </div>
+                      </div>
+
+                      <div className="border border-black rounded-xl p-3 mb-4 w-full">
+                          <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
+                              <div className="space-y-1">
+                                  <div><span className="font-bold">Razón Social / Nombres:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
+                                  <div><span className="font-bold">Identificación:</span> {order.ruc || order.cedula || order.cliente_identificacion || '9999999999999'}</div>
+                                  <div><span className="font-bold">Fecha:</span> {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
+                                  <div><span className="font-bold">Dirección:</span> {order.direccion || 'S/N'}</div>
+                              </div>
+                              <div className="space-y-1">
+                                  <div><span className="font-bold">Guía Remisión:</span></div>
+                                  <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
+                              </div>
+                          </div>
+                      </div>
+
+                      <div className="mb-4 w-full min-h-[150px]">
+                          <table className="w-full border-collapse border border-black">
+                              <thead>
+                                  <tr className="border-b border-black bg-gray-100">
+                                      <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
+                                      <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  {localProducts.map((prod, idx) => (
+                                      <tr key={idx} className="border-b border-black">
+                                          <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
+                                          <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
+                                          <td className="border-r border-black p-1.5 uppercase">{prod.descripcion}</td>
+                                          <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precio || prod.precioUnitario)}</td>
+                                          <td className="border-r border-black p-1.5 text-right">$0.00</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(prod.cantidad * (prod.precio || prod.precioUnitario))}</td>
                                       </tr>
-                                  </thead>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-4 w-full items-start">
+                          <div className="col-span-2 flex flex-col gap-4 w-full">
+                              <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
+                                  <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
+                                  <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
+                                      <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
+                                      <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
+                                      <span className="font-bold">Vendedor:</span> <span>{localVendedor || 'Sistema'}</span>
+                                      <span className="font-bold">F. Entrega:</span> <span>{order.fechaEntrega || order.fecha_entrega ? (order.fechaEntrega || order.fecha_entrega).split('T')[0] : 'Por Definir'}</span>
+                                      
+                                      <span className="font-bold">N° Proforma:</span>
+                                      <span>{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span>
+                                      
+                                      <span className="font-bold">N° Factura:</span>
+                                      <span>{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span>
+                                      
+                                      <span className="font-bold">F. Finalizada:</span>
+                                      <span>{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PROCESO'}</span>
+
+                                      {order.notas && (
+                                          <>
+                                              <span className="font-bold mt-1">Notas:</span>
+                                              <span className="whitespace-pre-line mt-1">{order.notas}</span>
+                                          </>
+                                      )}
+                                  </div>
+                              </div>
+
+                              <div className="border border-black rounded-xl overflow-hidden w-full">
+                                  <table className="w-full text-left border-collapse">
+                                      <thead>
+                                          <tr className="border-b border-black bg-gray-100">
+                                              <th className="p-2 font-bold border-r border-black w-[70%]">Formas de Pago</th>
+                                              <th className="p-2 font-bold text-right w-[30%]">Valor</th>
+                                      </tr>
+                                      </thead>
+                                      <tbody>
+                                          <tr className="border-b border-black">
+                                              <td className="p-2 border-r border-black uppercase text-[10px]">ANTICIPO - {order.formaPagoAnticipo || order.forma_pago_anticipo || 'EFECTIVO'}</td>
+                                              <td className="p-2 text-right font-bold">{formatCurrency(order.anticipo || 0)}</td>
+                                          </tr>
+                                          <tr>
+                                              <td className="p-2 border-r border-black uppercase text-[10px] text-red-700">SALDO PENDIENTE - {order.formaPagoSaldo || 'EFECTIVO'}</td>
+                                              <td className="p-2 text-right font-bold text-red-600">{formatCurrency(saldoCalculado)}</td>
+                                          </tr>
+                                      </tbody>
+                                  </table>
+                              </div>
+                          </div>
+
+                          <div className="col-span-1 w-full">
+                              <table className="w-full border-collapse border border-black text-[11px]">
                                   <tbody>
                                       <tr className="border-b border-black">
-                                          <td className="p-2 border-r border-black uppercase text-[10px]">ANTICIPO - {order.formaPagoAnticipo || order.forma_pago_anticipo || 'EFECTIVO'}</td>
-                                          <td className="p-2 text-right font-bold">{formatCurrency(order.anticipo || 0)}</td>
+                                          <td className="p-1.5 border-r border-black">SUBTOTAL {fin.ivaPercentage || 15}%</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
+                                      </tr>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
+                                          <td className="p-1.5 text-right">$0.00</td>
+                                      </tr>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
+                                      </tr>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(fin.descuentoVal || 0)}</td>
+                                      </tr>
+                                      <tr className="border-b border-black bg-gray-50">
+                                          <td className="p-1.5 border-r border-black font-bold">IVA {fin.ivaPercentage || 15}%</td>
+                                          <td className="p-1.5 text-right font-bold">{formatCurrency(fin.iva || 0)}</td>
                                       </tr>
                                       <tr>
-                                          <td className="p-2 border-r border-black uppercase text-[10px]">SALDO - {order.formaPagoSaldo || 'EFECTIVO'}</td>
-                                          <td className="p-2 text-right">{formatCurrency(fin.saldo || 0)}</td>
+                                          <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
+                                          <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(fin.total || 0)}</td>
                                       </tr>
                                   </tbody>
                               </table>
                           </div>
                       </div>
+                </div>
+            )}
 
-                      <div className="col-span-1 w-full">
-                          <table className="w-full border-collapse border border-black text-[11px]">
-                              <tbody>
-                                  <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
-                                      <td className="p-1.5 text-right">$0.00</td>
-                                  </tr>
-                                  {/* Eliminados: No obj. IVA y Exento IVA */}
-                                  <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
-                                      <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
-                                  </tr>
-                                  <tr className="border-b border-black">
-                                      <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
-                                      <td className="p-1.5 text-right">{formatCurrency(fin.descuentoVal || 0)}</td>
-                                  </tr>
-                                  {/* Eliminado: ICE */}
-                                  <tr className="border-b border-black bg-gray-50">
-                                      <td className="p-1.5 border-r border-black font-bold">IVA {fin.ivaPercentage || 15}%</td>
-                                      <td className="p-1.5 text-right font-bold">{formatCurrency(fin.iva || 0)}</td>
-                                  </tr>
-                                  <tr>
-                                      <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
-                                      <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(fin.total || 0)}</td>
-                                  </tr>
-                              </tbody>
-                          </table>
-                      </div>
-                  </div>
-            </div>
+            {/* ---------------- VISTA PRODUCCIÓN ---------------- */}
+            {printType === 'produccion' && (
+                <div className="w-full max-w-[850px] mx-auto p-8 font-sans text-black">
+                    <div className="flex justify-between items-start border-b-2 border-slate-800 pb-6 mb-6">
+                        <div className="w-48">
+                             <img src="/logo.png" alt="Logo" className="max-w-full h-auto object-contain" />
+                        </div>
+                        <div className="text-right">
+                             <h1 className="text-2xl font-black tracking-widest text-slate-900 mb-1">ORDEN DE PRODUCCIÓN</h1>
+                             <div className="text-lg font-bold text-red-600">N° ORDEN: {formatOrderId(order.id)}</div>
+                             <div className="text-sm font-bold text-slate-700 mt-1">FECHA: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
+                        </div>
+                    </div>
+
+                    <div className="border-2 border-slate-800 rounded-lg p-4 mb-6">
+                        <div className="grid grid-cols-2 gap-4 text-sm">
+                             <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
+                             <div><span className="font-bold">FECHA ENTREGA:</span> <span className="text-red-600 font-bold">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
+                             <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
+                             <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{localVendedor || 'SISTEMA'}</span></div>
+                             
+                             <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
+                             <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
+                             <div><span className="font-bold">FECHA FINALIZACIÓN:</span> <span className="uppercase">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PRODUCCIÓN'}</span></div>
+                        </div>
+                    </div>
+
+                    <div className="mb-6">
+                        <table className="w-full border-collapse border-2 border-slate-800 text-sm">
+                            <thead>
+                                <tr className="bg-slate-100 border-b-2 border-slate-800">
+                                    <th className="border-r-2 border-slate-800 p-2 w-16 text-center">CANT.</th>
+                                    <th className="border-r-2 border-slate-800 p-2 text-left">DESCRIPCIÓN</th>
+                                    <th className="p-2 text-left w-64">OBSERVACIONES / MATERIALES</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {localProducts.map((prod, idx) => (
+                                    <tr key={idx} className="border-b border-slate-400">
+                                        <td className="border-r-2 border-slate-800 p-3 text-center font-bold text-lg">{prod.cantidad}</td>
+                                        <td className="border-r-2 border-slate-800 p-3 uppercase font-medium">{prod.descripcion}</td>
+                                        <td className="p-3 text-xs text-slate-600">
+                                            {prod.sin_materiales ? 'Sin material de inventario.' : (prod.materiales && prod.materiales.length > 0 ? prod.materiales.map(m => `- ${m.nombre} (${m.cant_usada} ${m.unidad})`).join('\n') : '')}
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {localImages.length > 0 && (
+                        <div className="border-2 border-slate-800 rounded-lg p-4 mb-6" style={{ pageBreakInside: 'avoid' }}>
+                            <div className="font-bold text-sm mb-4 underline">ARTES Y DISEÑOS ADJUNTOS:</div>
+                            <div className="flex flex-wrap gap-4 items-start justify-center">
+                               {localImages.map((img, index) => (
+                                   <img 
+                                     key={index}
+                                     src={img.url} 
+                                     alt={img.name || `Arte ${index + 1}`} 
+                                     className="max-w-[45%] max-h-[300px] object-contain border border-slate-300 rounded shadow-sm"
+                                   />
+                               ))}
+                            </div>
+                        </div>
+                    )}
+
+                    <div className="border-2 border-slate-800 rounded-lg p-4 mb-12 min-h-[100px]" style={{ pageBreakInside: 'avoid' }}>
+                        <div className="font-bold text-sm mb-2 underline">OBSERVACIONES GENERALES:</div>
+                        <div className="text-sm whitespace-pre-wrap">{order.notas || 'Ninguna.'}</div>
+                    </div>
+                </div>
+            )}
         </div>
 
     </>
