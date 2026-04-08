@@ -368,7 +368,9 @@ function App() {
     if (currentView === 'admin-usuarios') return <UserManagement />;
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
-    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
+    
+    // 🔥 AQUÍ ESTÁ LA CORRECCIÓN EXACTA: setShowProformaForm(true) 🔥
+    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
@@ -472,6 +474,7 @@ function App() {
         </div>
       )}
       
+      {/* 🔥 AQUÍ ESTÁ EL MODAL DE LA PROFORMA 🔥 */}
       {(showProformaForm || editingProforma) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
             <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
@@ -501,6 +504,7 @@ function App() {
       )}
       
       {viewInvoice && (<InvoiceDetailsModal invoice={viewInvoice} onClose={() => setViewInvoice(null)} onAnulate={handleAnulateInvoice} onViewOrder={(id) => { const o = orders.find(x => x.id === id || x.orderNumber == id || x.order_number == id); if(o) { setViewInvoice(null); handleViewOrder(o); } }} />)}
+      
       {showAvailabilityModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4"><div className="w-full max-w-5xl bg-white h-[85vh] rounded-xl shadow-2xl flex flex-col"><div className="p-4 border-b flex justify-between items-center bg-slate-50 rounded-t-xl"><h3 className="font-bold text-lg">Disponibilidad</h3><Button variant="ghost" size="icon" onClick={() => setShowAvailabilityModal(false)}><X className="h-5 w-5" /></Button></div><div className="flex-1 overflow-hidden p-4"><WorkAreaCalendar orders={orders} onViewOrder={(o) => { setShowAvailabilityModal(false); handleViewOrder(o, 'tasks'); }} /></div></div></div>)}
       
       <OrderDetailsModal 
@@ -520,17 +524,16 @@ function App() {
          onAbonoOrder={setAbonoOrder}
       />
 
-      {/* 🔥 MODAL DE COBROS MOVIDO AL FINAL PARA QUE APAREZCA POR ENCIMA 🔥 */}
-      {abonoOrder && (
-          <div className="relative z-[9999]">
+      <div className="relative z-[9999]">
+          {abonoOrder && (
               <AbonosModal 
                   order={abonoOrder} 
                   user={user} 
                   onClose={() => setAbonoOrder(null)} 
                   onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} 
               />
-          </div>
-      )}
+          )}
+      </div>
 
       <Toaster />
     </>

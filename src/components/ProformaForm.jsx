@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Save, X, Plus, Trash2, User, Search, Calculator, FileText, Loader2, UserPlus, Mail, Clock } from 'lucide-react';
+import { Save, X, Plus, Trash2, User, Search, Calculator, FileText, Loader2, UserPlus, Mail, Clock, ShoppingCart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text';
 import { Switch } from '@/components/ui/switch';
@@ -13,45 +13,35 @@ const ProformaForm = ({
   clients = [], 
   user, 
   initialData = null,
-  nextProformaNumber, // Esta prop se queda para mostrarla en la UI, aunque no la mandemos a guardar
+  nextProformaNumber, 
   onCreateClient 
 }) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
 
-  // --- ESTADOS ---
   const [titulo, setTitulo] = useState(''); 
   const [diasEntrega, setDiasEntrega] = useState(''); 
   
   const [clientSearch, setClientSearch] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClient, setSelectedClient] = useState({
-    nombre: '',
-    identificacion: '',
-    telefono: '',
-    direccion: '',
-    email: '' 
+    nombre: '', identificacion: '', telefono: '', direccion: '', email: '' 
   });
 
   const [products, setProducts] = useState([
-    { cantidad: 1, descripcion: '', precioUnitario: 0, total: 0 }
+    { cantidad: 1, descripcion: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0 }
   ]);
   
-  // --- LÓGICA AUTOCOMPLETADO DE PRODUCTOS ---
+  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [searchCatalog, setSearchCatalog] = useState('');
+
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
 
-  // --- LÓGICA FINANCIERA AMPLIADA ---
   const [financials, setFinancials] = useState({ 
-      subtotal: 0, 
-      iva: 0, 
-      total: 0,
-      descuento: 0,
-      descuentoPorc: 0,
-      anticipoPorc: 50,
-      anticipoValor: 0,
-      saldoPorc: 50,
-      saldoValor: 0
+      subtotal: 0, iva: 0, total: 0, descuento: 0, descuentoPorc: 0,
+      anticipoPorc: 50, anticipoValor: 0, saldoPorc: 50, saldoValor: 0
   });
   
   const [notes, setNotes] = useState('');
@@ -62,6 +52,14 @@ const ProformaForm = ({
       if (!c) return '';
       return c.ruc || c.cedula || c.identificacion || c.dni || c.empresa || ''; 
   };
+
+  useEffect(() => {
+    const fetchCatalog = async () => {
+      const { data } = await supabase.from('catalogo_productos').select('*').order('nombre');
+      if (data) setCatalogItems(data);
+    };
+    fetchCatalog();
+  }, []);
 
   useEffect(() => {
     const fetchGlobalConfig = async () => {
@@ -90,11 +88,10 @@ const ProformaForm = ({
         email: initialData.cliente_email || ''
       });
       const items = Array.isArray(initialData.items) ? initialData.items : [];
-      setProducts(items.length > 0 ? items : [{ cantidad: 1, descripcion: '', precioUnitario: 0, total: 0 }]);
+      setProducts(items.length > 0 ? items : [{ cantidad: 1, descripcion: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0 }]);
       setNotes(initialData.notas || '');
       setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
       
-      // Restaurar valores financieros si existen
       if (initialData.financials) {
           setFinancials(prev => ({
               ...prev,
@@ -106,35 +103,21 @@ const ProformaForm = ({
     }
   }, [initialData]);
 
-  // --- 3. CÁLCULOS FINANCIEROS COMPLETOS ---
   useEffect(() => {
     const subtotalBruto = products.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
     
-    // Calcular descuento
     let valorDescuento = financials.descuento;
-    if (financials.descuentoPorc > 0) {
-        valorDescuento = subtotalBruto * (financials.descuentoPorc / 100);
-    }
+    if (financials.descuentoPorc > 0) { valorDescuento = subtotalBruto * (financials.descuentoPorc / 100); }
     
     const subtotalNeto = Math.max(0, subtotalBruto - valorDescuento);
     const iva = applyIva ? subtotalNeto * (ivaPercentage / 100) : 0;
     const total = subtotalNeto + iva;
     
-    // Calcular Anticipo y Saldo
     const anticipoValor = total * ((financials.anticipoPorc || 0) / 100);
     const saldoPorc = 100 - (financials.anticipoPorc || 0);
     const saldoValor = total - anticipoValor;
 
-    setFinancials(prev => ({ 
-        ...prev, 
-        subtotal: subtotalBruto, 
-        descuento: valorDescuento,
-        iva, 
-        total,
-        anticipoValor,
-        saldoPorc,
-        saldoValor
-    }));
+    setFinancials(prev => ({ ...prev, subtotal: subtotalBruto, descuento: valorDescuento, iva, total, anticipoValor, saldoPorc, saldoValor }));
   }, [products, ivaPercentage, applyIva, financials.descuentoPorc, financials.descuento, financials.anticipoPorc]);
 
   const filteredClients = clients.filter(c => {
@@ -149,10 +132,8 @@ const ProformaForm = ({
     const idFound = findClientId(client);
     setSelectedClient({
       nombre: client.nombre || client.razonSocial || client.full_name,
-      identificacion: idFound,
-      telefono: client.telefono || client.celular || '',
-      direccion: client.direccion || '',
-      email: client.email || client.correo || ''
+      identificacion: idFound, telefono: client.telefono || client.celular || '',
+      direccion: client.direccion || '', email: client.email || client.correo || ''
     });
     setClientSearch(client.nombre || client.razonSocial || client.full_name);
     setShowClientSuggestions(false);
@@ -166,29 +147,52 @@ const ProformaForm = ({
     }
   };
 
-  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', precioUnitario: 0, total: 0 }]);
-  const removeProduct = (idx) => setProducts(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
-  
-  const updateProduct = (index, field, value) => {
+  // 🔥 LÓGICA DE CATÁLOGO Y DESCUENTOS PARA PROFORMAS 🔥
+  const handleCatalogSelect = (item) => {
+    const minQty = item.venta_minima || 1;
+    let currentPrice = Number(item.precio) || 0;
+    
+    if (item.precios_escalonados && item.precios_escalonados.length > 0) {
+        const sorted = [...item.precios_escalonados].sort((a,b) => b.cantidad - a.cantidad);
+        const tier = sorted.find(t => minQty >= t.cantidad);
+        if (tier) currentPrice = tier.precio;
+    }
+
+    let finalDesc = item.nombre;
+    if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
+    if (item.observaciones) finalDesc += `\n[Nota: ${item.observaciones}]`;
+
     setProducts(prev => {
         const newProducts = [...prev];
-        const item = { ...newProducts[index], [field]: value };
-        if (field === 'cantidad' || field === 'precioUnitario') {
-          const qty = field === 'cantidad' ? Number(value) : Number(item.cantidad);
-          const price = field === 'precioUnitario' ? Number(value) : Number(item.precioUnitario);
-          item.total = qty * price;
+        const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
+
+        const newProduct = {
+            cantidad: minQty, venta_minima: minQty,
+            descripcion: finalDesc,
+            precioUnitario: currentPrice, precioBaseOriginal: Number(item.precio) || 0,
+            precios_escalonados: item.precios_escalonados || [],
+            total: currentPrice * minQty
+        };
+
+        if (emptyIndex !== -1) {
+            newProducts[emptyIndex] = newProduct;
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', precioUnitario: 0, total: 0, venta_minima: 1 });
+        } else {
+            newProducts.push(newProduct);
+            newProducts.push({ cantidad: 1, descripcion: '', precioUnitario: 0, total: 0, venta_minima: 1 });
         }
-        newProducts[index] = item;
         return newProducts;
     });
+    
+    setIsCatalogOpen(false);
+    toast({ title: "Añadido", description: `${item.nombre} agregado a la proforma.` });
   };
 
   const handleProductSearchRequest = async (index, value) => {
       updateProduct(index, 'descripcion', value);
       if (value.trim().length < 2) {
           setProductSuggestions([]);
-          setActiveProductSearchRow(null);
-          return;
+          setActiveProductSearchRow(null); return;
       }
       setActiveProductSearchRow(index);
       const { data } = await supabase.from('catalogo_productos').select('*').ilike('nombre', `%${value}%`).limit(8);
@@ -196,100 +200,121 @@ const ProformaForm = ({
   };
 
   const handleSelectProductSuggestion = (index, product) => {
-      const desc = product.nombre + (product.descripcion ? ` - ${product.descripcion}` : '');
+      let finalDesc = product.nombre;
+      if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
+      if (product.observaciones) finalDesc += `\n[Nota: ${product.observaciones}]`;
+
+      const minQty = product.venta_minima || 1;
+      let currentPrice = Number(product.precio) || 0;
+
+      if (product.precios_escalonados && product.precios_escalonados.length > 0) {
+          const sorted = [...product.precios_escalonados].sort((a,b) => b.cantidad - a.cantidad);
+          const tier = sorted.find(t => minQty >= t.cantidad);
+          if (tier) currentPrice = tier.precio;
+      }
+
       setProducts(prev => {
           const newProducts = [...prev];
-          const currentItem = newProducts[index];
-          const qty = Number(currentItem.cantidad) || 1;
-          newProducts[index] = { ...currentItem, descripcion: desc, precioUnitario: product.precio, total: qty * Number(product.precio) };
+          newProducts[index] = { 
+              ...newProducts[index], 
+              descripcion: finalDesc, 
+              precioUnitario: currentPrice, precioBaseOriginal: Number(product.precio) || 0,
+              precios_escalonados: product.precios_escalonados || [],
+              venta_minima: minQty, cantidad: minQty, total: minQty * currentPrice 
+          };
+          if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', precioUnitario: 0, total: 0, venta_minima: 1 });
           return newProducts;
       });
       setProductSuggestions([]);
       setActiveProductSearchRow(null);
   };
-  
-  // --- GUARDAR ---
+
+  const updateProduct = (index, field, value) => {
+    setProducts(prev => {
+        const newProducts = [...prev];
+        let item = { ...newProducts[index], [field]: value };
+        
+        if (field === 'cantidad') {
+            const qty = Number(value) || 0;
+            if (item.precios_escalonados && item.precios_escalonados.length > 0) {
+                const sortedTiers = [...item.precios_escalonados].sort((a, b) => b.cantidad - a.cantidad);
+                const applicableTier = sortedTiers.find(t => qty >= t.cantidad);
+                
+                if (applicableTier) {
+                    item.precioUnitario = applicableTier.precio;
+                } else {
+                    item.precioUnitario = item.precioBaseOriginal || item.precioUnitario;
+                }
+            }
+        }
+
+        if (field === 'cantidad' || field === 'precioUnitario') {
+          const qty = Number(item.cantidad) || 0;
+          const price = Number(item.precioUnitario) || 0;
+          item.total = qty * price;
+        }
+        
+        newProducts[index] = item;
+        return newProducts;
+    });
+  };
+
+  const handleQuantityBlur = (index, value) => {
+      const item = products[index];
+      if (!item.descripcion) return;
+      const min = item.venta_minima || 1;
+      const qty = Number(value);
+
+      if (qty > 0 && qty < min) {
+          toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
+          updateProduct(index, 'cantidad', min);
+      }
+  };
+
+  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', precioUnitario: 0, total: 0, venta_minima: 1 }]);
+  const removeProduct = (idx) => setProducts(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
+
   const handleSubmit = async () => {
     const finalName = selectedClient.nombre || clientSearch;
-    if (!finalName) {
-      toast({ title: "Falta Cliente", description: "Ingrese el nombre del cliente.", variant: "destructive" });
-      return;
-    }
-    
-    if (!titulo.trim()) {
-      toast({ title: "Falta Título", description: "Por favor, agregue un título o referencia a la cotización.", variant: "destructive" });
-      return;
-    }
+    if (!finalName) { toast({ title: "Falta Cliente", description: "Ingrese el nombre del cliente.", variant: "destructive" }); return; }
+    if (!titulo.trim()) { toast({ title: "Falta Título", description: "Por favor, agregue un título o referencia a la cotización.", variant: "destructive" }); return; }
+
+    const validProducts = products.filter(p => p.descripcion && p.descripcion.trim() !== '');
+    if (validProducts.length === 0) { toast({ title: "Sin productos", description: "Añada al menos un producto a la cotización.", variant: "destructive" }); return; }
 
     setLoading(true);
     try {
       const payload = {
-        titulo: titulo, 
-        cliente_nombre: finalName,
-        cliente_identificacion: selectedClient.identificacion,
-        cliente_telefono: selectedClient.telefono,
-        cliente_direccion: selectedClient.direccion,
-        cliente_email: selectedClient.email,
-        items: products, 
-        subtotal: financials.subtotal,
-        iva: financials.iva,
-        total: financials.total,
-        iva_percentage: applyIva ? ivaPercentage : 0,
-        dias_entrega: Number(diasEntrega) || 0,
+        titulo: titulo, cliente_nombre: finalName, cliente_identificacion: selectedClient.identificacion, cliente_telefono: selectedClient.telefono,
+        cliente_direccion: selectedClient.direccion, cliente_email: selectedClient.email, items: validProducts, 
+        subtotal: financials.subtotal, iva: financials.iva, total: financials.total, iva_percentage: applyIva ? ivaPercentage : 0, dias_entrega: Number(diasEntrega) || 0,
         financials: { 
-            subtotal: financials.subtotal, 
-            iva: financials.iva, 
-            total: financials.total, 
-            ivaPercentage: applyIva ? ivaPercentage : 0,
-            diasEntrega: Number(diasEntrega) || 0,
-            descuento: financials.descuento,
-            descuentoPorc: financials.descuentoPorc,
-            anticipoPorc: financials.anticipoPorc,
-            anticipoValor: financials.anticipoValor,
-            saldoPorc: financials.saldoPorc,
-            saldoValor: financials.saldoValor
+            subtotal: financials.subtotal, iva: financials.iva, total: financials.total, ivaPercentage: applyIva ? ivaPercentage : 0, diasEntrega: Number(diasEntrega) || 0,
+            descuento: financials.descuento, descuentoPorc: financials.descuentoPorc, anticipoPorc: financials.anticipoPorc, anticipoValor: financials.anticipoValor, saldoPorc: financials.saldoPorc, saldoValor: financials.saldoValor
         },
-        notas: notes,
-        responsable_nombre: user.name, 
-        status: initialData ? initialData.status : 'BORRADOR',
-        updated_at: new Date().toISOString()
+        notas: notes, responsable_nombre: user.name, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString()
       };
 
-      if (!initialData) {
-          // 🔥 AQUÍ ESTÁ LA MAGIA: Eliminamos payload.numero para que Supabase use la secuencia.
-          payload.created_at = new Date().toISOString();
-          payload.creado_por = user.id;
-      }
+      if (!initialData) { payload.created_at = new Date().toISOString(); payload.creado_por = user.id; }
 
       let error;
-      if (initialData) {
-        const { error: updateError } = await supabase.from('proformas').update(payload).eq('id', initialData.id);
-        error = updateError;
-      } else {
-        const { error: insertError } = await supabase.from('proformas').insert([payload]);
-        error = insertError;
-      }
+      if (initialData) { const { error: updateError } = await supabase.from('proformas').update(payload).eq('id', initialData.id); error = updateError; } 
+      else { const { error: insertError } = await supabase.from('proformas').insert([payload]); error = insertError; }
 
       if (error) throw error;
       toast({ title: "✅ Guardado", description: "Proforma registrada con éxito." });
       onSuccess();
-    } catch (error) {
-      console.error("Error DB:", error);
-      toast({ title: "Error", description: error.message || "No se pudo guardar", variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+    } catch (error) { toast({ title: "Error", description: error.message || "No se pudo guardar", variant: "destructive" }); } 
+    finally { setLoading(false); }
   };
 
   const getDisplayedProformaNumber = () => {
-    if (initialData && (initialData.numero || initialData.proformaNumber)) {
-      return String(initialData.numero || initialData.proformaNumber).padStart(6, '0');
-    }
-    return 'Automático'; // Avisamos en la UI que será automático
+    if (initialData && (initialData.numero || initialData.proformaNumber)) { return String(initialData.numero || initialData.proformaNumber).padStart(6, '0'); }
+    return 'Automático'; 
   };
 
   return (
-    <div className="flex flex-col h-full bg-slate-50">
+    <div className="flex flex-col h-full bg-slate-50 relative">
       <div className="bg-white px-6 py-4 border-b border-slate-200 flex justify-between items-center sticky top-0 z-10 shadow-sm">
         <div>
            <h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" />{initialData ? 'Editar Proforma' : 'Nueva Cotización'}</h2>
@@ -352,9 +377,12 @@ const ProformaForm = ({
             <CardContent className="p-6">
               <div className="flex justify-between items-center mb-4 border-b pb-2">
                 <div className="flex items-center gap-2 text-blue-700 font-semibold"><Calculator className="h-5 w-5" /> Items a Cotizar</div>
-                <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50"><Plus className="h-4 w-4 mr-1" /> Agregar Item</Button>
+                <div className="flex gap-2">
+                    <Button size="sm" type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2"><ShoppingCart className="h-4 w-4"/> Catálogo</Button>
+                    <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50"><Plus className="h-4 w-4 mr-1" /> Item Manual</Button>
+                </div>
               </div>
-              <div className="overflow-visible border rounded-lg pb-10"> 
+              <div className="overflow-visible border rounded-lg pb-10 bg-white"> 
                 <table className="w-full text-sm">
                   <thead className="bg-slate-100 text-slate-600 font-semibold">
                     <tr><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center w-24">Cant.</th><th className="px-3 py-2 text-right w-32">P. Unit</th><th className="px-3 py-2 text-right w-32">Total</th><th className="px-3 py-2 w-10"></th></tr>
@@ -362,13 +390,13 @@ const ProformaForm = ({
                   <tbody className="divide-y divide-slate-100 bg-white">
                     {products.map((row, idx) => (
                       <tr key={idx} className="hover:bg-slate-50 group">
-                        <td className="p-2 relative">
-                            <Input 
-                                className="h-9 w-full" 
-                                placeholder="Escribe para buscar catálogo o añade manual..." 
+                        <td className="p-2 relative align-top pt-3">
+                            <textarea 
+                                className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
+                                placeholder={idx === products.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
                                 value={row.descripcion} 
                                 onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
-                                onFocus={() => { if(row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
+                                onFocus={() => { if(row.descripcion && row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
                                 onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                             />
                             {activeProductSearchRow === idx && productSuggestions.length > 0 && (
@@ -389,10 +417,13 @@ const ProformaForm = ({
                                 </div>
                             )}
                         </td>
-                        <td className="p-2"><Input type="number" className="text-center h-9" min="1" value={row.cantidad} onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} /></td>
-                        <td className="p-2"><Input type="number" className="text-right h-9" min="0" step="0.01" value={row.precioUnitario} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
-                        <td className="p-2 text-right font-bold text-slate-800 bg-slate-50/50">${Number(row.total).toFixed(2)}</td>
-                        <td className="p-2 text-center"><button type="button" onClick={() => removeProduct(idx)} className="text-slate-400 hover:text-red-500 transition-colors" disabled={products.length === 1}><Trash2 className="h-4 w-4" /></button></td>
+                        <td className="p-2 relative align-top pt-3">
+                            <Input type="number" className="text-center h-9 font-bold" min={row.venta_minima || 1} step="1" value={row.cantidad} onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} onBlur={(e) => handleQuantityBlur(idx, e.target.value)} />
+                            {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                        </td>
+                        <td className="p-2 align-top pt-3"><Input type="number" className="text-right h-9 font-bold text-green-700" min="0" step="0.01" value={row.precioUnitario} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
+                        <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">${Number(row.total).toFixed(2)}</td>
+                        <td className="p-2 text-center align-top pt-4"><button type="button" onClick={() => removeProduct(idx)} className="text-slate-400 hover:text-red-500 transition-colors" disabled={products.length === 1}><Trash2 className="h-4 w-4" /></button></td>
                       </tr>
                     ))}
                   </tbody>
@@ -415,22 +446,11 @@ const ProformaForm = ({
                 <div className="flex justify-between items-center text-sm text-slate-600">
                   <span className="flex items-center gap-1">
                     Dscto
-                    <input 
-                      type="number" 
-                      className="w-12 h-6 border rounded text-center ml-1 text-xs" 
-                      placeholder="%" 
-                      value={financials.descuentoPorc || ''} 
-                      onChange={e => setFinancials(prev => ({...prev, descuentoPorc: Number(e.target.value), descuento: 0}))} 
-                    />%
+                    <input type="number" className="w-12 h-6 border rounded text-center ml-1 text-xs" placeholder="%" value={financials.descuentoPorc || ''} onChange={e => setFinancials(prev => ({...prev, descuentoPorc: Number(e.target.value), descuento: 0}))} />%
                   </span>
                   <div className="flex items-center">
                     <span className="text-red-500 font-bold mr-1">- $</span>
-                    <input 
-                      type="number" 
-                      className="w-16 h-6 border rounded text-right text-xs text-red-500 font-bold" 
-                      value={financials.descuento || ''} 
-                      onChange={e => setFinancials(prev => ({...prev, descuento: Number(e.target.value), descuentoPorc: 0}))} 
-                    />
+                    <input type="number" className="w-16 h-6 border rounded text-right text-xs text-red-500 font-bold" value={financials.descuento || ''} onChange={e => setFinancials(prev => ({...prev, descuento: Number(e.target.value), descuentoPorc: 0}))} />
                   </div>
                 </div>
 
@@ -441,23 +461,12 @@ const ProformaForm = ({
                 
                 <div className="border-t border-slate-300 pt-3 flex justify-between items-center"><span className="font-bold text-lg text-slate-800">TOTAL:</span><span className="font-bold text-2xl text-blue-700">${financials.total.toFixed(2)}</span></div>
                 
-                {/* FORMA DE PAGO (ANTICIPO / SALDO) */}
                 <div className="border-t border-blue-200 mt-4 pt-3 space-y-2">
                     <span className="text-xs font-bold text-blue-800 uppercase block mb-2">Forma de Pago Requerida</span>
                     <div className="flex items-center justify-between text-sm">
                         <span className="flex items-center text-slate-600">
                             Anticipo 
-                            <input 
-                                type="number" 
-                                className="w-12 h-6 border rounded text-center ml-2 text-xs font-bold text-blue-700 bg-blue-50" 
-                                value={financials.anticipoPorc} 
-                                onChange={e => {
-                                    let val = Number(e.target.value);
-                                    if(val > 100) val = 100;
-                                    if(val < 0) val = 0;
-                                    setFinancials(prev => ({...prev, anticipoPorc: val}));
-                                }} 
-                            />%
+                            <input type="number" className="w-12 h-6 border rounded text-center ml-2 text-xs font-bold text-blue-700 bg-blue-50" value={financials.anticipoPorc} onChange={e => { let val = Number(e.target.value); if(val > 100) val = 100; if(val < 0) val = 0; setFinancials(prev => ({...prev, anticipoPorc: val})); }} />%
                         </span>
                         <span className="font-bold text-slate-700">${financials.anticipoValor.toFixed(2)}</span>
                     </div>
@@ -477,6 +486,45 @@ const ProformaForm = ({
         <Button variant="outline" onClick={onCancel} disabled={loading}>Cancelar</Button>
         <Button onClick={handleSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[160px]">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} {initialData ? 'Actualizar' : 'Guardar Cotización'}</Button>
       </div>
+
+      {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}
+      {isCatalogOpen && (
+        <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
+            <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5"/> Catálogo de Precios</h3>
+                <Button variant="ghost" size="icon" onClick={() => setIsCatalogOpen(false)} className="hover:bg-slate-700"><X className="h-5 w-5" /></Button>
+            </div>
+            <div className="p-4 border-b border-slate-200 shrink-0 bg-slate-50">
+                <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <Input autoFocus placeholder="Buscar por código, nombre o categoría..." className="pl-9 bg-white" value={searchCatalog} onChange={e => setSearchCatalog(e.target.value)} />
+                </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
+                {catalogItems.filter(item => 
+                    (item.nombre || '').toLowerCase().includes(searchCatalog.toLowerCase()) || 
+                    (item.codigo || '').toLowerCase().includes(searchCatalog.toLowerCase()) ||
+                    (item.categoria || '').toLowerCase().includes(searchCatalog.toLowerCase())
+                ).map(item => (
+                    <div key={item.id} className="bg-slate-50 border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-400 hover:shadow-md cursor-pointer transition-all group" onClick={() => handleCatalogSelect(item)}>
+                        <div className="flex justify-between items-start mb-1">
+                            <span className="font-bold text-sm text-slate-800 group-hover:text-blue-700 uppercase">{item.nombre}</span>
+                            <span className="font-bold text-green-700">${Number(item.precio).toFixed(2)}</span>
+                        </div>
+                        <div className="text-[10px] font-bold text-purple-600 mb-1">{item.categoria}</div>
+                        <div className="text-xs text-slate-500 line-clamp-2">{item.descripcion || item.observaciones}</div>
+                        
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {item.venta_minima > 1 && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">Mínimo: {item.venta_minima}</span>}
+                            {item.precios_escalonados && item.precios_escalonados.length > 0 && <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Descuentos por volumen</span>}
+                        </div>
+                    </div>
+                ))}
+                {catalogItems.length === 0 && <div className="text-center py-10 text-slate-400">Catálogo vacío.</div>}
+            </div>
+        </div>
+      )}
+
     </div>
   );
 };

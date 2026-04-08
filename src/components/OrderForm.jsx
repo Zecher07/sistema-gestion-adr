@@ -4,7 +4,7 @@ import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Upload, Calendar as CalendarIcon, User, Search, Calculator, 
   FileText, Loader2, UserPlus, Image as ImageIcon, Mail, 
-  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban
+  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -38,7 +38,6 @@ for (let h = 8; h <= 20; h++) {
   ['00', '15', '30', '45'].forEach(m => TIME_SLOTS.push(`${hour}:${m}`));
 }
 
-// --- FUNCIÓN DE COMPRESIÓN ---
 const compressImage = async (file) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -63,7 +62,6 @@ const compressImage = async (file) => {
     });
 };
 
-// --- COMPONENTE DE IMAGEN OPTIMIZADO ---
 const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }) => {
     const onDrop = useCallback(acceptedFiles => { onAdd(acceptedFiles); }, [onAdd]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing });
@@ -97,80 +95,53 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
-const OrderForm = ({ 
-  currentUser, 
-  clients = [], 
-  staffUsers = [], 
-  onSuccess, 
-  onCancel, 
-  initialData = null, 
-  mode = 'create',
-  nextOrderNumber,
-  onCheckAvailability,
-  onReloadClients
-}) => {
+const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onCheckAvailability, onReloadClients }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
   const isAdmin = currentUser?.role === 'Administrador';
   
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
-
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [localClients, setLocalClients] = useState(clients);
   const searchRef = useRef(null);
 
+  const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [catalogItems, setCatalogItems] = useState([]);
+  const [searchCatalog, setSearchCatalog] = useState('');
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
-
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
 
+  useEffect(() => {
+    const fetchCatalog = async () => {
+      const { data } = await supabase.from('catalogo_productos').select('*').order('nombre');
+      if (data) setCatalogItems(data);
+    };
+    fetchCatalog();
+  }, []);
+
   const [paymentMode, setPaymentMode] = useState('partial'); 
   const [applyRetention, setApplyRetention] = useState(false);
-
   const [localDiscountVal, setLocalDiscountVal] = useState('');
   const [localDiscountPercent, setLocalDiscountPercent] = useState('');
   const [localAnticipo, setLocalAnticipo] = useState(''); 
 
   const [formData, setFormData] = useState({
-    orderNumber: nextOrderNumber,
-    vendedor: currentUser?.name || '',
-    cliente: '',
-    clienteId: '',
-    tipoLetrero: '',
-    tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)',
-    fechaEntrega: '',
-    productos: Array(5).fill({ descripcion: '', precio: 0, cantidad: 0, completed: false }), 
-    
-    anticipo: 0,
-    retencion: 0, 
-    retentionPercent: 0, 
-    formaPagoAnticipo: 'Efectivo',
-    referenciaPago: '', 
-    notaAnticipo: '', 
-    creditoVenceAnticipo: '', 
-    
-    saldo: 0,
-    formaPagoSaldo: 'No aplica',
-    creditoVenceSaldo: '',
-    notaSaldo: '',
-
-    descuentoPorcentaje: 0,
-    aplicarIva: true,
-    ivaPercentage: 15,
-    origenProformaInfo: '', 
-    imagenes: [], 
-    notas: ''
+    orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
+    // 🔥 ESTRUCTURA DEL PRODUCTO ACTUALIZADA 🔥
+    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, completed: false }), 
+    anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
+    saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
+    descuentoPorcentaje: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: ''
   });
 
-  const [financials, setFinancials] = useState({
-    subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0
-  });
+  const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
 
   useEffect(() => {
     const fetchGlobalConfig = async () => {
@@ -192,9 +163,7 @@ const OrderForm = ({
       if (initialData.financials) {
           if (typeof initialData.financials === 'string') {
               try { finData = JSON.parse(initialData.financials); } catch(e) { console.error(e); }
-          } else {
-              finData = initialData.financials;
-          }
+          } else { finData = initialData.financials; }
       }
 
       const saldoDB = finData.saldo || initialData.saldo || 0;
@@ -218,23 +187,15 @@ const OrderForm = ({
 
       let calculatedFechaEntrega = initialData.fecha_entrega || initialData.fechaEntrega || '';
       const isProformaConversion = !initialData.order_number && !initialData.orderNumber;
-      
       const diasLaborales = parseInt(initialData.dias_entrega || finData.diasEntrega || 0, 10);
       
       if (isProformaConversion && !calculatedFechaEntrega && diasLaborales > 0) {
-          let date = new Date();
-          let added = 0;
-          
+          let date = new Date(); let added = 0;
           while (added < diasLaborales) {
               date.setDate(date.getDate() + 1);
-              if (date.getDay() !== 0 && date.getDay() !== 6) { 
-                  added++;
-              }
+              if (date.getDay() !== 0 && date.getDay() !== 6) { added++; }
           }
-          
-          const yyyy = date.getFullYear();
-          const mm = String(date.getMonth() + 1).padStart(2, '0');
-          const dd = String(date.getDate()).padStart(2, '0');
+          const yyyy = date.getFullYear(); const mm = String(date.getMonth() + 1).padStart(2, '0'); const dd = String(date.getDate()).padStart(2, '0');
           calculatedFechaEntrega = `${yyyy}-${mm}-${dd}T17:00`;
       }
 
@@ -242,41 +203,21 @@ const OrderForm = ({
       const isVentaCorta = tipoOriginal.includes('(VC)') || tipoOriginal === 'VC' || tipoOriginal === 'VENTA CORTA';
 
       setFormData(prev => ({
-        ...prev,
-        ...initialData,
+        ...prev, ...initialData,
         orderNumber: initialData.order_number || initialData.orderNumber || nextOrderNumber,
         cliente: initialData.cliente_nombre || initialData.cliente,
         clienteId: initialData.cliente_id || initialData.clienteId,
-        
         tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || initialData.titulo || '',
         tipoOrden: isVentaCorta ? ORDER_TYPES[1] : ORDER_TYPES[0], 
-        
         origenProformaInfo: initialData.origenProformaInfo || initialData.proformaNumber || initialData.numero || '',
-        
         productos: initialData.productos || initialData.items || [],
-        
         fechaEntrega: calculatedFechaEntrega,
-        
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
         aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true,
-
-        anticipo: savedAnticipo,
-        formaPagoAnticipo: savedPaymentMethod,
-        referenciaPago: savedReference,
-        notaAnticipo: initialData.notaAnticipo || '',
-        creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
-        
-        retencion: retentionVal,
-        retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
-
-        formaPagoSaldo: finData.formaPagoSaldo || 'No aplica',
-        creditoVenceSaldo: finData.creditoVenceSaldo || '',
-        notaSaldo: finData.notaSaldo || '',
-
-        imagenes: initialData.imagenes || [],
-        notas: initialData.notas || '',
-        descuentoPorcentaje: savedPercent,
-        ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage
+        anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
+        retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
+        formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
+        imagenes: initialData.imagenes || [], notas: initialData.notas || '', descuentoPorcentaje: savedPercent, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage
       }));
       
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
@@ -296,47 +237,36 @@ const OrderForm = ({
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ descripcion: '', precio: 0, cantidad: 0 }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 }) }));
     }
   }, []);
 
   useEffect(() => {
     const subtotal = formData.productos.reduce((sum, p) => {
-      if (!p.descripcion) return sum;
-      return sum + ((parseFloat(p.cantidad) || 0) * (parseFloat(p.precio || p.precioUnitario) || 0));
+      if (!p.nombre && !p.descripcion) return sum;
+      return sum + ((parseFloat(p.cantidad) || 0) * (parseFloat(p.precio !== undefined ? p.precio : p.precioUnitario) || 0));
     }, 0);
 
     const descuentoVal = subtotal * (formData.descuentoPorcentaje / 100);
     const baseImponible = subtotal - descuentoVal;
-    
     const tasaIva = formData.ivaPercentage / 100;
     const iva = formData.aplicarIva ? baseImponible * tasaIva : 0;
     const total = baseImponible + iva;
 
     let retencionValor = 0;
-    if (applyRetention) {
-        retencionValor = baseImponible * (formData.retentionPercent / 100);
-    }
+    if (applyRetention) { retencionValor = baseImponible * (formData.retentionPercent / 100); }
 
     let anticipoCalculado = parseFloat(formData.anticipo) || 0;
-    
     if (paymentMode === 'full') {
         anticipoCalculado = total - retencionValor;
-        if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) {
-             setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : '');
-        }
+        if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : ''); }
     }
 
     const saldoPendiente = total - anticipoCalculado - retencionValor;
-
     setFinancials({ subtotal, descuentoVal, baseImponible, iva, total, saldoPendiente });
     
-    if (document.activeElement.name !== 'discountValInput') {
-        setLocalDiscountVal(descuentoVal > 0 ? descuentoVal.toFixed(2) : '');
-    }
-    if (document.activeElement.name !== 'discountPercentInput') {
-        setLocalDiscountPercent(formData.descuentoPorcentaje > 0 ? Math.round(formData.descuentoPorcentaje).toString() : '');
-    }
+    if (document.activeElement.name !== 'discountValInput') { setLocalDiscountVal(descuentoVal > 0 ? descuentoVal.toFixed(2) : ''); }
+    if (document.activeElement.name !== 'discountPercentInput') { setLocalDiscountPercent(formData.descuentoPorcentaje > 0 ? Math.round(formData.descuentoPorcentaje).toString() : ''); }
 
     setFormData(prev => {
         if (prev.retencion !== retencionValor || (paymentMode === 'full' && prev.anticipo !== anticipoCalculado)) {
@@ -384,26 +314,85 @@ const OrderForm = ({
       }
   };
 
+  // 🔥 LÓGICA DE PRODUCTOS SEPARADOS 🔥
+  const handleCatalogSelect = (item) => {
+    const minQty = item.venta_minima || 1;
+    let currentPrice = Number(item.precio) || 0;
+    
+    if (item.precios_escalonados && item.precios_escalonados.length > 0) {
+        const sorted = [...item.precios_escalonados].sort((a,b) => b.cantidad - a.cantidad);
+        const tier = sorted.find(t => minQty >= t.cantidad);
+        if (tier) currentPrice = tier.precio;
+    }
+
+    setFormData(prev => {
+        const newProducts = [...prev.productos];
+        const emptyIndex = newProducts.findIndex(p => !p.nombre && !p.descripcion);
+
+        const newProduct = {
+            cantidad: minQty,
+            venta_minima: minQty,
+            nombre: item.nombre,
+            descripcion: item.descripcion || '',
+            observaciones: item.observaciones || '',
+            precio: currentPrice,
+            precioBaseOriginal: Number(item.precio) || 0,
+            precios_escalonados: item.precios_escalonados || [],
+            estado_prod: 'PENDIENTE',
+            total: currentPrice * minQty
+        };
+
+        if (emptyIndex !== -1) {
+            newProducts[emptyIndex] = newProduct;
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+        } else {
+            newProducts.push(newProduct);
+            newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+        }
+        return { ...prev, productos: newProducts };
+    });
+    
+    setIsCatalogOpen(false);
+    toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
+  };
+
   const handleProductSearchRequest = async (index, value) => {
-      handleProductChange(index, 'descripcion', value);
-      
+      handleProductChange(index, 'nombre', value);
       if (value.trim().length < 2) {
           setProductSuggestions([]);
           setActiveProductSearchRow(null);
           return;
       }
-      
       setActiveProductSearchRow(index);
       const { data } = await supabase.from('catalogo_productos').select('*').ilike('nombre', `%${value}%`).limit(8);
       setProductSuggestions(data || []);
   };
 
   const handleSelectProductSuggestion = (index, product) => {
-      const desc = product.nombre + (product.descripcion ? ` - ${product.descripcion}` : '');
+      const minQty = product.venta_minima || 1;
+      let currentPrice = Number(product.precio) || 0;
+      
+      if (product.precios_escalonados && product.precios_escalonados.length > 0) {
+          const sorted = [...product.precios_escalonados].sort((a,b) => b.cantidad - a.cantidad);
+          const tier = sorted.find(t => minQty >= t.cantidad);
+          if (tier) currentPrice = tier.precio;
+      }
+
       setFormData(prev => {
           const newProducts = [...prev.productos];
-          newProducts[index] = { ...newProducts[index], descripcion: desc, precio: product.precio };
-          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
+          newProducts[index] = { 
+              ...newProducts[index], 
+              nombre: product.nombre,
+              descripcion: product.descripcion || '',
+              observaciones: product.observaciones || '',
+              precio: currentPrice,
+              precioBaseOriginal: Number(product.precio) || 0,
+              precios_escalonados: product.precios_escalonados || [],
+              venta_minima: minQty,
+              cantidad: minQty,
+              total: minQty * currentPrice
+          };
+          if (index === newProducts.length - 1) newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
@@ -414,9 +403,47 @@ const OrderForm = ({
     setFormData(prev => {
         const newProducts = [...prev.productos];
         newProducts[index] = { ...newProducts[index], [field]: value };
-        if (index === newProducts.length - 1 && value !== '') newProducts.push({ descripcion: '', precio: 0, cantidad: 0 });
+        
+        if (field === 'cantidad') {
+            const item = newProducts[index];
+            const qty = Number(value) || 0;
+            
+            if (item.precios_escalonados && item.precios_escalonados.length > 0) {
+                const sortedTiers = [...item.precios_escalonados].sort((a, b) => b.cantidad - a.cantidad);
+                const applicableTier = sortedTiers.find(t => qty >= t.cantidad);
+                
+                if (applicableTier) {
+                    newProducts[index].precio = applicableTier.precio;
+                } else {
+                    newProducts[index].precio = item.precioBaseOriginal || item.precio;
+                }
+            }
+        }
+
+        if (field === 'cantidad' || field === 'precio') {
+            const qty = Number(newProducts[index].cantidad) || 0;
+            const price = Number(newProducts[index].precio) || 0;
+            newProducts[index].total = qty * price;
+        }
+
+        if (field === 'nombre' && index === newProducts.length - 1 && value !== '') {
+            newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+        }
+
         return { ...prev, productos: newProducts };
     });
+  };
+
+  const handleQuantityBlur = (index, value) => {
+      const item = formData.productos[index];
+      if (!item.nombre && !item.descripcion) return;
+      const min = item.venta_minima || 1;
+      const qty = Number(value);
+
+      if (qty > 0 && qty < min) {
+          toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
+          handleProductChange(index, 'cantidad', min);
+      }
   };
 
   const handleRemoveProductRow = (index) => {
@@ -500,7 +527,6 @@ const OrderForm = ({
     }
   };
 
-  // --- SUBMIT ---
   const handleSubmit = async (e) => {
     e.preventDefault();
     setLoading(true);
@@ -509,7 +535,7 @@ const OrderForm = ({
       toast({ title: "⚠️ Falta Cliente", variant: "destructive" });
       setLoading(false); return;
     }
-    const validProducts = formData.productos.filter(p => p.descripcion && p.descripcion.trim() !== '');
+    const validProducts = formData.productos.filter(p => p.nombre || p.descripcion);
     if (validProducts.length === 0) {
       toast({ title: "⚠️ Sin productos", variant: "destructive" });
       setLoading(false); return;
@@ -600,7 +626,6 @@ const OrderForm = ({
     return 'Automático'; 
   };
 
-  // 🔥 Permitir anular a CUALQUIER usuario, siempre que la orden no esté ya anulada 🔥
   const canCancelOrder = initialData && initialData.id && initialData.status !== 'ANULADA';
 
   return (
@@ -692,34 +717,42 @@ const OrderForm = ({
           </div>
 
           <div className="space-y-2">
-             <div className="text-xs text-slate-500 italic">Producciones</div>
+             <div className="flex justify-between items-center mb-1">
+                 <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
+                 <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
+                     <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
+                 </Button>
+             </div>
+             
+             {/* 🔥 TABLA REDISEÑADA: DESCRIPCIÓN Y OBSERVACIONES SEPARADAS 🔥 */}
              <div className="border border-slate-300 rounded-sm overflow-hidden">
                 <table className="w-full text-sm">
                    <thead className="bg-[#004080] text-white text-xs">
                       <tr>
-                         <th className="py-1 px-2 text-left w-10">#</th>
-                         <th className="py-1 px-2 text-left">Items a Producir</th>
-                         <th className="py-1 px-2 text-right w-32">Unitario</th>
-                         <th className="py-1 px-2 text-center w-24">Cantidad</th>
-                         <th className="py-1 px-2 text-right w-32">Total</th>
+                         <th className="py-2 px-2 text-left w-10">#</th>
+                         <th className="py-2 px-2 text-left">Producto y Detalles</th>
+                         <th className="py-2 px-2 text-left w-64">Observaciones / Notas</th>
+                         <th className="py-2 px-2 text-right w-24">Unitario</th>
+                         <th className="py-2 px-2 text-center w-20">Cant.</th>
+                         <th className="py-2 px-2 text-right w-24">Total</th>
                          <th className="w-8"></th>
                       </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
-                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(row.precio !== undefined ? row.precio : (row.precioUnitario || 0))||0);
+                        const currentPrice = row.precio !== undefined ? row.precio : (row.precioUnitario || 0);
+                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(currentPrice)||0);
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
-                             <td className="py-1 px-2 text-slate-400 text-xs text-center">{idx + 1}</td>
+                             <td className="py-2 px-2 text-slate-400 text-xs text-center align-top pt-4">{idx + 1}</td>
                              
-                             <td className="py-1 px-2 relative">
-                                <input 
-                                    type="text" 
-                                    className="w-full border-none bg-transparent focus:ring-0 text-sm p-0 placeholder-slate-300" 
-                                    placeholder={idx === formData.productos.length - 1 ? "Buscar producto o escribir..." : ""} 
-                                    value={row.descripcion} 
+                             <td className="py-2 px-2 relative align-top">
+                                <Input 
+                                    className="h-8 w-full font-bold text-xs mb-1" 
+                                    placeholder={idx === formData.productos.length - 1 ? "Buscar producto o escribir..." : "Nombre producto"} 
+                                    value={row.nombre || row.descripcion} // Fallback para compatibilidad
                                     onChange={e => handleProductSearchRequest(idx, e.target.value)}
-                                    onFocus={() => { if(row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
+                                    onFocus={() => { if((row.nombre||row.descripcion)?.length >= 2) handleProductSearchRequest(idx, row.nombre||row.descripcion); }}
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                                     readOnly={isReadOnly}
                                 />
@@ -740,20 +773,50 @@ const OrderForm = ({
                                         ))}
                                     </div>
                                 )}
+                                <textarea 
+                                    className="w-full border border-slate-200 rounded p-1.5 text-[11px] outline-none focus:border-blue-500 resize-y min-h-[46px]" 
+                                    placeholder="Descripción técnica (Material, tamaño...)" 
+                                    value={row.nombre ? row.descripcion : ''} // Solo muestra si hay nombre separado
+                                    onChange={e => handleProductChange(idx, 'descripcion', e.target.value)}
+                                    readOnly={isReadOnly}
+                                />
                              </td>
 
-                             <td className="py-1 px-2"><input type="number" step="0.01" className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0" value={row.precio !== undefined ? row.precio : (row.precioUnitario || '')} onChange={e => handleProductChange(idx, 'precio', e.target.value)} readOnly={isReadOnly}/></td>
-                             <td className="py-1 px-2"><input type="number" step="1" className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0" value={row.cantidad||''} onChange={e => handleProductChange(idx, 'cantidad', e.target.value)} readOnly={isReadOnly}/></td>
-                             <td className="py-1 px-2 text-right font-medium text-slate-700">$ {rowTotal.toFixed(2)}</td>
-                             <td className="py-1 px-1 text-center">{!isReadOnly && row.descripcion && (<button type="button" onClick={() => handleRemoveProductRow(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-3 w-3" /></button>)}</td>
+                             {/* 🔥 COLUMNA NUEVA DE OBSERVACIONES 🔥 */}
+                             <td className="py-2 px-2 align-top">
+                                 <textarea 
+                                    className="w-full border border-slate-200 rounded p-1.5 text-[11px] outline-none focus:border-blue-500 resize-y h-full min-h-[86px]" 
+                                    placeholder="Notas y observaciones (No incluye instalación...)" 
+                                    value={row.observaciones || ''} 
+                                    onChange={e => handleProductChange(idx, 'observaciones', e.target.value)}
+                                    readOnly={isReadOnly}
+                                />
+                             </td>
+
+                             <td className="py-2 px-2 align-top pt-4"><input type="number" step="0.01" className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0" value={currentPrice || ''} onChange={e => handleProductChange(idx, 'precio', e.target.value)} readOnly={isReadOnly}/></td>
+                             
+                             <td className="py-2 px-2 relative align-top pt-4">
+                                 <input 
+                                    type="number" step="1" 
+                                    className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold" 
+                                    value={row.cantidad||''} 
+                                    onChange={e => handleProductChange(idx, 'cantidad', e.target.value)} 
+                                    onBlur={e => handleQuantityBlur(idx, e.target.value)}
+                                    readOnly={isReadOnly}
+                                 />
+                                 {row.venta_minima > 1 && <span className="absolute -bottom-1 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                             </td>
+                             
+                             <td className="py-2 px-2 text-right font-medium text-slate-700 align-top pt-4">$ {rowTotal.toFixed(2)}</td>
+                             <td className="py-2 px-1 text-center align-top pt-4">{!isReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => handleRemoveProductRow(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
                           </tr>
                         );
                       })}
                    </tbody>
                    <tfoot className="bg-slate-100 font-medium text-slate-700 border-t border-slate-300 text-xs">
-                      <tr><td colSpan="4" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
+                      <tr><td colSpan="5" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
                       <tr>
-                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
+                         <td colSpan="5" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span className="text-slate-500">Dscto ($)</span>
                             <input name="discountValInput" type="number" step="0.01" className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white" placeholder="0.00" value={localDiscountVal} onChange={e => setLocalDiscountVal(e.target.value)} onBlur={commitDiscountValue} onKeyDown={(e) => handleKeyDown(e, commitDiscountValue)} readOnly={isReadOnly} />
                             <span className="text-slate-500">(%)</span>
@@ -762,14 +825,14 @@ const OrderForm = ({
                          <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuentoVal.toFixed(2)}</td><td></td>
                       </tr>
                       <tr>
-                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
+                         <td colSpan="5" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
                             <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isReadOnly && mode !== 'payment_only'}/>
                             <label htmlFor="iva-check" className="cursor-pointer flex items-center gap-1">IVA {isAdmin ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
                       <tr className="bg-slate-200 font-bold text-slate-900 border-t border-slate-300">
-                         <td colSpan="4" className="text-right py-2 px-2">TOTAL</td><td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
+                         <td colSpan="5" className="text-right py-2 px-2">TOTAL</td><td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
                       </tr>
                    </tfoot>
                 </table>
@@ -869,13 +932,12 @@ const OrderForm = ({
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
              />
-             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Observaciones:</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isReadOnly} /></div>
+             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isReadOnly} /></div>
           </div>
         </form>
       </div>
 
       <div className="bg-slate-50 border-t border-slate-300 p-4 flex justify-between items-center gap-3">
-         {/* 🔥 BOTÓN DE ANULAR ORDEN (Sin restricciones de rol, solo que no esté ya anulada) 🔥 */}
          <div>
             {canCancelOrder && (
               <Button type="button" variant="outline" className="border-red-300 text-red-600 hover:bg-red-50 hover:text-red-700 gap-2" onClick={() => setIsCancelModalOpen(true)}>
@@ -883,7 +945,6 @@ const OrderForm = ({
               </Button>
             )}
          </div>
-
          <div className="flex gap-3">
              <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
              <Button type="submit" form="orderForm" disabled={loading} className="bg-[#004080] hover:bg-blue-900 text-white px-8 shadow-md">
@@ -891,6 +952,44 @@ const OrderForm = ({
              </Button>
          </div>
       </div>
+
+      {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}
+      {isCatalogOpen && (
+        <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
+            <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
+                <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5"/> Catálogo de Precios</h3>
+                <Button variant="ghost" size="icon" onClick={() => setIsCatalogOpen(false)} className="hover:bg-slate-700"><X className="h-5 w-5" /></Button>
+            </div>
+            <div className="p-4 border-b border-slate-200 shrink-0 bg-slate-50">
+                <div className="relative">
+                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                    <Input autoFocus placeholder="Buscar por código, nombre o categoría..." className="pl-9 bg-white" value={searchCatalog} onChange={e => setSearchCatalog(e.target.value)} />
+                </div>
+            </div>
+            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
+                {catalogItems.filter(item => 
+                    (item.nombre || '').toLowerCase().includes(searchCatalog.toLowerCase()) || 
+                    (item.codigo || '').toLowerCase().includes(searchCatalog.toLowerCase()) ||
+                    (item.categoria || '').toLowerCase().includes(searchCatalog.toLowerCase())
+                ).map(item => (
+                    <div key={item.id} className="bg-slate-50 border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-400 hover:shadow-md cursor-pointer transition-all group" onClick={() => handleCatalogSelect(item)}>
+                        <div className="flex justify-between items-start mb-1">
+                            <span className="font-bold text-sm text-slate-800 group-hover:text-blue-700 uppercase">{item.nombre}</span>
+                            <span className="font-bold text-green-700">${Number(item.precio).toFixed(2)}</span>
+                        </div>
+                        <div className="text-[10px] font-bold text-purple-600 mb-1">{item.categoria}</div>
+                        <div className="text-xs text-slate-500 line-clamp-2">{item.descripcion || item.observaciones}</div>
+                        
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {item.venta_minima > 1 && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">Mínimo: {item.venta_minima}</span>}
+                            {item.precios_escalonados && item.precios_escalonados.length > 0 && <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Descuentos por volumen</span>}
+                        </div>
+                    </div>
+                ))}
+                {catalogItems.length === 0 && <div className="text-center py-10 text-slate-400">Catálogo vacío. Agrega productos en el módulo de Catálogo.</div>}
+            </div>
+        </div>
+      )}
 
       {/* MODAL PARA CREAR NUEVO CLIENTE */}
       {showNewClientModal && (
