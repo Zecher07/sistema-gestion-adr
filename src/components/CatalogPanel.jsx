@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Upload, FileText, DollarSign, ShieldAlert, Filter } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -17,7 +17,6 @@ const CatalogPanel = ({ user }) => {
   const [searchInput, setSearchInput] = useState('');
   const [activeSearchTerm, setActiveSearchTerm] = useState('');
   
-  // 🔥 NUEVO ESTADO PARA EL FILTRO DE CATEGORÍAS 🔥
   const [selectedCategories, setSelectedCategories] = useState([]);
 
   const canEditCatalog = user?.role === 'Administrador' || user?.role === 'Producción';
@@ -41,7 +40,7 @@ const CatalogPanel = ({ user }) => {
     try {
       let query = supabase.from('catalogo_productos').select('*');
       if (searchTerm) query = query.or(`nombre.ilike.%${searchTerm}%,codigo.ilike.%${searchTerm}%`);
-      query = query.order('categoria').order('nombre').limit(1000); // Aumenté el límite para ver bien el catálogo
+      query = query.order('categoria').order('nombre').limit(1000);
 
       const { data, error } = await query;
       if (error) throw error;
@@ -53,15 +52,14 @@ const CatalogPanel = ({ user }) => {
 
   const handleSearchKeyDown = (e) => { if (e.key === 'Enter') setActiveSearchTerm(searchInput); };
 
-  // 🔥 LÓGICA PARA OBTENER LAS CATEGORÍAS ÚNICAS Y FILTRAR 🔥
-  const uniqueCategories = useMemo(() => {
+  const uniqueCategories = React.useMemo(() => {
       const categories = items.map(item => item.categoria).filter(Boolean);
       return [...new Set(categories)].sort();
   }, [items]);
 
-  const filteredItems = useMemo(() => {
+  const filteredItems = React.useMemo(() => {
       return items.filter(item => {
-          if (selectedCategories.length === 0) return true; // Si no hay nada seleccionado, muestra todo
+          if (selectedCategories.length === 0) return true;
           return selectedCategories.includes(item.categoria);
       });
   }, [items, selectedCategories]);
@@ -119,8 +117,8 @@ const CatalogPanel = ({ user }) => {
 
       setSaving(true);
       try {
-          const cleanedTiers = formData.precios_escalonados.filter(t => Number(t.cantidad) > 1 && Number(t.precio) > 0);
-          const cleanedDistTiers = formData.precios_distribuidor.filter(t => Number(t.cantidad) > 1 && Number(t.precio) > 0);
+          const cleanedTiers = formData.precios_escalonados.filter(t => Number(t.cantidad) > 0 && Number(t.precio) > 0);
+          const cleanedDistTiers = formData.precios_distribuidor.filter(t => Number(t.cantidad) > 0 && Number(t.precio) > 0);
           
           const finalData = { 
               codigo: formData.codigo, categoria: formData.categoria, nombre: formData.nombre, 
@@ -156,12 +154,6 @@ const CatalogPanel = ({ user }) => {
       } catch (error) { toast({ title: "Error", variant: "destructive" }); }
   };
 
-  const parseCSVLine = (text) => { 
-      const delimiter = text.includes(';') ? ';' : ',';
-      const re = new RegExp(`\\${delimiter}(?=(?:(?:[^"]*"){2})*[^"]*$)`);
-      return text.split(re).map(val => val.replace(/^"|"$/g, '').trim()); 
-  };
-  
   const handleCSVUpload = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -219,7 +211,7 @@ const CatalogPanel = ({ user }) => {
                       let precios_escalonados = [];
                       cantIndexes.forEach(cantIdx => {
                           let cantStr = row[cantIdx] ? String(row[cantIdx]).trim() : '';
-                          let cantVal = parseInt(cantStr.replace(/[^0-9]/g, ''));
+                          let cantVal = parseFloat(cantStr.replace(/,/g, '.').replace(/[^0-9.]/g, ''));
                           if (isNaN(cantVal) || cantVal <= 0) cantVal = 1;
                           
                           const rawPrecio = row[cantIdx + 1] ? String(row[cantIdx + 1]) : '';
@@ -237,7 +229,7 @@ const CatalogPanel = ({ user }) => {
                       let precios_distribuidor = [];
                       cantDistIndexes.forEach(cantIdx => {
                           let cantStr = row[cantIdx] ? String(row[cantIdx]).trim() : '';
-                          let cantVal = parseInt(cantStr.replace(/[^0-9]/g, ''));
+                          let cantVal = parseFloat(cantStr.replace(/,/g, '.').replace(/[^0-9.]/g, ''));
                           if (isNaN(cantVal) || cantVal <= 0) cantVal = 1;
                           
                           const rawPrecio = row[cantIdx + 1] ? String(row[cantIdx + 1]) : '';
@@ -314,7 +306,6 @@ const CatalogPanel = ({ user }) => {
                     <div className="flex items-center gap-4"><Button variant="ghost" size="icon" onClick={() => fetchCatalog(activeSearchTerm)} disabled={loading}><RefreshCw className={`h-4 w-4 text-slate-500 ${loading ? 'animate-spin' : ''}`}/></Button></div>
                 </div>
 
-                {/* 🔥 BOTONES DE FILTRO POR CATEGORÍAS 🔥 */}
                 {uniqueCategories.length > 0 && (
                     <div className="px-4 pb-4 border-b border-slate-200 bg-slate-50 flex flex-wrap gap-2 items-center">
                         <span className="text-xs font-bold text-slate-500 flex items-center mr-1"><Filter className="h-3 w-3 mr-1"/> Filtros:</span>
@@ -369,17 +360,16 @@ const CatalogPanel = ({ user }) => {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 align-top text-center">
-                                            <span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100">{item.venta_minima || 1} und</span>
+                                            <span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100">{item.venta_minima || 1}</span>
                                         </td>
                                         
-                                        {/* COLUMNA DE PRECIOS PÚBLICO */}
                                         <td className="px-4 py-3 text-right align-top bg-slate-50/50">
                                             <div className="font-bold text-green-700 mb-1 border-b border-slate-200 pb-1">Base: ${Number(item.precio).toFixed(2)}</div>
                                             {item.precios_escalonados && item.precios_escalonados.length > 0 && (
                                                 <div className="space-y-1 text-[10px] rounded mt-1">
                                                     {item.precios_escalonados.sort((a,b) => a.cantidad - b.cantidad).map((tier, idx) => (
                                                         <div key={idx} className="flex justify-between items-center text-slate-600 border-b border-slate-100 pb-1 last:border-0 last:pb-0">
-                                                            <span className="font-medium">≥ {tier.cantidad} und</span>
+                                                            <span className="font-medium">≥ {tier.cantidad}</span>
                                                             <span className="font-bold text-slate-800">${Number(tier.precio).toFixed(2)}</span>
                                                         </div>
                                                     ))}
@@ -387,7 +377,6 @@ const CatalogPanel = ({ user }) => {
                                             )}
                                         </td>
                                         
-                                        {/* COLUMNA DE PRECIOS DISTRIBUIDOR */}
                                         <td className="px-4 py-3 text-right align-top bg-blue-50/30 border-l border-slate-100">
                                             {Number(item.precio_distribuidor) > 0 || (item.precios_distribuidor && item.precios_distribuidor.length > 0) ? (
                                                 <>
@@ -396,7 +385,7 @@ const CatalogPanel = ({ user }) => {
                                                         <div className="space-y-1 text-[10px] rounded mt-1">
                                                             {item.precios_distribuidor.sort((a,b) => a.cantidad - b.cantidad).map((tier, idx) => (
                                                                 <div key={idx} className="flex justify-between items-center text-blue-800 border-b border-blue-100 pb-1 last:border-0 last:pb-0">
-                                                                    <span className="font-medium">≥ {tier.cantidad} und</span>
+                                                                    <span className="font-medium">≥ {tier.cantidad}</span>
                                                                     <span className="font-bold">${Number(tier.precio).toFixed(2)}</span>
                                                                 </div>
                                                             ))}
@@ -425,7 +414,6 @@ const CatalogPanel = ({ user }) => {
             </CardContent>
         </Card>
 
-        {/* MODAL DE EDICIÓN / CREACIÓN DE PRODUCTO */}
         {isModalOpen && !isReadOnly && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
                 <div className="bg-white w-full max-w-4xl overflow-hidden animate-in zoom-in-95 flex flex-col max-h-[95vh] rounded-xl shadow-2xl">
@@ -449,7 +437,6 @@ const CatalogPanel = ({ user }) => {
                             </div>
                         </div>
 
-                        {/* SECCIÓN DE PRECIOS */}
                         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
                             <div className="flex items-center justify-between border-b border-slate-100 pb-3">
                                 <h4 className="font-bold text-slate-700 flex items-center gap-2">Configuración de Precios</h4>
@@ -457,7 +444,8 @@ const CatalogPanel = ({ user }) => {
                                 <div className="flex items-center gap-4">
                                     <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-md border border-red-100">
                                         <label className="text-xs font-bold text-red-700 flex items-center gap-1"><ShieldAlert className="h-3 w-3"/> Venta Mínima:</label>
-                                        <Input type="number" min="1" value={formData.venta_minima} onChange={e => setFormData({...formData, venta_minima: Number(e.target.value)})} className="border-red-300 font-bold text-center w-16 h-7 text-xs bg-white" />
+                                        {/* 🔥 MODIFICADO PARA ACEPTAR DECIMALES EN LA UI 🔥 */}
+                                        <Input type="number" step="0.01" min="0.01" value={formData.venta_minima} onChange={e => setFormData({...formData, venta_minima: Number(e.target.value)})} className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" />
                                     </div>
                                     
                                     <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-md border border-blue-100">
@@ -469,7 +457,6 @@ const CatalogPanel = ({ user }) => {
 
                             <div className={`grid grid-cols-1 ${formData.tienePrecioDistribuidor ? 'md:grid-cols-2' : ''} gap-6 items-start`}>
                                 
-                                {/* COLUMNA 1: PÚBLICO GENERAL */}
                                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
                                     <div className="flex items-center gap-2 mb-4 bg-green-50 p-3 rounded-md border border-green-200">
                                         <div className="flex-1">
@@ -486,7 +473,8 @@ const CatalogPanel = ({ user }) => {
                                                 {formData.precios_escalonados.map((tier, index) => (
                                                     <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-slate-200">
                                                         <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                        <Input type="number" min="2" value={tier.cantidad} onChange={e => updateTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
+                                                        {/* 🔥 AHORA ACEPTA DECIMALES (0.5) 🔥 */}
+                                                        <Input type="number" step="0.01" min="0.01" value={tier.cantidad} onChange={e => updateTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
                                                         <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
                                                         <span className="text-[10px] text-green-700 font-bold ml-auto mr-1">Baja a: $</span>
                                                         <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateTier(index, 'precio', e.target.value)} className="h-8 text-xs border-green-300 bg-green-50 font-bold text-green-700 w-24 text-right"/>
@@ -499,7 +487,6 @@ const CatalogPanel = ({ user }) => {
                                     </div>
                                 </div>
 
-                                {/* COLUMNA 2: DISTRIBUIDOR */}
                                 {formData.tienePrecioDistribuidor && (
                                     <div className="bg-blue-50/50 p-4 rounded-lg border border-blue-200 animate-in fade-in slide-in-from-right-4">
                                         <div className="flex items-center gap-2 mb-4 bg-blue-100 p-3 rounded-md border border-blue-300">
@@ -517,7 +504,8 @@ const CatalogPanel = ({ user }) => {
                                                     {formData.precios_distribuidor.map((tier, index) => (
                                                         <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-blue-200">
                                                             <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                            <Input type="number" min="2" value={tier.cantidad} onChange={e => updateDistTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
+                                                            {/* 🔥 AHORA ACEPTA DECIMALES (0.5) 🔥 */}
+                                                            <Input type="number" step="0.01" min="0.01" value={tier.cantidad} onChange={e => updateDistTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
                                                             <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
                                                             <span className="text-[10px] text-blue-700 font-bold ml-auto mr-1">Baja a: $</span>
                                                             <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateDistTier(index, 'precio', e.target.value)} className="h-8 text-xs border-blue-300 bg-blue-50 font-bold text-blue-800 w-24 text-right"/>
