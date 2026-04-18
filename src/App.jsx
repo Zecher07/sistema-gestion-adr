@@ -5,7 +5,6 @@ import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
 
-// --- IMPORTACIONES ---
 import UserManagement from '@/components/UserManagement'; 
 import RolesPermissions from '@/components/RolesPermissions'; 
 import Login from '@/components/Login';
@@ -97,7 +96,10 @@ function App() {
           setStaffUsers(profilesData.map(p => ({ id: p.id, name: p.full_name, role: p.role })));
       }
 
-      let ordersQuery = supabase.from('ordenes').select('*').order('created_at', { ascending: false });
+      // 🔥 SOLUCIÓN DEL EGRESS (LÍMITE DE 5GB): NO DESCARGAMOS LA COLUMNA DE IMÁGENES 🔥
+      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, abonos, motivoAnulacion';
+      
+      let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
       
       if (currentUser.role === 'Vendedor') {
           ordersQuery = ordersQuery.eq('vendedor', currentUser.name);
@@ -236,9 +238,7 @@ function App() {
     };
   }, [user, toast]); 
 
-  const handleClearEvent = (id) => {
-      setRealtimeEvents(prev => prev.filter(e => e.id !== id));
-  };
+  const handleClearEvent = (id) => { setRealtimeEvents(prev => prev.filter(e => e.id !== id)); };
 
   const fetchUserPermissions = async (role) => {
     if (role === 'Administrador') return; 
@@ -278,34 +278,15 @@ function App() {
 
   const handleConvertProformaToOrder = (proforma) => {
       let finData = proforma.financials || {};
-      if (typeof finData === 'string') {
-          try { finData = JSON.parse(finData); } catch(e) { finData = {}; }
-      }
+      if (typeof finData === 'string') { try { finData = JSON.parse(finData); } catch(e) { finData = {}; } }
 
       const prefilledOrderData = {
-          cliente_nombre: proforma.cliente_nombre,
-          cliente: proforma.cliente_nombre,
-          ruc: proforma.cliente_identificacion, 
-          productos: (proforma.items || []).map(item => ({
-              cantidad: item.cantidad,
-              descripcion: item.descripcion,
-              precio: item.precioUnitario, 
-              total: item.total
-          })),
-          financials: {
-              subtotal: proforma.subtotal,
-              iva: proforma.iva,
-              total: proforma.total,
-              ivaPercentage: proforma.iva_percentage || 15,
-              saldo: proforma.total,
-              diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0
-          },
+          cliente_nombre: proforma.cliente_nombre, cliente: proforma.cliente_nombre, ruc: proforma.cliente_identificacion, 
+          productos: (proforma.items || []).map(item => ({ cantidad: item.cantidad, descripcion: item.descripcion, precio: item.precioUnitario, total: item.total })),
+          financials: { subtotal: proforma.subtotal, iva: proforma.iva, total: proforma.total, ivaPercentage: proforma.iva_percentage || 15, saldo: proforma.total, diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0 },
           dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0,
-          tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', 
-          origenProformaInfo: proforma.proformaNumber || proforma.numero || '', 
-          aplicarIva: proforma.iva > 0,
-          notas: proforma.notas,
-          vendedor: proforma.responsable_nombre || user.name,
+          tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', origenProformaInfo: proforma.proformaNumber || proforma.numero || '', 
+          aplicarIva: proforma.iva > 0, notas: proforma.notas, vendedor: proforma.responsable_nombre || user.name,
       };
       
       setProformaToConvertId(proforma.id);
@@ -323,24 +304,16 @@ function App() {
       const currentProducts = order.productos || order.products || [];
       const updatedProducts = [...currentProducts];
       updatedProducts[idx] = { ...updatedProducts[idx], estado_prod: newState };
-      if (viewOrder && viewOrder.id === order.id) {
-          setViewOrder({ ...viewOrder, productos: updatedProducts });
-      }
+      if (viewOrder && viewOrder.id === order.id) { setViewOrder({ ...viewOrder, productos: updatedProducts }); }
 
       try {
           const { error } = await supabase.from('ordenes').update({ productos: updatedProducts }).eq('id', order.id);
           if (error) throw error;
-      } catch (error) {
-          console.error(error);
-          toast({ title: "Error", description: "No se guardó el estado de producción", variant: "destructive" });
-      }
+      } catch (error) { toast({ title: "Error", description: "No se guardó el estado de producción", variant: "destructive" }); }
   };
   const handleAdvanceWorkflow = async (order) => {
     const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
     const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
-
-    const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
-    const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
     const flow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
     const currentStatus = order.status;
@@ -352,10 +325,7 @@ function App() {
             const { error } = await supabase.from('ordenes').update({ status: nextStatus }).eq('id', order.id);
             if(error) throw error;
             toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` });
-        } catch (error) {
-            console.error("Error actualizando estado:", error);
-            toast({ title: "Error", description: "No se pudo actualizar el estado.", variant: "destructive" });
-        }
+        } catch (error) { toast({ title: "Error", description: "No se pudo actualizar el estado.", variant: "destructive" }); }
     }
   };
 
@@ -368,24 +338,10 @@ function App() {
     if (currentView === 'admin-usuarios') return <UserManagement />;
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
-    
-    // 🔥 AQUÍ ESTÁ LA CORRECCIÓN EXACTA: setShowProformaForm(true) 🔥
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
-    
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
-
-    if (currentView === 'clientes-lista') return (
-        <ClientsPanel 
-            clients={clients} 
-            orders={orders}
-            user={user} 
-            onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }}
-            onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }}
-            onViewOrder={(o) => handleViewOrder(o, 'clientes')}
-        />
-    );
-
+    if (currentView === 'clientes-lista') return ( <ClientsPanel clients={clients} orders={orders} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }} onViewOrder={(o) => handleViewOrder(o, 'clientes')} /> );
     if (currentView === 'configuracion') return <AnulationConfig />;
     if (currentView === 'vales') return <ValesCajaPanel user={user} />;
     if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
@@ -399,19 +355,7 @@ function App() {
        return (
           <div className="space-y-6 animate-in fade-in">
             {(user.role === 'Administrador' || user.role === 'Vendedor') && <Stats orders={orders} />}
-            <OrdersPanel
-              orders={filtered}
-              user={user}
-              onUpdateStatus={() => {}} 
-              onDeleteOrder={async (id) => { await supabase.from('ordenes').delete().eq('id', id); }}
-              onEditOrder={setEditingOrder}
-              onCloneOrder={setCloningOrder}
-              onPaymentOrder={setPaymentOrder}
-              onCreateOrder={() => setShowForm(true)}
-              onViewOrder={(o) => handleViewOrder(o, null)} 
-              currentView={currentView}
-              onAbonoOrder={setAbonoOrder} 
-            />
+            <OrdersPanel orders={filtered} user={user} onUpdateStatus={() => {}} onDeleteOrder={async (id) => { await supabase.from('ordenes').delete().eq('id', id); }} onEditOrder={setEditingOrder} onCloneOrder={setCloningOrder} onPaymentOrder={setPaymentOrder} onCreateOrder={() => setShowForm(true)} onViewOrder={(o) => handleViewOrder(o, null)} currentView={currentView} onAbonoOrder={setAbonoOrder} />
           </div>
        );
     }
@@ -434,105 +378,37 @@ function App() {
     <>
       <div className="min-h-screen bg-slate-50 flex">
         <div className="hidden md:block w-64 flex-shrink-0"><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={handleViewChange} allowedViews={allowedViews} /></div>
-        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3">
-            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} />
-            <button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div>
-        </div>
+        <div className="md:hidden fixed top-0 left-0 right-0 z-30 bg-slate-900 text-white p-4 flex justify-between items-center shadow-md print:hidden"><span className="font-bold">Sistema Producción</span><div className="flex items-center gap-3"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} /><button onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}><Menu className="h-6 w-6" /></button></div></div>
         {isMobileMenuOpen && (<div className="md:hidden fixed inset-0 z-40 bg-black/50" onClick={() => setIsMobileMenuOpen(false)}><div className="w-64 bg-slate-900 h-full shadow-2xl" onClick={e => e.stopPropagation()}><Sidebar user={user} onLogout={handleLogout} currentView={currentView} onViewChange={(view) => { handleViewChange(view); setIsMobileMenuOpen(false); }} allowedViews={allowedViews} /></div></div>)}
-        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4">
-            <Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} />
-            <div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
+        <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} /><div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
           <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
-            <OrderForm 
-                currentUser={user} clients={clients} staffUsers={staffUsers} 
-                onSuccess={handleOrderSuccess} 
-                onCancel={() => { setShowForm(false); setCloningOrder(null); setEditingOrder(null); setProformaToConvertId(null); }} 
-                initialData={editingOrder || cloningOrder} 
-                nextOrderNumber={getNextOrderNumber()} 
-                onCheckAvailability={() => setShowAvailabilityModal(true)} 
-                onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} 
-            />
+            <OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} onSuccess={handleOrderSuccess} onCancel={() => { setShowForm(false); setCloningOrder(null); setEditingOrder(null); setProformaToConvertId(null); }} initialData={editingOrder || cloningOrder} nextOrderNumber={getNextOrderNumber()} onCheckAvailability={() => setShowAvailabilityModal(true)} onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} />
           </div>
         </div>
       )}
 
       {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
       
-      {/* 🔥 MODAL DE CREACIÓN/EDICIÓN DE CLIENTE 🔥 */}
-      {showClientFormModal && (
-        <div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print">
-            <ClientForm 
-                user={user} 
-                clienteAEditar={editingClient} 
-                onSuccess={() => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); }} 
-                onCancel={() => { setShowClientFormModal(false); setEditingClient(null); }} 
-            />
-        </div>
-      )}
+      {showClientFormModal && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print"><ClientForm user={user} clienteAEditar={editingClient} onSuccess={() => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); }} onCancel={() => { setShowClientFormModal(false); setEditingClient(null); }} /></div>)}
       
-      {/* 🔥 AQUÍ ESTÁ EL MODAL DE LA PROFORMA 🔥 */}
-      {(showProformaForm || editingProforma) && (
-        <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4">
-            <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
-                <ProformaForm 
-                    user={user} clients={clients} 
-                    initialData={editingProforma}
-                    onSuccess={() => { setShowProformaForm(false); setEditingProforma(null); fetchAllData(); }} 
-                    onCancel={() => { setShowProformaForm(false); setEditingProforma(null); }} 
-                    nextProformaNumber={getNextProformaNumber()} 
-                    onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} 
-                />
-            </div>
-        </div>
-      )}
+      {(showProformaForm || editingProforma) && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><ProformaForm user={user} clients={clients} initialData={editingProforma} onSuccess={() => { setShowProformaForm(false); setEditingProforma(null); fetchAllData(); }} onCancel={() => { setShowProformaForm(false); setEditingProforma(null); }} nextProformaNumber={getNextProformaNumber()} onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} /></div></div>)}
 
       {showInvoiceForm && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto h-full"><InvoiceForm user={user} initialOrder={initialInvoiceOrder} nextInvoiceNumber={getNextInvoiceNumber()} onSubmit={handleCreateInvoice} onCancel={() => { setShowInvoiceForm(false); setInitialInvoiceOrder(null); }} /></div></div>)}
       
-      {viewProforma && (
-        <ProformaDetailsModal 
-            proforma={viewProforma} 
-            onClose={() => setViewProforma(null)} 
-            onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} 
-            onConvert={(p) => handleConvertProformaToOrder(p)} 
-            user={user} 
-            staffUsers={staffUsers} 
-        />
-      )}
+      {viewProforma && (<ProformaDetailsModal proforma={viewProforma} onClose={() => setViewProforma(null)} onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} onConvert={(p) => handleConvertProformaToOrder(p)} user={user} staffUsers={staffUsers} />)}
       
       {viewInvoice && (<InvoiceDetailsModal invoice={viewInvoice} onClose={() => setViewInvoice(null)} onAnulate={handleAnulateInvoice} onViewOrder={(id) => { const o = orders.find(x => x.id === id || x.orderNumber == id || x.order_number == id); if(o) { setViewInvoice(null); handleViewOrder(o); } }} />)}
       
       {showAvailabilityModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4"><div className="w-full max-w-5xl bg-white h-[85vh] rounded-xl shadow-2xl flex flex-col"><div className="p-4 border-b flex justify-between items-center bg-slate-50 rounded-t-xl"><h3 className="font-bold text-lg">Disponibilidad</h3><Button variant="ghost" size="icon" onClick={() => setShowAvailabilityModal(false)}><X className="h-5 w-5" /></Button></div><div className="flex-1 overflow-hidden p-4"><WorkAreaCalendar orders={orders} onViewOrder={(o) => { setShowAvailabilityModal(false); handleViewOrder(o, 'tasks'); }} /></div></div></div>)}
       
-      <OrderDetailsModal 
-         order={viewOrder} 
-         user={user} 
-         staffUsers={staffUsers} 
-         onClose={() => setViewOrder(null)} 
-         onProductToggle={handleProductToggle} 
-         isTaskView={viewOrderSource === 'tasks'} 
-         onAdvanceWorkflow={handleAdvanceWorkflow} 
-         onArchiveOrder={handleArchiveOrder} 
-         onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} 
-         onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
-         onAnulateOrder={handleAnulateOrder} 
-         canAnulate={user.role === 'Administrador' || canUserAnulate} 
-         canEdit={user.role === 'Administrador' || canUserEdit} 
-         onAbonoOrder={setAbonoOrder}
-      />
+      <OrderDetailsModal order={viewOrder} user={user} staffUsers={staffUsers} onClose={() => setViewOrder(null)} onProductToggle={handleProductToggle} isTaskView={viewOrderSource === 'tasks'} onAdvanceWorkflow={handleAdvanceWorkflow} onArchiveOrder={handleArchiveOrder} onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} onAnulateOrder={handleAnulateOrder} canAnulate={user.role === 'Administrador' || canUserAnulate} canEdit={user.role === 'Administrador' || canUserEdit} onAbonoOrder={setAbonoOrder} />
 
       <div className="relative z-[9999]">
-          {abonoOrder && (
-              <AbonosModal 
-                  order={abonoOrder} 
-                  user={user} 
-                  onClose={() => setAbonoOrder(null)} 
-                  onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} 
-              />
-          )}
+          {abonoOrder && (<AbonosModal order={abonoOrder} user={user} onClose={() => setAbonoOrder(null)} onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} />)}
       </div>
 
       <Toaster />

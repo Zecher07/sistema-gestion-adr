@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/Text';
+import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '../supabaseClient';
 import ClientForm from './ClientForm';
@@ -95,7 +96,7 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
-const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onCheckAvailability, onReloadClients }) => {
+const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
   const isAdmin = currentUser?.role === 'Administrador';
@@ -134,11 +135,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    // 🔥 ESTRUCTURA DEL PRODUCTO ACTUALIZADA 🔥
-    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, completed: false }), 
+    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, completed: false, es_por_metro: false }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
-    descuentoPorcentaje: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: ''
+    descuentoPorcentaje: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', esDistribuidor: false
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
@@ -162,7 +162,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
       let finData = {};
       if (initialData.financials) {
           if (typeof initialData.financials === 'string') {
-              try { finData = JSON.parse(initialData.financials); } catch(e) { console.error(e); }
+              try { finData = JSON.parse(initialData.financials); } catch(e) {}
           } else { finData = initialData.financials; }
       }
 
@@ -217,7 +217,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
-        imagenes: initialData.imagenes || [], notas: initialData.notas || '', descuentoPorcentaje: savedPercent, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage
+        imagenes: initialData.imagenes || [], notas: initialData.notas || '', descuentoPorcentaje: savedPercent, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
+        esDistribuidor: initialData.esDistribuidor || false
       }));
       
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
@@ -237,14 +238,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, es_por_metro: false }) }));
     }
   }, []);
 
   useEffect(() => {
     const subtotal = formData.productos.reduce((sum, p) => {
-      if (!p.nombre && !p.descripcion) return sum;
-      return sum + ((parseFloat(p.cantidad) || 0) * (parseFloat(p.precio !== undefined ? p.precio : p.precioUnitario) || 0));
+      if (!p.descripcion && !p.nombre) return sum;
+      return sum + (Number(p.total) || 0); // 🔥 SUMA EL TOTAL YA CALCULADO PARA RESPETAR EL METRO 🔥
     }, 0);
 
     const descuentoVal = subtotal * (formData.descuentoPorcentaje / 100);
@@ -314,40 +315,68 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
       }
   };
 
-  // 🔥 LÓGICA DE PRODUCTOS SEPARADOS 🔥
+  const getPriceForQty = (qty, item, isDistributorMode) => {
+      if (isDistributorMode && (item.precioDistribuidorBase > 0 || (item.precios_distribuidor && item.precios_distribuidor.length > 0))) {
+          const tiers = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
+          const tier = tiers.find(t => qty >= t.cantidad);
+          if (tier) return tier.precio;
+          return item.precioDistribuidorBase > 0 ? item.precioDistribuidorBase : (item.precioBaseOriginal || 0);
+      } else {
+          const tiers = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
+          const tier = tiers.find(t => qty >= t.cantidad);
+          if (tier) return tier.precio;
+          return item.precioBaseOriginal || 0;
+      }
+  };
+
+  const handleDistribuidorToggle = (checked) => {
+      setFormData(prev => {
+          const newProducts = prev.productos.map(p => {
+              if (!p.descripcion && !p.nombre) return p;
+              const currentQty = Number(p.cantidad) || 0;
+              const newPrice = getPriceForQty(currentQty, p, checked);
+              return { ...p, precio: newPrice, precioUnitario: newPrice, total: p.es_por_metro ? newPrice : currentQty * newPrice };
+          });
+          return { ...prev, esDistribuidor: checked, productos: newProducts };
+      });
+  };
+
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima || 1;
-    let currentPrice = Number(item.precio) || 0;
-    
-    if (item.precios_escalonados && item.precios_escalonados.length > 0) {
-        const sorted = [...item.precios_escalonados].sort((a,b) => b.cantidad - a.cantidad);
-        const tier = sorted.find(t => minQty >= t.cantidad);
-        if (tier) currentPrice = tier.precio;
-    }
+    const computedPrice = getPriceForQty(minQty, {
+        precioBaseOriginal: Number(item.precio) || 0,
+        precios_escalonados: item.precios_escalonados || [],
+        precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
+        precios_distribuidor: item.precios_distribuidor || []
+    }, formData.esDistribuidor);
+
+    let finalDesc = item.nombre;
+    if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
+    if (item.observaciones) finalDesc += `\n[Nota: ${item.observaciones}]`;
 
     setFormData(prev => {
         const newProducts = [...prev.productos];
-        const emptyIndex = newProducts.findIndex(p => !p.nombre && !p.descripcion);
+        const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
         const newProduct = {
             cantidad: minQty,
             venta_minima: minQty,
-            nombre: item.nombre,
-            descripcion: item.descripcion || '',
-            observaciones: item.observaciones || '',
-            precio: currentPrice,
+            descripcion: finalDesc,
+            precioUnitario: computedPrice,
             precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
-            estado_prod: 'PENDIENTE',
-            total: currentPrice * minQty
+            precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
+            precios_distribuidor: item.precios_distribuidor || [],
+            es_por_metro: item.es_por_metro || false,
+            total: (item.es_por_metro || false) ? computedPrice : computedPrice * minQty
         };
 
         if (emptyIndex !== -1) {
             newProducts[emptyIndex] = newProduct;
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
         } else {
             newProducts.push(newProduct);
-            newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+            newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
         }
         return { ...prev, productos: newProducts };
     });
@@ -356,102 +385,119 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
     toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
   };
 
+  // 🔥 BÚSQUEDA INTELIGENTE 🔥
   const handleProductSearchRequest = async (index, value) => {
-      handleProductChange(index, 'nombre', value);
+      handleProductChange(index, 'descripcion', value);
       if (value.trim().length < 2) {
           setProductSuggestions([]);
           setActiveProductSearchRow(null);
           return;
       }
       setActiveProductSearchRow(index);
-      const { data } = await supabase.from('catalogo_productos').select('*').ilike('nombre', `%${value}%`).limit(8);
+      
+      const terms = value.trim().split(/\s+/);
+      let query = supabase.from('catalogo_productos').select('*');
+      
+      terms.forEach(term => {
+          query = query.or(`nombre.ilike.%${term}%,categoria.ilike.%${term}%,codigo.ilike.%${term}%`);
+      });
+
+      const { data } = await query.limit(12);
       setProductSuggestions(data || []);
   };
 
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima || 1;
-      let currentPrice = Number(product.precio) || 0;
-      
-      if (product.precios_escalonados && product.precios_escalonados.length > 0) {
-          const sorted = [...product.precios_escalonados].sort((a,b) => b.cantidad - a.cantidad);
-          const tier = sorted.find(t => minQty >= t.cantidad);
-          if (tier) currentPrice = tier.precio;
-      }
+      const computedPrice = getPriceForQty(minQty, {
+          precioBaseOriginal: Number(product.precio) || 0,
+          precios_escalonados: product.precios_escalonados || [],
+          precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
+          precios_distribuidor: product.precios_distribuidor || []
+      }, formData.esDistribuidor);
+
+      let finalDesc = product.nombre;
+      if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
+      if (product.observaciones) finalDesc += `\n[Nota: ${product.observaciones}]`;
 
       setFormData(prev => {
           const newProducts = [...prev.productos];
           newProducts[index] = { 
               ...newProducts[index], 
-              nombre: product.nombre,
-              descripcion: product.descripcion || '',
-              observaciones: product.observaciones || '',
-              precio: currentPrice,
+              descripcion: finalDesc,
+              precioUnitario: computedPrice,
               precioBaseOriginal: Number(product.precio) || 0,
               precios_escalonados: product.precios_escalonados || [],
+              precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
+              precios_distribuidor: product.precios_distribuidor || [],
               venta_minima: minQty,
               cantidad: minQty,
-              total: minQty * currentPrice
+              es_por_metro: product.es_por_metro || false,
+              total: (product.es_por_metro || false) ? computedPrice : minQty * computedPrice
           };
-          if (index === newProducts.length - 1) newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
       setActiveProductSearchRow(null);
   };
 
-  const handleProductChange = (index, field, value) => {
+  const updateProduct = (index, field, value) => {
     setFormData(prev => {
         const newProducts = [...prev.productos];
-        newProducts[index] = { ...newProducts[index], [field]: value };
+        let item = { ...newProducts[index], [field]: value };
         
         if (field === 'cantidad') {
-            const item = newProducts[index];
             const qty = Number(value) || 0;
-            
-            if (item.precios_escalonados && item.precios_escalonados.length > 0) {
-                const sortedTiers = [...item.precios_escalonados].sort((a, b) => b.cantidad - a.cantidad);
-                const applicableTier = sortedTiers.find(t => qty >= t.cantidad);
-                
-                if (applicableTier) {
-                    newProducts[index].precio = applicableTier.precio;
-                } else {
-                    newProducts[index].precio = item.precioBaseOriginal || item.precio;
-                }
-            }
+            item.precioUnitario = getPriceForQty(qty, item, prev.esDistribuidor);
         }
 
-        if (field === 'cantidad' || field === 'precio') {
-            const qty = Number(newProducts[index].cantidad) || 0;
-            const price = Number(newProducts[index].precio) || 0;
-            newProducts[index].total = qty * price;
+        if (field === 'cantidad' || field === 'precioUnitario') {
+            const qty = Number(item.cantidad) || 0;
+            const price = Number(item.precioUnitario) || 0;
+            // 🔥 TOTAL RESPETA SI ES POR METRO O MULTIPLICADO 🔥
+            item.total = item.es_por_metro ? price : qty * price;
         }
 
-        if (field === 'nombre' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0 });
+        if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
+            newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
         }
 
+        newProducts[index] = item;
         return { ...prev, productos: newProducts };
     });
   };
 
+  // Mantengo la función vieja que usabas antes para compatibilidad, redirige a la nueva
+  const handleProductChange = (index, field, value) => {
+      updateProduct(index, field, value);
+  };
+
   const handleQuantityBlur = (index, value) => {
       const item = formData.productos[index];
-      if (!item.nombre && !item.descripcion) return;
+      if (!item.descripcion) return;
       const min = item.venta_minima || 1;
       const qty = Number(value);
 
       if (qty > 0 && qty < min) {
           toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
-          handleProductChange(index, 'cantidad', min);
+          updateProduct(index, 'cantidad', min);
       }
   };
 
-  const handleRemoveProductRow = (index) => {
+  const removeProduct = (idx) => {
     setFormData(prev => {
         if (prev.productos.length <= 1) return prev;
-        const newProducts = prev.productos.filter((_, i) => i !== index);
+        const newProducts = prev.productos.filter((_, i) => i !== idx);
         return { ...prev, productos: newProducts };
     });
+  };
+
+  // 🔥 BOTÓN AÑADIR ITEM MANUAL 🔥
+  const addProduct = () => {
+    setFormData(prev => ({
+        ...prev,
+        productos: [...prev.productos, { descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }]
+    }));
   };
 
   const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.includes(searchTerm)));
@@ -535,7 +581,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
       toast({ title: "⚠️ Falta Cliente", variant: "destructive" });
       setLoading(false); return;
     }
-    const validProducts = formData.productos.filter(p => p.nombre || p.descripcion);
+    const validProducts = formData.productos.filter(p => p.descripcion && p.descripcion.trim() !== '');
     if (validProducts.length === 0) {
       toast({ title: "⚠️ Sin productos", variant: "destructive" });
       setLoading(false); return;
@@ -590,7 +636,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
             nota_anticipo: formData.notaAnticipo, 
             credito_vence_anticipo: formData.creditoVenceAnticipo, 
             imagenes: formData.imagenes, 
-            updated_at: new Date().toISOString()
+            updated_at: new Date().toISOString(),
+            esDistribuidor: formData.esDistribuidor
         };
 
         if (!initialData || !initialData.id || initialData.status === 'BORRADOR') {
@@ -695,6 +742,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                        </div>
                        {!isReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
                    </div>
+
+                   <div className="mt-2 flex items-center gap-2 p-2 bg-blue-50/50 border border-blue-100 rounded-md w-fit">
+                        <Switch id="chk-dist" checked={formData.esDistribuidor} onCheckedChange={handleDistribuidorToggle} disabled={isReadOnly} />
+                        <label htmlFor="chk-dist" className="text-xs font-bold text-blue-800 cursor-pointer select-none">Aplicar tarifas de Distribuidor a esta orden</label>
+                   </div>
+                   
                    {isSearching && (
                        <div className="absolute z-50 w-full md:w-1/2 mt-1 bg-white border border-slate-300 rounded shadow-lg max-h-60 overflow-y-auto">
                            {filteredClients.length > 0 ? filteredClients.map(c => (
@@ -719,40 +772,42 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
           <div className="space-y-2">
              <div className="flex justify-between items-center mb-1">
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
-                 <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
-                     <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
-                 </Button>
+                 {/* 🔥 BOTONES DE CATÁLOGO E ITEM MANUAL 🔥 */}
+                 <div className="flex gap-2">
+                     <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
+                         <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
+                     </Button>
+                     <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs px-3">
+                         <Plus className="h-3 w-3 mr-1" /> Item Manual
+                     </Button>
+                 </div>
              </div>
              
-             {/* 🔥 TABLA REDISEÑADA: DESCRIPCIÓN Y OBSERVACIONES SEPARADAS 🔥 */}
              <div className="border border-slate-300 rounded-sm overflow-hidden">
                 <table className="w-full text-sm">
                    <thead className="bg-[#004080] text-white text-xs">
                       <tr>
                          <th className="py-2 px-2 text-left w-10">#</th>
                          <th className="py-2 px-2 text-left">Producto y Detalles</th>
-                         <th className="py-2 px-2 text-left w-64">Observaciones / Notas</th>
-                         <th className="py-2 px-2 text-right w-24">Unitario</th>
                          <th className="py-2 px-2 text-center w-20">Cant.</th>
+                         <th className="py-2 px-2 text-right w-24">Unitario</th>
                          <th className="py-2 px-2 text-right w-24">Total</th>
                          <th className="w-8"></th>
                       </tr>
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
-                        const currentPrice = row.precio !== undefined ? row.precio : (row.precioUnitario || 0);
-                        const rowTotal = (parseFloat(row.cantidad)||0) * (parseFloat(currentPrice)||0);
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
                              <td className="py-2 px-2 text-slate-400 text-xs text-center align-top pt-4">{idx + 1}</td>
                              
-                             <td className="py-2 px-2 relative align-top">
-                                <Input 
-                                    className="h-8 w-full font-bold text-xs mb-1" 
-                                    placeholder={idx === formData.productos.length - 1 ? "Buscar producto o escribir..." : "Nombre producto"} 
-                                    value={row.nombre || row.descripcion} // Fallback para compatibilidad
-                                    onChange={e => handleProductSearchRequest(idx, e.target.value)}
-                                    onFocus={() => { if((row.nombre||row.descripcion)?.length >= 2) handleProductSearchRequest(idx, row.nombre||row.descripcion); }}
+                             <td className="py-2 px-2 relative align-top pt-3">
+                                <textarea 
+                                    className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
+                                    placeholder={idx === formData.productos.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
+                                    value={row.descripcion || row.nombre} 
+                                    onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
+                                    onFocus={() => { if((row.descripcion||row.nombre)?.length >= 2) handleProductSearchRequest(idx, row.descripcion||row.nombre); }}
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                                     readOnly={isReadOnly}
                                 />
@@ -773,50 +828,43 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                                         ))}
                                     </div>
                                 )}
-                                <textarea 
-                                    className="w-full border border-slate-200 rounded p-1.5 text-[11px] outline-none focus:border-blue-500 resize-y min-h-[46px]" 
-                                    placeholder="Descripción técnica (Material, tamaño...)" 
-                                    value={row.nombre ? row.descripcion : ''} // Solo muestra si hay nombre separado
-                                    onChange={e => handleProductChange(idx, 'descripcion', e.target.value)}
-                                    readOnly={isReadOnly}
-                                />
                              </td>
-
-                             {/* 🔥 COLUMNA NUEVA DE OBSERVACIONES 🔥 */}
-                             <td className="py-2 px-2 align-top">
-                                 <textarea 
-                                    className="w-full border border-slate-200 rounded p-1.5 text-[11px] outline-none focus:border-blue-500 resize-y h-full min-h-[86px]" 
-                                    placeholder="Notas y observaciones (No incluye instalación...)" 
-                                    value={row.observaciones || ''} 
-                                    onChange={e => handleProductChange(idx, 'observaciones', e.target.value)}
-                                    readOnly={isReadOnly}
-                                />
-                             </td>
-
-                             <td className="py-2 px-2 align-top pt-4"><input type="number" step="0.01" className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0" value={currentPrice || ''} onChange={e => handleProductChange(idx, 'precio', e.target.value)} readOnly={isReadOnly}/></td>
                              
                              <td className="py-2 px-2 relative align-top pt-4">
                                  <input 
-                                    type="number" step="1" 
-                                    className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold" 
+                                    type="number" step="0.01" min="0.01"
+                                    className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold h-9" 
                                     value={row.cantidad||''} 
-                                    onChange={e => handleProductChange(idx, 'cantidad', e.target.value)} 
+                                    onChange={e => updateProduct(idx, 'cantidad', e.target.value)} 
                                     onBlur={e => handleQuantityBlur(idx, e.target.value)}
                                     readOnly={isReadOnly}
                                  />
-                                 {row.venta_minima > 1 && <span className="absolute -bottom-1 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                                 {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                             </td>
+
+                             <td className="py-2 px-2 align-top pt-4">
+                                 <input 
+                                     type="number" step="0.01" 
+                                     className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0 text-green-700 font-bold h-9" 
+                                     value={row.precioUnitario || row.precio || ''} 
+                                     onChange={e => updateProduct(idx, 'precioUnitario', e.target.value)} 
+                                     readOnly={isReadOnly}
+                                 />
                              </td>
                              
-                             <td className="py-2 px-2 text-right font-medium text-slate-700 align-top pt-4">$ {rowTotal.toFixed(2)}</td>
-                             <td className="py-2 px-1 text-center align-top pt-4">{!isReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => handleRemoveProductRow(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
+                             <td className="py-2 px-2 text-right font-bold text-slate-800 align-top pt-5 bg-slate-50/50">
+                                 $ {Number(row.total || 0).toFixed(2)}
+                                 {row.es_por_metro && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio fijo por rango">(Fijo)</div>}
+                             </td>
+                             <td className="py-2 px-1 text-center align-top pt-4">{!isReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
                           </tr>
                         );
                       })}
                    </tbody>
                    <tfoot className="bg-slate-100 font-medium text-slate-700 border-t border-slate-300 text-xs">
-                      <tr><td colSpan="5" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
+                      <tr><td colSpan="4" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
                       <tr>
-                         <td colSpan="5" className="text-right py-1 px-2 flex items-center justify-end gap-2">
+                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span className="text-slate-500">Dscto ($)</span>
                             <input name="discountValInput" type="number" step="0.01" className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white" placeholder="0.00" value={localDiscountVal} onChange={e => setLocalDiscountVal(e.target.value)} onBlur={commitDiscountValue} onKeyDown={(e) => handleKeyDown(e, commitDiscountValue)} readOnly={isReadOnly} />
                             <span className="text-slate-500">(%)</span>
@@ -825,14 +873,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                          <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuentoVal.toFixed(2)}</td><td></td>
                       </tr>
                       <tr>
-                         <td colSpan="5" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
+                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
                             <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isReadOnly && mode !== 'payment_only'}/>
                             <label htmlFor="iva-check" className="cursor-pointer flex items-center gap-1">IVA {isAdmin ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
                       <tr className="bg-slate-200 font-bold text-slate-900 border-t border-slate-300">
-                         <td colSpan="5" className="text-right py-2 px-2">TOTAL</td><td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
+                         <td colSpan="4" className="text-right py-2 px-2">TOTAL</td><td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
                       </tr>
                    </tfoot>
                 </table>
@@ -981,8 +1029,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                         <div className="text-xs text-slate-500 line-clamp-2">{item.descripcion || item.observaciones}</div>
                         
                         <div className="mt-2 flex flex-wrap items-center gap-2">
+                            {item.es_por_metro && <span className="text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-1.5 py-0.5 rounded">Precio Fijo/Rango</span>}
                             {item.venta_minima > 1 && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">Mínimo: {item.venta_minima}</span>}
                             {item.precios_escalonados && item.precios_escalonados.length > 0 && <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Descuentos por volumen</span>}
+                            {item.precio_distribuidor > 0 && <span className="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded border border-teal-100">Tarifa Mayorista</span>}
                         </div>
                     </div>
                 ))}
