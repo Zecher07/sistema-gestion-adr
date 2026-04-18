@@ -27,8 +27,9 @@ const CatalogPanel = ({ user }) => {
   
   const [formData, setFormData] = useState({ 
       codigo: '', categoria: '', nombre: '', descripcion: '', observaciones: '', 
-      precio: 0, venta_minima: 1, precios_escalonados: [],
-      tienePrecioDistribuidor: false, precioDistribuidorBase: 0, precios_distribuidor: [] 
+      precio: '', venta_minima: '', precios_escalonados: [],
+      tienePrecioDistribuidor: false, precioDistribuidorBase: '', precios_distribuidor: [],
+      es_por_metro: false 
   });
   
   const [saving, setSaving] = useState(false);
@@ -78,27 +79,30 @@ const CatalogPanel = ({ user }) => {
         setFormData({ 
             codigo: item.codigo || '', categoria: item.categoria || '', nombre: item.nombre, 
             descripcion: item.descripcion || '', observaciones: item.observaciones || '',
-            precio: Number(item.precio) || 0, venta_minima: Number(item.venta_minima) || 1,
+            precio: item.precio || '', venta_minima: item.venta_minima || '',
             precios_escalonados: item.precios_escalonados || [],
             tienePrecioDistribuidor: hasDistribuidorConfig,
-            precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
-            precios_distribuidor: item.precios_distribuidor || []
+            precioDistribuidorBase: item.precio_distribuidor || '',
+            precios_distribuidor: item.precios_distribuidor || [],
+            es_por_metro: item.es_por_metro || false
         });
     } else {
         setEditingItem(null);
         setFormData({ 
             codigo: '', categoria: '', nombre: '', descripcion: '', observaciones: '', 
-            precio: 0, venta_minima: 1, precios_escalonados: [],
-            tienePrecioDistribuidor: false, precioDistribuidorBase: 0, precios_distribuidor: [] 
+            precio: '', venta_minima: '', precios_escalonados: [],
+            tienePrecioDistribuidor: false, precioDistribuidorBase: '', precios_distribuidor: [],
+            es_por_metro: false 
         });
     }
     setIsModalOpen(true);
   };
 
+  // 🔥 AL QUITAR EL "Number()" EVITAMOS EL RELLENO AUTOMÁTICO DE CEROS 🔥
   const addTier = () => { setFormData(prev => ({ ...prev, precios_escalonados: [...prev.precios_escalonados, { cantidad: '', precio: '' }] })); };
   const updateTier = (index, field, value) => {
       const newTiers = [...formData.precios_escalonados];
-      newTiers[index][field] = Number(value);
+      newTiers[index][field] = value; 
       setFormData({ ...formData, precios_escalonados: newTiers });
   };
   const removeTier = (index) => { setFormData({ ...formData, precios_escalonados: formData.precios_escalonados.filter((_, i) => i !== index) }); };
@@ -106,27 +110,28 @@ const CatalogPanel = ({ user }) => {
   const addDistTier = () => { setFormData(prev => ({ ...prev, precios_distribuidor: [...prev.precios_distribuidor, { cantidad: '', precio: '' }] })); };
   const updateDistTier = (index, field, value) => {
       const newTiers = [...formData.precios_distribuidor];
-      newTiers[index][field] = Number(value);
+      newTiers[index][field] = value;
       setFormData({ ...formData, precios_distribuidor: newTiers });
   };
   const removeDistTier = (index) => { setFormData({ ...formData, precios_distribuidor: formData.precios_distribuidor.filter((_, i) => i !== index) }); };
 
   const handleSave = async () => {
       if (!formData.nombre) return toast({ title: "Atención", description: "El nombre es obligatorio", variant: "destructive" });
-      if (formData.precio <= 0) return toast({ title: "Atención", description: "El Precio Público debe ser mayor a cero", variant: "destructive" });
+      if (Number(formData.precio) <= 0) return toast({ title: "Atención", description: "El Precio Público debe ser mayor a cero", variant: "destructive" });
 
       setSaving(true);
       try {
-          const cleanedTiers = formData.precios_escalonados.filter(t => Number(t.cantidad) > 0 && Number(t.precio) > 0);
-          const cleanedDistTiers = formData.precios_distribuidor.filter(t => Number(t.cantidad) > 0 && Number(t.precio) > 0);
+          const cleanedTiers = formData.precios_escalonados.map(t => ({ cantidad: Number(t.cantidad), precio: Number(t.precio) })).filter(t => t.cantidad > 0 && t.precio > 0);
+          const cleanedDistTiers = formData.precios_distribuidor.map(t => ({ cantidad: Number(t.cantidad), precio: Number(t.precio) })).filter(t => t.cantidad > 0 && t.precio > 0);
           
           const finalData = { 
               codigo: formData.codigo, categoria: formData.categoria, nombre: formData.nombre, 
               descripcion: formData.descripcion, observaciones: formData.observaciones,
-              precio: formData.precio, venta_minima: Number(formData.venta_minima) || 1,
+              precio: Number(formData.precio) || 0, venta_minima: Number(formData.venta_minima) || 1,
               precios_escalonados: cleanedTiers,
-              precio_distribuidor: formData.tienePrecioDistribuidor ? formData.precioDistribuidorBase : 0,
-              precios_distribuidor: formData.tienePrecioDistribuidor ? cleanedDistTiers : []
+              precio_distribuidor: formData.tienePrecioDistribuidor ? (Number(formData.precioDistribuidorBase) || 0) : 0,
+              precios_distribuidor: formData.tienePrecioDistribuidor ? cleanedDistTiers : [],
+              es_por_metro: formData.es_por_metro 
           };
 
           if (editingItem) {
@@ -253,7 +258,8 @@ const CatalogPanel = ({ user }) => {
                           venta_minima: baseMinima,
                           precios_escalonados,
                           precio_distribuidor: basePrecioDist,
-                          precios_distribuidor: precios_distribuidor
+                          precios_distribuidor: precios_distribuidor,
+                          es_por_metro: false
                       });
                   }
               }
@@ -354,6 +360,7 @@ const CatalogPanel = ({ user }) => {
                                         <td className="px-4 py-3 align-top">
                                             <div className="text-[10px] font-bold text-purple-600 mb-0.5 uppercase tracking-wider">{item.categoria}</div>
                                             <div className="font-bold text-slate-800 uppercase">{item.nombre}</div>
+                                            {item.es_por_metro && <span className="text-[9px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-1.5 py-0.5 rounded mt-1 inline-block uppercase">SE COBRA POR METRO</span>}
                                             <div className="mt-1 space-y-1">
                                                {item.descripcion && <div className="text-xs text-slate-700 line-clamp-2" title={item.descripcion}><span className="font-semibold text-slate-500">Desc:</span> {item.descripcion}</div>}
                                                {item.observaciones && <div className="text-[10px] text-slate-500 line-clamp-2" title={item.observaciones}><span className="font-semibold text-slate-400">Obs:</span> {item.observaciones}</div>}
@@ -438,18 +445,23 @@ const CatalogPanel = ({ user }) => {
                         </div>
 
                         <div className="bg-white p-4 rounded-xl border border-slate-200 shadow-sm space-y-4">
-                            <div className="flex items-center justify-between border-b border-slate-100 pb-3">
+                            <div className="flex items-center justify-between border-b border-slate-100 pb-3 flex-wrap gap-4">
                                 <h4 className="font-bold text-slate-700 flex items-center gap-2">Configuración de Precios</h4>
                                 
-                                <div className="flex items-center gap-4">
+                                <div className="flex flex-wrap items-center gap-4">
                                     <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-md border border-red-100">
                                         <label className="text-xs font-bold text-red-700 flex items-center gap-1"><ShieldAlert className="h-3 w-3"/> Venta Mínima:</label>
-                                        {/* 🔥 MODIFICADO PARA ACEPTAR DECIMALES EN LA UI 🔥 */}
-                                        <Input type="number" step="0.01" min="0.01" value={formData.venta_minima} onChange={e => setFormData({...formData, venta_minima: Number(e.target.value)})} className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" />
+                                        <Input type="number" step="0.01" min="0.01" value={formData.venta_minima} onChange={e => setFormData({...formData, venta_minima: e.target.value})} className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" />
                                     </div>
                                     
+                                    {/* 🔥 TEXTO ACTUALIZADO 🔥 */}
+                                    <div className="flex items-center gap-2 bg-purple-50 px-3 py-1.5 rounded-md border border-purple-200">
+                                        <label htmlFor="metro-switch" className="text-xs font-bold text-purple-800 cursor-pointer select-none">Se cobra por Metro</label>
+                                        <Switch id="metro-switch" checked={formData.es_por_metro} onCheckedChange={(c) => setFormData({...formData, es_por_metro: c})} />
+                                    </div>
+
                                     <div className="flex items-center gap-2 bg-blue-50 px-3 py-1.5 rounded-md border border-blue-100">
-                                        <label htmlFor="dist-switch" className="text-xs font-bold text-blue-800 cursor-pointer select-none">Habilitar Tarifa Mayorista</label>
+                                        <label htmlFor="dist-switch" className="text-xs font-bold text-blue-800 cursor-pointer select-none">Tarifa Mayorista</label>
                                         <Switch id="dist-switch" checked={formData.tienePrecioDistribuidor} onCheckedChange={(c) => setFormData({...formData, tienePrecioDistribuidor: c})} />
                                     </div>
                                 </div>
@@ -463,7 +475,7 @@ const CatalogPanel = ({ user }) => {
                                             <label className="text-xs font-bold text-green-800 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Base Público (1 Und) *</label>
                                             <p className="text-[10px] text-green-600">Precio normal de venta</p>
                                         </div>
-                                        <Input type="number" step="0.01" min="0.01" value={formData.precio} onChange={e => setFormData({...formData, precio: Number(e.target.value)})} className="border-green-400 font-bold bg-white w-28 text-right text-green-700 text-lg" />
+                                        <Input type="number" step="0.01" min="0.01" value={formData.precio} onChange={e => setFormData({...formData, precio: e.target.value})} className="border-green-400 font-bold bg-white w-28 text-right text-green-700 text-lg" />
                                     </div>
                                     
                                     <div className="border-t border-slate-200 pt-3">
@@ -473,7 +485,6 @@ const CatalogPanel = ({ user }) => {
                                                 {formData.precios_escalonados.map((tier, index) => (
                                                     <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-slate-200">
                                                         <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                        {/* 🔥 AHORA ACEPTA DECIMALES (0.5) 🔥 */}
                                                         <Input type="number" step="0.01" min="0.01" value={tier.cantidad} onChange={e => updateTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
                                                         <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
                                                         <span className="text-[10px] text-green-700 font-bold ml-auto mr-1">Baja a: $</span>
@@ -494,7 +505,7 @@ const CatalogPanel = ({ user }) => {
                                                 <label className="text-xs font-bold text-blue-900 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Base Mayorista (1 Und)</label>
                                                 <p className="text-[10px] text-blue-700">Precio especial distribuidores</p>
                                             </div>
-                                            <Input type="number" step="0.01" min="0" value={formData.precioDistribuidorBase} onChange={e => setFormData({...formData, precioDistribuidorBase: Number(e.target.value)})} className="border-blue-400 font-bold bg-white w-28 text-right text-blue-800 text-lg" />
+                                            <Input type="number" step="0.01" min="0" value={formData.precioDistribuidorBase} onChange={e => setFormData({...formData, precioDistribuidorBase: e.target.value})} className="border-blue-400 font-bold bg-white w-28 text-right text-blue-800 text-lg" />
                                         </div>
                                         
                                         <div className="border-t border-blue-200 pt-3">
@@ -504,7 +515,6 @@ const CatalogPanel = ({ user }) => {
                                                     {formData.precios_distribuidor.map((tier, index) => (
                                                         <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-blue-200">
                                                             <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                            {/* 🔥 AHORA ACEPTA DECIMALES (0.5) 🔥 */}
                                                             <Input type="number" step="0.01" min="0.01" value={tier.cantidad} onChange={e => updateDistTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
                                                             <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
                                                             <span className="text-[10px] text-blue-700 font-bold ml-auto mr-1">Baja a: $</span>

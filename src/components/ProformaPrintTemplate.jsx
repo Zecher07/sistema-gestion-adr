@@ -1,5 +1,15 @@
 import React from 'react';
 
+// --- 🔥 NUEVA FUNCIÓN 100% INFALIBLE PARA LIMPIAR NOTAS 🔥 ---
+const getPrintDesc = (item) => {
+    const text = item.descripcion || item.nombre || '';
+    // Corta el texto en el momento exacto que encuentra "[Nota:" y se queda solo con la primera parte
+    if (text.includes('[Nota:')) {
+        return text.split('[Nota:')[0].trim();
+    }
+    return text.trim();
+};
+
 const ProformaPrintTemplate = ({ data }) => {
   if (!data) return null;
 
@@ -9,7 +19,6 @@ const ProformaPrintTemplate = ({ data }) => {
       {/* HEADER */}
       <div className="flex justify-between items-start border-b-2 border-slate-800 pb-6 mb-8">
         <div>
-          {/* AQUÍ PUEDES PONER TU LOGO */}
           <h1 className="text-3xl font-bold uppercase tracking-wider text-slate-900">PROFORMA</h1>
           <p className="text-sm text-slate-500 mt-1">Soluciones Integrales de Publicidad</p>
         </div>
@@ -23,7 +32,7 @@ const ProformaPrintTemplate = ({ data }) => {
       <div className="flex justify-between mb-10 gap-8">
         <div className="w-1/2">
           <h3 className="text-xs font-bold uppercase text-slate-400 mb-2 border-b">Cliente</h3>
-          <p className="font-bold text-lg">{data.cliente}</p>
+          <p className="font-bold text-lg uppercase">{data.cliente}</p>
           <p className="text-sm">ID/RUC: {data.ruc || 'N/A'}</p>
           <p className="text-sm">{data.telefono}</p>
           <p className="text-sm">{data.direccion}</p>
@@ -31,10 +40,10 @@ const ProformaPrintTemplate = ({ data }) => {
         </div>
         <div className="w-1/2 text-right">
           <h3 className="text-xs font-bold uppercase text-slate-400 mb-2 border-b">Emitido Por</h3>
-          <p className="font-bold text-lg">Tu Empresa S.A.</p>
-          <p className="text-sm">RUC: 0999999999001</p>
-          <p className="text-sm">Guayaquil, Ecuador</p>
-          <p className="text-sm">ventas@tuempresa.com</p>
+          <p className="font-bold text-lg">ADRCOMPANY SAS</p>
+          <p className="text-sm">RUC: 0993397285001</p>
+          <p className="text-sm">Guayas, Ecuador</p>
+          <p className="text-sm">imprenta_milena@hotmail.com</p>
           <p className="text-sm">Vendedor: {data.autor}</p>
         </div>
       </div>
@@ -54,9 +63,10 @@ const ProformaPrintTemplate = ({ data }) => {
             {data.productos.map((item, index) => (
               <tr key={index} className="border-b border-slate-100">
                 <td className="py-3 px-2 text-center">{item.cantidad}</td>
-                <td className="py-3 px-2">{item.descripcion}</td>
+                {/* 🔥 APLICAMOS LA NUEVA FUNCIÓN 🔥 */}
+                <td className="py-3 px-2 uppercase whitespace-pre-wrap">{getPrintDesc(item)}</td>
                 <td className="py-3 px-2 text-right">${Number(item.precioUnitario || item.precio).toFixed(2)}</td>
-                <td className="py-3 px-2 text-right font-medium">${(item.cantidad * (item.precioUnitario || item.precio)).toFixed(2)}</td>
+                <td className="py-3 px-2 text-right font-medium">${Number(item.total || (item.cantidad * (item.precioUnitario || item.precio))).toFixed(2)}</td>
               </tr>
             ))}
           </tbody>
