@@ -1,12 +1,10 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
-  Eye, Edit, Trash2,
-  ArrowLeft, ArrowRight,
-  Search,
-  Printer, Plus,
+  Eye, Edit, Trash2, CreditCard, 
+  Search, Printer, Plus,
   ChevronLeft, ChevronRight, RotateCcw,
   FileSpreadsheet, Calendar as CalendarIcon,
-  Archive, RotateCw, Coins, Loader2
+  Archive, RotateCw, Coins, Loader2, ArrowUpDown, Copy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
@@ -32,6 +30,8 @@ const OrdersPanel = ({
   onDeleteOrder, 
   onUpdateOrder, 
   onEditOrder, 
+  onCloneOrder,
+  onPaymentOrder,
   onCreateOrder,
   onViewOrder,
   currentView,
@@ -47,6 +47,10 @@ const OrdersPanel = ({
   const [statusFilter, setStatusFilter] = useState('TODOS');
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
+  
+  // 🔥 ESTADO DE ORDENAMIENTO 🔥
+  const [sortConfig, setSortConfig] = useState({ key: 'createdAt', direction: 'desc' });
+
   const [currentPage, setCurrentPage] = useState(1);
   const [itemsPerPage, setItemsPerPage] = useState(10);
 
@@ -91,10 +95,12 @@ const OrdersPanel = ({
     return {
       showView: true,
       showEdit: true,
-      showArchive: true,
-      showUnarchive: true
+      showClone: isAdmin,
+      showPayment: isAdmin,
+      showArchive: isAdmin,
+      showUnarchive: isAdmin
     };
-  }, []);
+  }, [isAdmin]);
 
   const roleFilteredOrders = useMemo(() => {
     return orders.filter(order => {
@@ -160,8 +166,52 @@ const OrdersPanel = ({
     }, { abono: 0, saldo: 0, total: 0 });
   }, [filteredOrders]);
 
-  const totalPages = Math.ceil(filteredOrders.length / itemsPerPage);
-  const paginatedOrders = filteredOrders.slice(
+  // 🔥 LÓGICA DE ORDENAMIENTO 🔥
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') {
+      direction = 'desc';
+    }
+    setSortConfig({ key, direction });
+  };
+
+  const sortedOrders = useMemo(() => {
+    let sortableItems = [...filteredOrders];
+    sortableItems.sort((a, b) => {
+      let aVal = a[sortConfig.key];
+      let bVal = b[sortConfig.key];
+
+      if (sortConfig.key === 'total' || sortConfig.key === 'saldo') {
+        aVal = a.financials?.[sortConfig.key] || 0;
+        bVal = b.financials?.[sortConfig.key] || 0;
+      } else if (sortConfig.key === 'orderNumber') {
+        aVal = a.orderNumber || a.order_number || a.id || 0;
+        bVal = b.orderNumber || b.order_number || b.id || 0;
+      } else if (sortConfig.key === 'tipoOrden') {
+        aVal = getOrderTypeLabel(a);
+        bVal = getOrderTypeLabel(b);
+      } else if (sortConfig.key === 'cliente') {
+        aVal = a.cliente || a.cliente_nombre || '';
+        bVal = b.cliente || b.cliente_nombre || '';
+      }
+
+      if (aVal === bVal) return 0;
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+      }
+
+      const aStr = String(aVal).toLowerCase();
+      const bStr = String(bVal).toLowerCase();
+      return sortConfig.direction === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+    });
+    return sortableItems;
+  }, [filteredOrders, sortConfig]);
+
+  const totalPages = Math.ceil(sortedOrders.length / itemsPerPage);
+  const paginatedOrders = sortedOrders.slice(
     (currentPage - 1) * itemsPerPage,
     currentPage * itemsPerPage
   );
@@ -169,30 +219,6 @@ const OrdersPanel = ({
   useEffect(() => {
     setCurrentPage(1);
   }, [searchTerm, statusFilter, startDate, endDate, itemsPerPage]);
-
-  const handleStatusChange = (order, direction, e) => {
-    e.stopPropagation();
-
-    if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return;
-
-    const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
-    const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
-    
-    const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
-    const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
-
-    const workflow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
-    const currentIndex = workflow.indexOf(order.status);
-    
-    if (currentIndex === -1) return;
-
-    let newIndex;
-    if (direction === 'next' && currentIndex < workflow.length - 1) newIndex = currentIndex + 1;
-    else if (direction === 'prev' && currentIndex > 0) newIndex = currentIndex - 1;
-    else return;
-    
-    onUpdateStatus(order.id, workflow[newIndex]);
-  };
 
   const handleResetFilters = () => {
     setSearchTerm('');
@@ -207,7 +233,7 @@ const OrdersPanel = ({
 
   const handleExportCSV = () => {
     const headers = ['ID', 'Fecha', 'Tipo', 'Cliente', 'RUC/Cedula', 'Titulo', 'Estado', 'Proforma Origen', 'Vendedor', 'Total', 'Abono', 'Saldo'];
-    const rows = filteredOrders.map(o => {
+    const rows = sortedOrders.map(o => {
         const fin = o.financials || {};
         const origen = o.origenProformaInfo || o.origenProformaId || '-';
         return [
@@ -277,7 +303,6 @@ const OrdersPanel = ({
     }
   };
 
-  // 🔥 REGLA DE EDICIÓN: Vendedor solo edita si está en VENTAS. Admin edita todo (excepto si está Anulada/Archivada) 🔥
   const canEdit = (status) => {
     if (status === 'ANULADA' || status === 'ARCHIVADA') return false;
     if (isAdmin) return true;
@@ -286,7 +311,19 @@ const OrdersPanel = ({
   
   const canArchive = (status) => isAdmin && status === 'FINALIZADA';
   const canUnarchive = (status) => isAdmin && status === 'ARCHIVADA';
-  const canMoveStatus = () => true; 
+
+  // 🔥 COMPONENTE DE CABECERA ORDENABLE Y OPTIMIZADA 🔥
+  const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
+      <th 
+          className={`px-2 py-3 font-bold cursor-pointer hover:bg-slate-200 transition-colors select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`} 
+          onClick={() => requestSort(sortKey)}
+      >
+          <div className={`flex items-center gap-1 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start'}`}>
+              {label}
+              <ArrowUpDown className={`h-3 w-3 ${sortConfig.key === sortKey ? 'text-blue-600' : 'text-slate-400'}`} />
+          </div>
+      </th>
+  );
 
   return (
     <div className="space-y-4">
@@ -381,7 +418,7 @@ const OrdersPanel = ({
         </div>
       </div>
 
-      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+      <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden w-full">
         <div className="flex flex-col sm:flex-row justify-between items-center p-4 border-b border-slate-100 bg-slate-50/50 gap-4 print:hidden">
            <div className="flex items-center gap-2 text-sm text-slate-600">
              <span>Mostrar</span>
@@ -419,23 +456,21 @@ const OrdersPanel = ({
            </div>
         </div>
 
-        <div className="overflow-x-auto">
+        <div className="overflow-x-auto w-full">
           <table className="w-full text-sm text-left">
             <thead className="text-xs text-slate-700 uppercase bg-slate-100 border-b border-slate-200">
               <tr>
-                <th className="px-4 py-3 font-bold">Orden</th>
-                <th className="px-4 py-3 font-bold">Creación</th>
-                <th className="px-4 py-3 font-bold text-center">Tipo</th>
-                <th className="px-4 py-3 font-bold">Título</th>
-                <th className="px-4 py-3 font-bold">Cliente</th>
-                <th className="px-4 py-3 font-bold text-right">Abono</th>
-                <th className="px-4 py-3 font-bold text-right">Saldo</th>
-                <th className="px-4 py-3 font-bold text-right">Total</th>
-                <th className="px-4 py-3 font-bold">Proforma Origen</th>
-                <th className="px-4 py-3 font-bold">Responsable</th>
-                <th className="px-4 py-3 font-bold">Entrega</th>
-                <th className="px-4 py-3 font-bold text-center">Estado</th>
-                <th className="px-4 py-3 font-bold text-center print:hidden">Acciones</th>
+                <SortableHeader label="Orden" sortKey="orderNumber" width="w-16" />
+                <SortableHeader label="Fecha" sortKey="createdAt" width="w-20" />
+                <SortableHeader label="Tipo" sortKey="tipoOrden" align="center" width="w-16" />
+                <SortableHeader label="Título" sortKey="tipoLetrero" width="max-w-[150px]" />
+                <SortableHeader label="Cliente" sortKey="cliente" width="max-w-[150px]" />
+                <SortableHeader label="Abono" sortKey="anticipo" align="right" width="w-20" />
+                <SortableHeader label="Saldo" sortKey="saldo" align="right" width="w-20" />
+                <SortableHeader label="Total" sortKey="total" align="right" width="w-20" />
+                <SortableHeader label="Vendedor" sortKey="vendedor" width="w-24" />
+                <SortableHeader label="Estado" sortKey="status" align="center" width="w-28" />
+                <th className="px-2 py-3 font-bold text-center print:hidden w-32">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100">
@@ -452,131 +487,96 @@ const OrdersPanel = ({
                   const abonoTotal = anticipoInicial + abonosPosteriores;
                   const saldoReal = Math.max(0, (parseFloat(financials.total) || 0) - abonoTotal);
 
-                  const origenProformaInfo = order.origenProformaInfo || order.origenProformaId;
-
                   return (
                     <tr key={order.id} className={`transition-colors ${isAnulada ? 'bg-red-50 hover:bg-red-100' : isArchivada ? 'bg-slate-100 opacity-75' : 'hover:bg-slate-50'}`}>
-                      <td className="px-4 py-3 font-mono text-slate-500">
+                      <td className="px-2 py-3 font-mono text-slate-500 whitespace-nowrap">
                         {formatOrderId(order)}
                       </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-3 whitespace-nowrap">
                         <div className="flex flex-col">
                           <span className="font-medium text-slate-700">{formatDate(order.createdAt || order.created_at)}</span>
-                          <span className="text-xs text-slate-400">{formatTime(order.createdAt || order.created_at)}</span>
+                          <span className="text-[10px] text-slate-400">{formatTime(order.createdAt || order.created_at)}</span>
                         </div>
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        <span className={`inline-flex items-center px-2 py-0.5 rounded text-xs font-bold ${typeLabel === 'VC' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
+                        <span className={`inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-bold ${typeLabel === 'VC' ? 'bg-purple-100 text-purple-800' : 'bg-blue-100 text-blue-800'}`}>
                           {typeLabel}
                         </span>
                       </td>
-                      <td className="px-4 py-3 font-medium text-slate-800 max-w-[200px] truncate" title={order.tipoLetrero || order.tipo_trabajo}>
+                      <td className="px-2 py-3 font-medium text-slate-800 max-w-[150px] truncate" title={order.tipoLetrero || order.tipo_trabajo}>
                         {order.tipoLetrero || order.tipo_trabajo}
                       </td>
-                      <td className="px-4 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente || order.cliente_nombre}>
+                      <td className="px-2 py-3 text-slate-600 max-w-[150px] truncate" title={order.cliente || order.cliente_nombre}>
                         <div>{order.cliente || order.cliente_nombre}</div>
                         {(order.ruc || order.cedula) && <div className="text-[10px] text-slate-400">{order.ruc || order.cedula}</div>}
                       </td>
-                      <td className="px-4 py-3 text-right text-slate-600">
+                      <td className="px-2 py-3 text-right text-slate-600 whitespace-nowrap">
                         {formatCurrency(abonoTotal)}
                       </td>
-                      <td className={`px-4 py-3 text-right font-bold ${saldoReal > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                      <td className={`px-2 py-3 text-right font-bold whitespace-nowrap ${saldoReal > 0 ? 'text-red-600' : 'text-green-600'}`}>
                         {formatCurrency(saldoReal)}
                       </td>
-                      <td className="px-4 py-3 text-right font-semibold text-slate-800">
+                      <td className="px-2 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">
                         {formatCurrency(financials.total)}
                       </td>
-                      <td className="px-4 py-3 text-center">
-                        {origenProformaInfo ? (
-                           <span className="text-xs font-mono bg-blue-50 text-blue-600 px-1.5 py-0.5 rounded border border-blue-100">
-                              #{String(origenProformaInfo).padStart(7,'0')}
-                           </span>
-                        ) : (
-                           <span className="text-slate-400 text-xs">-</span>
-                        )}
-                      </td>
-
-                      <td className="px-4 py-3 text-slate-600 text-xs">
+                      <td className="px-2 py-3 text-slate-600 text-xs truncate max-w-[100px]" title={order.vendedor}>
                         {order.vendedor || 'N/A'}
                       </td>
-                      <td className="px-4 py-3 text-slate-600 whitespace-nowrap">
-                        {formatDate(order.fechaEntrega || order.fecha_entrega)}
-                      </td>
-                      <td className="px-4 py-3">
+                      <td className="px-2 py-3 text-center whitespace-nowrap">
                         {isAnulada ? (
-                          <div className="flex justify-center">
-                            <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800 border border-red-200">
-                              ANULADA
-                            </span>
-                          </div>
+                          <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-red-100 text-red-800 border border-red-200">
+                            ANULADA
+                          </span>
                         ) : isArchivada ? (
-                           <div className="flex justify-center">
-                             <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-slate-200 text-slate-600 border border-slate-300 italic">
-                               ARCHIVADA
-                             </span>
-                           </div>
+                           <span className="inline-flex items-center px-2 py-0.5 rounded-full text-[10px] font-medium bg-slate-200 text-slate-600 border border-slate-300 italic">
+                             ARCHIVADA
+                           </span>
                         ) : (
-                          <div className="flex items-center justify-center gap-1">
-                            {canMoveStatus(order, 'prev') && (
-                              <button 
-                                onClick={(e) => handleStatusChange(order, 'prev', e)}
-                                className="p-1 rounded-full hover:bg-slate-200 text-slate-600 print:hidden"
-                                title="Estado anterior"
-                              >
-                                <ArrowLeft className="h-4 w-4" />
-                              </button>
-                            )}
-                            <StatusBadge status={order.status} />
-                            {canMoveStatus(order, 'next') && (
-                              <button 
-                                onClick={(e) => handleStatusChange(order, 'next', e)}
-                                className="p-1 rounded-full hover:bg-slate-200 text-slate-600 print:hidden"
-                                title="Estado siguiente"
-                              >
-                                <ArrowRight className="h-4 w-4" />
-                              </button>
-                            )}
-                          </div>
+                           <StatusBadge status={order.status} />
                         )}
                       </td>
                       
-                      <td className="px-4 py-3 print:hidden">
-                        <div className="flex gap-1 justify-end">
+                      <td className="px-2 py-3 print:hidden whitespace-nowrap">
+                        <div className="flex gap-1 justify-center">
                           {actionConfig.showView && (
-                            <Button variant="ghost" size="icon" onClick={() => onViewOrder(order)} className="h-8 w-8 text-blue-600 hover:bg-blue-50" title="Ver detalles">
-                              <Eye className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" onClick={() => onViewOrder(order)} className="h-7 w-7 text-blue-600 hover:bg-blue-50" title="Ver detalles">
+                              <Eye className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {actionConfig.showEdit && canEdit(order.status) && (
-                            <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-8 w-8 text-amber-600 hover:bg-amber-50" title="Editar orden">
-                              <Edit className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-7 w-7 text-amber-600 hover:bg-amber-50" title="Editar orden">
+                              <Edit className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+                          {actionConfig.showClone && (
+                            <Button variant="ghost" size="icon" onClick={() => onCloneOrder(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
+                              <Copy className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {saldoReal > 0 && onAbonoOrder && (
-                            <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-8 w-8 text-emerald-600 hover:bg-emerald-50">
-                                <Coins className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50">
+                                <Coins className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           
-                          {/* 🔥 BASURERO SIEMPRE DISPONIBLE PARA ANULAR O ELIMINAR 🔥 */}
                           <Button 
                             variant="ghost" 
                             size="icon" 
                             onClick={() => { setDeleteConfirm(order.id); setCancelReason(''); }} 
-                            className="h-8 w-8 text-red-600 hover:bg-red-100 bg-red-50/50" 
+                            className="h-7 w-7 text-red-600 hover:bg-red-100 bg-red-50/50" 
                             title={isAnulada ? "Eliminar permanentemente" : "Anular orden"}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Trash2 className="h-3.5 w-3.5" />
                           </Button>
 
                           {actionConfig.showArchive && canArchive(order.status) && (
-                            <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-8 w-8 text-slate-600 hover:bg-slate-100" title="Archivar orden">
-                              <Archive className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Archivar orden">
+                              <Archive className="h-3.5 w-3.5" />
                             </Button>
                           )}
                           {actionConfig.showUnarchive && canUnarchive(order.status) && (
-                            <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-8 w-8 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
-                              <RotateCw className="h-4 w-4" />
+                            <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
+                              <RotateCw className="h-3.5 w-3.5" />
                             </Button>
                           )}
                         </div>
@@ -586,7 +586,7 @@ const OrdersPanel = ({
                 })
               ) : (
                 <tr>
-                  <td colSpan="13" className="px-4 py-8 text-center text-slate-500">
+                  <td colSpan="11" className="px-4 py-8 text-center text-slate-500">
                     No hay órdenes que coincidan con los filtros aplicados.
                   </td>
                 </tr>

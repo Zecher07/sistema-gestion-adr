@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Upload, FileText, DollarSign, ShieldAlert, Filter } from 'lucide-react';
+import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Upload, FileText, DollarSign, ShieldAlert, Filter, ArrowUpDown } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text';
 import { Switch } from '@/components/ui/switch';
@@ -18,6 +18,9 @@ const CatalogPanel = ({ user }) => {
   const [activeSearchTerm, setActiveSearchTerm] = useState('');
   
   const [selectedCategories, setSelectedCategories] = useState([]);
+
+  // 🔥 ESTADO DE ORDENAMIENTO (NUEVO) 🔥
+  const [sortConfig, setSortConfig] = useState({ key: 'nombre', direction: 'asc' });
 
   const canEditCatalog = user?.role === 'Administrador' || user?.role === 'Producción';
   const isReadOnly = !canEditCatalog; 
@@ -41,7 +44,7 @@ const CatalogPanel = ({ user }) => {
     try {
       let query = supabase.from('catalogo_productos').select('*');
       if (searchTerm) query = query.or(`nombre.ilike.%${searchTerm}%,codigo.ilike.%${searchTerm}%`);
-      query = query.order('categoria').order('nombre').limit(1000);
+      query = query.limit(1000); // Quitamos el order() de la base de datos para hacerlo en React
 
       const { data, error } = await query;
       if (error) throw error;
@@ -58,18 +61,66 @@ const CatalogPanel = ({ user }) => {
       return [...new Set(categories)].sort();
   }, [items]);
 
-  const filteredItems = React.useMemo(() => {
-      return items.filter(item => {
-          if (selectedCategories.length === 0) return true;
-          return selectedCategories.includes(item.categoria);
-      });
-  }, [items, selectedCategories]);
-
   const toggleCategory = (cat) => {
       setSelectedCategories(prev => 
           prev.includes(cat) ? prev.filter(c => c !== cat) : [...prev, cat]
       );
   };
+
+  // 🔥 FUNCIÓN PARA CAMBIAR EL ORDEN 🔥
+  const requestSort = (key) => {
+      let direction = 'asc';
+      if (sortConfig.key === key && sortConfig.direction === 'asc') {
+          direction = 'desc';
+      }
+      setSortConfig({ key, direction });
+  };
+
+  // 🔥 FILTRADO Y ORDENAMIENTO COMBINADOS 🔥
+  const processedItems = React.useMemo(() => {
+      // 1. Filtrar por categoría
+      let filtered = items.filter(item => {
+          if (selectedCategories.length === 0) return true;
+          return selectedCategories.includes(item.categoria);
+      });
+
+      // 2. Ordenar alfabéticamente o numéricamente
+      filtered.sort((a, b) => {
+          const aVal = a[sortConfig.key];
+          const bVal = b[sortConfig.key];
+
+          if (aVal === bVal) return 0;
+          if (aVal === null || aVal === undefined) return 1;
+          if (bVal === null || bVal === undefined) return -1;
+
+          if (typeof aVal === 'number' && typeof bVal === 'number') {
+              return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+          }
+
+          const aStr = String(aVal).toLowerCase();
+          const bStr = String(bVal).toLowerCase();
+
+          if (sortConfig.direction === 'asc') {
+              return aStr.localeCompare(bStr);
+          }
+          return bStr.localeCompare(aStr);
+      });
+
+      return filtered;
+  }, [items, selectedCategories, sortConfig]);
+
+  // 🔥 COMPONENTE DE CABECERA ORDENABLE 🔥
+  const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
+      <th 
+          className={`px-4 py-3 font-semibold cursor-pointer hover:bg-slate-700 transition-colors select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`} 
+          onClick={() => requestSort(sortKey)}
+      >
+          <div className={`flex items-center gap-1 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start'}`}>
+              {label}
+              <ArrowUpDown className={`h-3 w-3 ${sortConfig.key === sortKey ? 'text-purple-400 font-bold' : 'text-slate-400'}`} />
+          </div>
+      </th>
+  );
 
   const handleOpenModal = (item = null) => {
     if (isReadOnly) return;
@@ -98,7 +149,6 @@ const CatalogPanel = ({ user }) => {
     setIsModalOpen(true);
   };
 
-  // 🔥 AL QUITAR EL "Number()" EVITAMOS EL RELLENO AUTOMÁTICO DE CEROS 🔥
   const addTier = () => { setFormData(prev => ({ ...prev, precios_escalonados: [...prev.precios_escalonados, { cantidad: '', precio: '' }] })); };
   const updateTier = (index, field, value) => {
       const newTiers = [...formData.precios_escalonados];
@@ -343,18 +393,18 @@ const CatalogPanel = ({ user }) => {
                     <table className="w-full text-sm text-left">
                         <thead className="bg-slate-800 text-white">
                             <tr>
-                                <th className="px-4 py-3 font-semibold w-24">Código</th>
-                                <th className="px-4 py-3 font-semibold">Categoría / Producto</th>
-                                <th className="px-4 py-3 font-semibold text-center w-28">V. Mínima</th>
-                                <th className="px-4 py-3 font-semibold text-right w-48">Precios Público</th>
-                                <th className="px-4 py-3 font-semibold text-right w-48">Precios Distribuidor</th>
+                                <SortableHeader label="Código" sortKey="codigo" width="w-24" />
+                                <SortableHeader label="Categoría / Producto" sortKey="nombre" />
+                                <SortableHeader label="V. Mínima" sortKey="venta_minima" align="center" width="w-28" />
+                                <SortableHeader label="Precios Público" sortKey="precio" align="right" width="w-48" />
+                                <SortableHeader label="Precios Distribuidor" sortKey="precio_distribuidor" align="right" width="w-48" />
                                 {!isReadOnly && <th className="px-4 py-3 font-semibold text-center w-24">Acciones</th>}
                             </tr>
                         </thead>
                         <tbody className="divide-y divide-slate-200 bg-white">
                             {loading ? <tr><td colSpan="6" className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando...</td></tr>
-                            : filteredItems.length === 0 ? <tr><td colSpan="6" className="text-center py-10 text-slate-500">No se encontraron productos con estos filtros.</td></tr>
-                            : filteredItems.map(item => (
+                            : processedItems.length === 0 ? <tr><td colSpan="6" className="text-center py-10 text-slate-500">No se encontraron productos con estos filtros.</td></tr>
+                            : processedItems.map(item => (
                                     <tr key={item.id} className="hover:bg-purple-50 transition-colors">
                                         <td className="px-4 py-3 font-mono text-xs font-bold text-slate-500 align-top">{item.codigo || '-'}</td>
                                         <td className="px-4 py-3 align-top">
@@ -451,10 +501,19 @@ const CatalogPanel = ({ user }) => {
                                 <div className="flex flex-wrap items-center gap-4">
                                     <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-md border border-red-100">
                                         <label className="text-xs font-bold text-red-700 flex items-center gap-1"><ShieldAlert className="h-3 w-3"/> Venta Mínima:</label>
-                                        <Input type="number" step="0.01" min="0.01" value={formData.venta_minima} onChange={e => setFormData({...formData, venta_minima: e.target.value})} className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" />
+                                        <Input 
+                                           type="number" 
+                                           step={formData.es_por_metro ? "0.01" : "1"} 
+                                           min={formData.es_por_metro ? "0.01" : "1"} 
+                                           value={formData.venta_minima} 
+                                           onChange={e => setFormData({...formData, venta_minima: e.target.value})} 
+                                           onKeyDown={e => {
+                                               if (!formData.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
+                                           }}
+                                           className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" 
+                                        />
                                     </div>
                                     
-                                    {/* 🔥 TEXTO ACTUALIZADO 🔥 */}
                                     <div className="flex items-center gap-2 bg-purple-50 px-3 py-1.5 rounded-md border border-purple-200">
                                         <label htmlFor="metro-switch" className="text-xs font-bold text-purple-800 cursor-pointer select-none">Se cobra por Metro</label>
                                         <Switch id="metro-switch" checked={formData.es_por_metro} onCheckedChange={(c) => setFormData({...formData, es_por_metro: c})} />
@@ -485,7 +544,17 @@ const CatalogPanel = ({ user }) => {
                                                 {formData.precios_escalonados.map((tier, index) => (
                                                     <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-slate-200">
                                                         <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                        <Input type="number" step="0.01" min="0.01" value={tier.cantidad} onChange={e => updateTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
+                                                        <Input 
+                                                           type="number" 
+                                                           step={formData.es_por_metro ? "0.01" : "1"} 
+                                                           min={formData.es_por_metro ? "0.01" : "1"} 
+                                                           value={tier.cantidad} 
+                                                           onChange={e => updateTier(index, 'cantidad', e.target.value)} 
+                                                           onKeyDown={e => {
+                                                               if (!formData.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
+                                                           }}
+                                                           className="h-8 text-xs font-bold w-20 text-center bg-slate-50"
+                                                        />
                                                         <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
                                                         <span className="text-[10px] text-green-700 font-bold ml-auto mr-1">Baja a: $</span>
                                                         <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateTier(index, 'precio', e.target.value)} className="h-8 text-xs border-green-300 bg-green-50 font-bold text-green-700 w-24 text-right"/>
@@ -515,7 +584,17 @@ const CatalogPanel = ({ user }) => {
                                                     {formData.precios_distribuidor.map((tier, index) => (
                                                         <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-blue-200">
                                                             <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                            <Input type="number" step="0.01" min="0.01" value={tier.cantidad} onChange={e => updateDistTier(index, 'cantidad', e.target.value)} className="h-8 text-xs font-bold w-20 text-center bg-slate-50"/>
+                                                            <Input 
+                                                               type="number" 
+                                                               step={formData.es_por_metro ? "0.01" : "1"} 
+                                                               min={formData.es_por_metro ? "0.01" : "1"} 
+                                                               value={tier.cantidad} 
+                                                               onChange={e => updateDistTier(index, 'cantidad', e.target.value)} 
+                                                               onKeyDown={e => {
+                                                                   if (!formData.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
+                                                               }}
+                                                               className="h-8 text-xs font-bold w-20 text-center bg-slate-50"
+                                                            />
                                                             <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
                                                             <span className="text-[10px] text-blue-700 font-bold ml-auto mr-1">Baja a: $</span>
                                                             <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateDistTier(index, 'precio', e.target.value)} className="h-8 text-xs border-blue-300 bg-blue-50 font-bold text-blue-800 w-24 text-right"/>

@@ -315,10 +315,24 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
                                   </div>
                               )}
                            </td>
-                           <td className="p-2 relative align-top pt-3">
-                               <Input type="number" step="0.01" className="text-center h-9 font-bold" min={row.venta_minima || 1} value={row.cantidad||''} onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} onBlur={(e) => handleQuantityBlur(idx, e.target.value)} />
-                               {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
-                           </td>
+                          <td className="p-2 relative align-top pt-3">
+                            <Input 
+                              type="number" 
+                              step={row.es_por_metro ? "0.01" : "1"}
+                              className="text-center h-9 font-bold" 
+                              min={row.venta_minima || 1} 
+                              value={row.cantidad || ''} 
+                              onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} 
+                              onKeyDown={e => {
+                                  // 🔥 MAGIA: Bloquea el punto y la coma si NO es por metro
+                                  if (!row.es_por_metro && (e.key === '.' || e.key === ',')) {
+                                      e.preventDefault();
+                                  }
+                              }}
+                              onBlur={(e) => handleQuantityBlur(idx, e.target.value)} 
+                            />
+                            {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                        </td>
                            <td className="p-2 align-top pt-3"><Input type="number" className="text-right h-9 font-bold text-green-700" min="0" step="0.01" value={row.precioUnitario||''} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
                            <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">
                                ${Number(row.total || 0).toFixed(2)}

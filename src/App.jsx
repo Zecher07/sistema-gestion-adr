@@ -351,17 +351,26 @@ function App() {
        if (currentView === 'ordenes-sin-factura') filtered = filtered.filter(o => !o.financials?.iva);
        if (currentView === 'ordenes-con-factura') filtered = filtered.filter(o => o.financials?.iva > 0);
        if (currentView === 'ordenes-archivadas') filtered = orders.filter(o => o.status === 'ARCHIVADA');
+       
+       // 🔥 NUEVO FILTRO INTELIGENTE PARA LA VISTA DE CRÉDITOS 🔥
+       if (currentView === 'ordenes-credito') {
+           filtered = filtered.filter(o => {
+               const pA = String(o.formaPagoAnticipo || o.forma_pago_anticipo || '');
+               const pS = String(o.formaPagoSaldo || o.financials?.formaPagoSaldo || '');
+               return pA.includes('Crédito') || pS.includes('Crédito') || pA.includes('Credito') || pS.includes('Credito');
+           });
+       }
 
        return (
           <div className="space-y-6 animate-in fade-in">
-            {(user.role === 'Administrador' || user.role === 'Vendedor') && <Stats orders={orders} />}
+            {(user.role === 'Administrador' || user.role === 'Vendedor') && <Stats orders={orders} user={user} />}
             <OrdersPanel orders={filtered} user={user} onUpdateStatus={() => {}} onDeleteOrder={async (id) => { await supabase.from('ordenes').delete().eq('id', id); }} onEditOrder={setEditingOrder} onCloneOrder={setCloningOrder} onPaymentOrder={setPaymentOrder} onCreateOrder={() => setShowForm(true)} onViewOrder={(o) => handleViewOrder(o, null)} currentView={currentView} onAbonoOrder={setAbonoOrder} />
           </div>
        );
     }
 
     switch (currentView) {
-      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div></div> );
+      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} user={user} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div></div> );
       case 'clientes-nuevo': return <ClientForm user={user} onSuccess={handleClientSuccess} onCancel={() => setCurrentView('clientes-lista')}/>;
       case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div>;
       case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' onAbonoOrder={setAbonoOrder} /></div>;
@@ -383,15 +392,17 @@ function App() {
         <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} /><div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
+      {/* 🔥 ENVIAMOS LA PROPIEDAD "orders" PARA QUE CALCULE EL CRÉDITO DISPONIBLE 🔥 */}
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
           <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
-            <OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} onSuccess={handleOrderSuccess} onCancel={() => { setShowForm(false); setCloningOrder(null); setEditingOrder(null); setProformaToConvertId(null); }} initialData={editingOrder || cloningOrder} nextOrderNumber={getNextOrderNumber()} onCheckAvailability={() => setShowAvailabilityModal(true)} onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} />
+            <OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} orders={orders} onSuccess={handleOrderSuccess} onCancel={() => { setShowForm(false); setCloningOrder(null); setEditingOrder(null); setProformaToConvertId(null); }} initialData={editingOrder || cloningOrder} nextOrderNumber={getNextOrderNumber()} onCheckAvailability={() => setShowAvailabilityModal(true)} onCreateClient={() => { setEditingClient(null); setShowClientFormModal(true); }} />
           </div>
         </div>
       )}
 
-      {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
+      {/* 🔥 ENVIAMOS LA PROPIEDAD "orders" AQUÍ TAMBIÉN 🔥 */}
+      {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} orders={orders} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
       
       {showClientFormModal && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print"><ClientForm user={user} clienteAEditar={editingClient} onSuccess={() => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); }} onCancel={() => { setShowClientFormModal(false); setEditingClient(null); }} /></div>)}
       
