@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useCallback, memo } from 'react';
+import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
 import { motion } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
 import { 
@@ -96,7 +96,8 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
-const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
+// 🔥 SE AÑADIÓ LA PROPIEDAD "orders" PARA CALCULAR LA DEUDA 🔥
+const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
   const isAdmin = currentUser?.role === 'Administrador';
@@ -135,13 +136,42 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, completed: false, es_por_metro: false }), 
+    productos: Array(5).fill({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
     descuentoPorcentaje: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', esDistribuidor: false
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
+
+  // ==========================================
+  // 🔥 LÓGICA PARA LÍMITES DE CRÉDITO 🔥
+  // ==========================================
+  const selectedClientData = useMemo(() => {
+      return localClients.find(c => c.id === formData.clienteId) || null;
+  }, [localClients, formData.clienteId]);
+
+  const limiteCredito = selectedClientData?.permiteCredito ? Number(selectedClientData.limiteCredito) || 0 : 0;
+  
+  const deudaActual = useMemo(() => {
+      if (!formData.clienteId) return 0;
+      let deuda = 0;
+      orders.forEach(o => {
+          if (initialData?.id && o.id === initialData.id) return; // Excluye la orden actual si la está editando
+          
+          if (o.cliente_id === formData.clienteId && o.status !== 'ANULADA' && o.status !== 'ARCHIVADA') {
+              const total = Number(o.financials?.total) || 0;
+              const anticipo = Number(o.anticipo) || 0;
+              const retencion = Number(o.retencion) || 0;
+              const abonos = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+              const saldo = Math.max(total - anticipo - retencion - abonos, 0);
+              deuda += saldo;
+          }
+      });
+      return deuda;
+  }, [formData.clienteId, orders, initialData]);
+  
+  const creditoDisponible = Math.max(limiteCredito - deudaActual, 0);
 
   useEffect(() => {
     const fetchGlobalConfig = async () => {
@@ -217,10 +247,23 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
-        imagenes: initialData.imagenes || [], notas: initialData.notas || '', descuentoPorcentaje: savedPercent, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
+        imagenes: initialData.imagenes || [],
+        notas: initialData.notas || '', descuentoPorcentaje: savedPercent, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
         esDistribuidor: initialData.esDistribuidor || false
       }));
       
+      if (initialData.id && (!initialData.imagenes || initialData.imagenes.length === 0)) {
+          const fetchImages = async () => {
+              try {
+                  const { data } = await supabase.from('ordenes').select('imagenes').eq('id', initialData.id).single();
+                  if (data && Array.isArray(data.imagenes)) {
+                      setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
+                  }
+              } catch (e) { console.error("No se pudieron cargar las fotos en edición"); }
+          };
+          fetchImages();
+      }
+
       setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
       setSearchTerm(initialData.cliente_nombre || initialData.cliente || '');
@@ -238,14 +281,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, es_por_metro: false }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }) }));
     }
   }, []);
 
   useEffect(() => {
     const subtotal = formData.productos.reduce((sum, p) => {
       if (!p.descripcion && !p.nombre) return sum;
-      return sum + (Number(p.total) || 0); // 🔥 SUMA EL TOTAL YA CALCULADO PARA RESPETAR EL METRO 🔥
+      return sum + (Number(p.total) || 0); 
     }, 0);
 
     const descuentoVal = subtotal * (formData.descuentoPorcentaje / 100);
@@ -359,11 +402,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
         const newProduct = {
-            cantidad: minQty,
-            venta_minima: minQty,
-            descripcion: finalDesc,
-            precioUnitario: computedPrice,
-            precioBaseOriginal: Number(item.precio) || 0,
+            cantidad: minQty, venta_minima: minQty, descripcion: finalDesc,
+            precioUnitario: computedPrice, precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
             precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
             precios_distribuidor: item.precios_distribuidor || [],
@@ -385,9 +425,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
     toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
   };
 
-  // 🔥 BÚSQUEDA INTELIGENTE 🔥
   const handleProductSearchRequest = async (index, value) => {
-      handleProductChange(index, 'descripcion', value);
+      updateProduct(index, 'descripcion', value);
       if (value.trim().length < 2) {
           setProductSuggestions([]);
           setActiveProductSearchRow(null);
@@ -454,7 +493,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         if (field === 'cantidad' || field === 'precioUnitario') {
             const qty = Number(item.cantidad) || 0;
             const price = Number(item.precioUnitario) || 0;
-            // 🔥 TOTAL RESPETA SI ES POR METRO O MULTIPLICADO 🔥
             item.total = item.es_por_metro ? price : qty * price;
         }
 
@@ -465,11 +503,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         newProducts[index] = item;
         return { ...prev, productos: newProducts };
     });
-  };
-
-  // Mantengo la función vieja que usabas antes para compatibilidad, redirige a la nueva
-  const handleProductChange = (index, field, value) => {
-      updateProduct(index, field, value);
   };
 
   const handleQuantityBlur = (index, value) => {
@@ -492,7 +525,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
     });
   };
 
-  // 🔥 BOTÓN AÑADIR ITEM MANUAL 🔥
   const addProduct = () => {
     setFormData(prev => ({
         ...prev,
@@ -535,7 +567,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
               const compressed = await compressImage(file);
               newImages.push(compressed);
           } catch (e) {
-              console.error(e);
               toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" });
           }
       }
@@ -566,7 +597,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         setIsCancelModalOpen(false);
         if(onSuccess) onSuccess();
     } catch (error) {
-        console.error(error);
         toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
     } finally {
         setLoading(false);
@@ -592,8 +622,41 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         setLoading(false); return;
     }
 
+    // ==============================================
+    // 🔥 VALIDACIÓN ESTRICTA DEL LÍMITE DE CRÉDITO 🔥
+    // ==============================================
+    const isCreditoAnticipo = formData.formaPagoAnticipo === 'Crédito';
+    const isCreditoSaldo = paymentMode === 'partial' && formData.formaPagoSaldo === 'Crédito';
+
+    if (isCreditoAnticipo || isCreditoSaldo) {
+        if (!selectedClientData?.permiteCredito) {
+            toast({ title: "Crédito no autorizado", description: "Este cliente no tiene crédito habilitado.", variant: "destructive" });
+            setLoading(false); return;
+        }
+        
+        let montoUsandoCredito = 0;
+        if (isCreditoAnticipo && paymentMode === 'full') {
+            montoUsandoCredito += (financials.total - formData.retencion);
+        } else if (isCreditoAnticipo && paymentMode === 'partial') {
+            montoUsandoCredito += (parseFloat(formData.anticipo) || 0);
+        }
+        
+        if (isCreditoSaldo && paymentMode === 'partial') {
+            montoUsandoCredito += (parseFloat(financials.saldoPendiente) || 0);
+        }
+        
+        if (montoUsandoCredito > creditoDisponible + 0.05) { 
+            toast({ 
+                title: "Límite de crédito excedido", 
+                description: `El cliente solo dispone de $${creditoDisponible.toFixed(2)}. Intentas aplicar $${montoUsandoCredito.toFixed(2)} a crédito.`, 
+                variant: "destructive" 
+            });
+            setLoading(false); return;
+        }
+    }
+
     let finalPaymentString = formData.formaPagoAnticipo;
-    if (formData.formaPagoAnticipo !== 'Efectivo' && formData.referenciaPago) {
+    if (formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.referenciaPago) {
         finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
     }
 
@@ -696,8 +759,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                    
                    {formData.origenProformaInfo && (
                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
-                           <Info className="h-3 w-3" />
-                           Proviene de: Proforma #{formData.origenProformaInfo}
+                           <Info className="h-3 w-3" /> Proviene de: Proforma #{formData.origenProformaInfo}
                        </span>
                    )}
                 </div>
@@ -734,18 +796,39 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Cliente:</label>
                 <div className="col-span-12 md:col-span-10 relative" ref={searchRef}>
-                   <div className="flex items-center gap-2 w-full md:w-1/2">
-                       <div className="relative w-full">
-                           <input type="text" className={`w-full border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none pl-8 ${formData.clienteId ? 'bg-green-50 border-green-400' : ''}`} placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearching(true); if(e.target.value==='') setFormData(p=>({...p, clienteId:''})); }} onFocus={() => setIsSearching(true)} readOnly={isReadOnly} />
-                           <Search className="absolute left-2 top-1.5 h-4 w-4 text-slate-400" />
-                           {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
+                   <div className="flex flex-col gap-2 w-full md:w-1/2">
+                       <div className="flex items-center gap-2 w-full">
+                           <div className="relative w-full">
+                               <input type="text" className={`w-full border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none pl-8 ${formData.clienteId ? 'bg-green-50 border-green-400' : ''}`} placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearching(true); if(e.target.value==='') setFormData(p=>({...p, clienteId:''})); }} onFocus={() => setIsSearching(true)} readOnly={isReadOnly} />
+                               <Search className="absolute left-2 top-1.5 h-4 w-4 text-slate-400" />
+                               {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
+                           </div>
+                           {!isReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
                        </div>
-                       {!isReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
-                   </div>
 
-                   <div className="mt-2 flex items-center gap-2 p-2 bg-blue-50/50 border border-blue-100 rounded-md w-fit">
-                        <Switch id="chk-dist" checked={formData.esDistribuidor} onCheckedChange={handleDistribuidorToggle} disabled={isReadOnly} />
-                        <label htmlFor="chk-dist" className="text-xs font-bold text-blue-800 cursor-pointer select-none">Aplicar tarifas de Distribuidor a esta orden</label>
+                       {/* 🔥 INFORMACIÓN DEL LÍMITE DE CRÉDITO DEL CLIENTE 🔥 */}
+                       {formData.clienteId && (
+                           <div>
+                               {selectedClientData?.permiteCredito ? (
+                                   <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border bg-indigo-50 border-indigo-200 text-indigo-700 text-xs font-bold">
+                                       <span>Límite Crédito: ${limiteCredito.toFixed(2)}</span>
+                                       <span className="text-indigo-300">|</span>
+                                       <span className={creditoDisponible <= 0 ? 'text-red-600' : 'text-indigo-700'}>
+                                           Disponible: ${creditoDisponible.toFixed(2)}
+                                       </span>
+                                   </div>
+                               ) : (
+                                   <span className="inline-flex px-2.5 py-1 rounded-md border bg-slate-100 border-slate-200 text-slate-500 text-xs font-medium italic">
+                                       Cliente sin crédito habilitado
+                                   </span>
+                               )}
+                           </div>
+                       )}
+
+                       <div className="mt-1 flex items-center gap-2 p-2 bg-blue-50/50 border border-blue-100 rounded-md w-fit">
+                            <Switch id="chk-dist" checked={formData.esDistribuidor} onCheckedChange={handleDistribuidorToggle} disabled={isReadOnly} />
+                            <label htmlFor="chk-dist" className="text-xs font-bold text-blue-800 cursor-pointer select-none">Aplicar tarifas de Distribuidor a esta orden</label>
+                       </div>
                    </div>
                    
                    {isSearching && (
@@ -772,7 +855,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
           <div className="space-y-2">
              <div className="flex justify-between items-center mb-1">
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
-                 {/* 🔥 BOTONES DE CATÁLOGO E ITEM MANUAL 🔥 */}
                  <div className="flex gap-2">
                      <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
                          <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
@@ -832,10 +914,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                              
                              <td className="py-2 px-2 relative align-top pt-4">
                                  <input 
-                                    type="number" step="0.01" min="0.01"
+                                    type="number" 
+                                    step={row.es_por_metro ? "0.01" : "1"} 
+                                    min={row.venta_minima || 1}
                                     className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold h-9" 
-                                    value={row.cantidad||''} 
+                                    value={row.cantidad || ''} 
                                     onChange={e => updateProduct(idx, 'cantidad', e.target.value)} 
+                                    onKeyDown={e => {
+                                        if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
+                                    }}
                                     onBlur={e => handleQuantityBlur(idx, e.target.value)}
                                     readOnly={isReadOnly}
                                  />
@@ -911,7 +998,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                    
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
-                      <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select>
+                      <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>
+                          {PAYMENT_METHODS.map(m => (
+                               <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
+                                   {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
+                               </option>
+                          ))}
+                      </select>
                    </div>
 
                    {formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.formaPagoAnticipo !== 'No aplica' && (
@@ -956,7 +1049,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
                             </div>
                         </div>
                         
-                        <div className="flex items-center gap-2"><label className="text-xs font-bold w-20">Forma Saldo:</label><select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})} disabled={mode==='read_only'}>{PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}</select></div>
+                        <div className="flex items-center gap-2">
+                           <label className="text-xs font-bold w-20">Forma Saldo:</label>
+                           <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})} disabled={mode==='read_only'}>
+                               {PAYMENT_METHODS.map(m => (
+                                    <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
+                                        {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
+                                    </option>
+                               ))}
+                           </select>
+                        </div>
                         
                         {formData.formaPagoSaldo === 'Crédito' && (
                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
@@ -1041,11 +1143,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], onSuccess, onCa
         </div>
       )}
 
-      {/* MODAL PARA CREAR NUEVO CLIENTE */}
       {showNewClientModal && (
         <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200 p-4">
             <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-lg">Nuevo Cliente</h3><Button size="sm" variant="ghost" onClick={()=>setShowNewClientModal(false)}><X/></Button></div>
-            <div className="flex-1 overflow-y-auto"><ClientForm onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={{nombre: searchTerm}} /></div>
+            <div className="flex-1 overflow-y-auto"><ClientForm user={currentUser} onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={{nombre: searchTerm}} /></div>
         </div>
       )}
 

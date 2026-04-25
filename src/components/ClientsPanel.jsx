@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react'
 import { supabase } from '../supabaseClient'
-import { Search, Plus, FileDown, Printer, Pencil, Trash2, Eye, User, FileText, Phone, ShoppingCart, DollarSign, Wallet, ShieldAlert, History, X, Edit2 } from 'lucide-react'
+import { Search, Plus, FileDown, Printer, Pencil, Trash2, Eye, User, FileText, Phone, ShoppingCart, DollarSign, Wallet, ShieldAlert, History, X, Edit2, ArrowUpDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/Text'
 import { useToast } from '@/components/ui/use-toast'
@@ -14,11 +14,12 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
   const [ordenesCliente, setOrdenesCliente] = useState([])
   const [loadingExpediente, setLoadingExpediente] = useState(false)
 
+  // 🔥 ESTADO DE ORDENAMIENTO 🔥
+  const [sortConfig, setSortConfig] = useState({ key: 'nombre', direction: 'asc' });
+
   const { toast } = useToast()
 
   // 🔥 VALIDACIÓN DE PERMISOS 🔥
-  // Todos pueden Editar.
-  // Solo Admin y Contab pueden Borrar y ver el detalle profundo de la orden en el historial.
   const canDelete = user?.role === 'Administrador' || user?.role === 'Contabilidad';
   const canViewOrderDetails = user?.role === 'Administrador' || user?.role === 'Contabilidad';
 
@@ -33,6 +34,40 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
           );
       });
   }, [clients, searchTerm]);
+
+  // 🔥 LÓGICA DE ORDENAMIENTO 🔥
+  const requestSort = (key) => {
+    let direction = 'asc';
+    if (sortConfig.key === key && sortConfig.direction === 'asc') direction = 'desc';
+    setSortConfig({ key, direction });
+  };
+
+  const sortedClients = useMemo(() => {
+    let sortableItems = [...clientesFiltrados];
+    sortableItems.sort((a, b) => {
+      let aVal = a[sortConfig.key];
+      let bVal = b[sortConfig.key];
+
+      // Caso especial para ordenar por límite de crédito
+      if (sortConfig.key === 'limiteCredito') {
+        aVal = a.permiteCredito ? Number(a.limiteCredito || 0) : -1;
+        bVal = b.permiteCredito ? Number(b.limiteCredito || 0) : -1;
+      }
+
+      if (aVal === bVal) return 0;
+      if (aVal === null || aVal === undefined) return 1;
+      if (bVal === null || bVal === undefined) return -1;
+
+      if (typeof aVal === 'number' && typeof bVal === 'number') {
+        return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
+      }
+
+      const aStr = String(aVal).toLowerCase();
+      const bStr = String(bVal).toLowerCase();
+      return sortConfig.direction === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+    });
+    return sortableItems;
+  }, [clientesFiltrados, sortConfig]);
 
   const handleVerExpediente = (cliente) => {
       setClienteExpediente(cliente);
@@ -64,7 +99,7 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
 
   const handleExport = () => {
     const cabeceras = "Nombre,RUC/Cedula,Email,Telefono,Direccion\n"
-    const filas = clientesFiltrados.map(c => 
+    const filas = sortedClients.map(c => 
       `${c.nombre},${c.empresa || ''},${c.email || ''},${c.telefono || ''},"${c.direccion || ''}"`
     ).join("\n")
     const blob = new Blob([cabeceras + filas], { type: 'text/csv' })
@@ -106,6 +141,19 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
   }, [clienteExpediente, ordenesCliente]);
 
   const formatCurrency = (val) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(val || 0);
+
+  // 🔥 COMPONENTE DE CABECERA ORDENABLE 🔥
+  const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
+      <th 
+          className={`px-6 py-4 font-bold cursor-pointer hover:bg-slate-200 transition-colors select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`} 
+          onClick={() => requestSort(sortKey)}
+      >
+          <div className={`flex items-center gap-1 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start'}`}>
+              {label}
+              <ArrowUpDown className={`h-3 w-3 ${sortConfig.key === sortKey ? 'text-blue-600' : 'text-slate-400'}`} />
+          </div>
+      </th>
+  );
 
   return (
     <div id="printable-area" className="p-6 space-y-6 animate-in fade-in duration-500 relative bg-slate-50 min-h-screen">
@@ -151,20 +199,22 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 text-slate-700 font-bold uppercase text-xs print:bg-white print:border-b-2 print:border-black">
+              {/* 🔥 APLICAMOS HEADERS ORDENABLES 🔥 */}
               <tr>
-                <th className="px-6 py-4">Razón Social</th>
-                <th className="px-6 py-4">Email</th>
-                <th className="px-6 py-4">Ced / RUC</th>
-                <th className="px-6 py-4">Dirección</th>
-                <th className="px-6 py-4 text-center">Estado Crédito</th>
+                <SortableHeader label="Razón Social" sortKey="nombre" />
+                <SortableHeader label="Email" sortKey="email" />
+                <SortableHeader label="Ced / RUC" sortKey="empresa" />
+                <SortableHeader label="Dirección" sortKey="direccion" />
+                <SortableHeader label="Estado Crédito" sortKey="limiteCredito" align="center" />
                 <th className="px-6 py-4 text-center no-print">Acciones</th>
               </tr>
             </thead>
             <tbody className="divide-y divide-slate-100 print:divide-slate-300">
-              {clientesFiltrados.length === 0 ? (
+              {sortedClients.length === 0 ? (
                 <tr><td colSpan="6" className="text-center py-12 text-slate-500">No se encontraron clientes.</td></tr>
               ) : (
-                clientesFiltrados.map((cliente) => (
+                // 🔥 ITERAMOS SOBRE sortedClients EN VEZ DE clientesFiltrados 🔥
+                sortedClients.map((cliente) => (
                   <tr key={cliente.id} className="hover:bg-slate-50 transition-colors print:hover:bg-transparent">
                     <td className="px-6 py-4 font-medium text-slate-900">{cliente.nombre}</td>
                     <td className="px-6 py-4 text-slate-600">{cliente.email || '-'}</td>
@@ -209,7 +259,7 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
           </table>
         </div>
         <div className="bg-slate-50 border-t border-slate-200 px-6 py-4 text-xs text-slate-500 print:bg-white print:mt-4 print:text-right">
-          Total de registros: {clientesFiltrados.length}
+          Total de registros: {sortedClients.length}
         </div>
       </div>
 

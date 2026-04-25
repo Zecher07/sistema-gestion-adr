@@ -1,27 +1,50 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, Play, CheckCircle2, Search, Loader2, DollarSign } from 'lucide-react';
+import { X, Printer, Image as ImageIcon, ArrowRightCircle, Archive, Edit2, FileText, Ban, Play, CheckCircle2, Search, Loader2, DollarSign, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '../supabaseClient';
+import { useDropzone } from 'react-dropzone';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- 🔥 FUNCIÓN PARA LIMPIAR NOTAS DEL PDF 🔥 ---
+// --- FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_WIDTH = 1024; 
+                let width = img.width;
+                let height = img.height;
+                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                resolve({ name: file.name, url: dataUrl });
+            };
+        };
+    });
+};
+
 const getPrintDesc = (prod) => {
     const text = prod.descripcion || prod.nombre || '';
-    // Busca todo lo que esté entre "[Nota:" y "]" y lo borra para la impresión
-    if (text.includes('[Nota:')) {
-        return text.split('[Nota:')[0].trim();
-    }
-    return text.trim();
+    return text.split(/\[?nota:/i)[0].trim();
 };
 
 const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) => {
+    // Código idéntico y optimizado (sin cambios)
     const { toast } = useToast();
     const isProduction = user?.role === 'Producción' || user?.role === 'Administrador';
+    const showFinancials = user?.role !== 'Producción'; 
     const status = product.estado_prod || 'PENDIENTE';
     const [loading, setLoading] = useState(false);
     
@@ -110,9 +133,9 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
         <tr className="hover:bg-slate-50 border-b border-slate-200">
              <td className="px-4 py-4 text-center text-slate-500 font-medium align-top">{index + 1}</td>
              <td className="px-4 py-4 font-bold text-slate-900 uppercase align-top whitespace-pre-wrap">{product.descripcion || product.nombre}</td>
-             <td className="px-4 py-4 text-right text-slate-600 align-top">{formatCurrency(product.precio || product.precioUnitario)}</td>
+             {showFinancials && <td className="px-4 py-4 text-right text-slate-600 align-top">{formatCurrency(product.precio || product.precioUnitario)}</td>}
              <td className="px-4 py-4 text-center text-slate-600 font-bold align-top">{product.cantidad}</td>
-             <td className="px-4 py-4 text-right font-bold text-slate-900 align-top">{formatCurrency(product.total || ((product.precio || product.precioUnitario) * product.cantidad))}</td>
+             {showFinancials && <td className="px-4 py-4 text-right font-bold text-slate-900 align-top">{formatCurrency(product.total || ((product.precio || product.precioUnitario) * product.cantidad))}</td>}
              
              <td className="px-4 py-3 align-top min-w-[280px] bg-slate-50/50 border-l border-slate-200">
                   {status === 'PENDIENTE' && (
@@ -204,9 +227,18 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const { toast } = useToast();
   const [localProducts, setLocalProducts] = useState([]);
   const [localVendedor, setLocalVendedor] = useState('');
+  
   const [localImages, setLocalImages] = useState([]); 
-  const [loadingImages, setLoadingImages] = useState(false); // 🔥 ESTADO NUEVO 🔥
+  const [loadingImages, setLoadingImages] = useState(false); 
   const [isAdvancing, setIsAdvancing] = useState(false);
+
+  // 🔥 ESTADOS PARA COMPROBANTES DE PAGO 🔥
+  const [localComprobantes, setLocalComprobantes] = useState([]);
+  const [loadingComprobantes, setLoadingComprobantes] = useState(false);
+  const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
+  
+  const showFinancials = user?.role !== 'Producción'; 
+  const isAdmin = user?.role === 'Administrador';
 
   useEffect(() => {
     if (order) {
@@ -216,36 +248,68 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
       setPreviewImage(null);
       document.body.style.overflow = 'hidden';
 
-      // 🔥 MAGIA AHORRADORA DE DATOS: Descargamos las fotos SOLO al abrir este modal 🔥
       const fetchImages = async () => {
           setLoadingImages(true);
           try {
-              const { data, error } = await supabase
-                  .from('ordenes')
-                  .select('imagenes')
-                  .eq('id', order.id)
-                  .single();
-                  
-              if (data && Array.isArray(data.imagenes) && data.imagenes.length > 0) {
-                  setLocalImages(data.imagenes);
-              } else {
-                  setLocalImages([]);
-              }
-          } catch (err) {
-              console.error("Error cargando imágenes:", err);
-              setLocalImages([]);
-          } finally {
-              setLoadingImages(false);
-          }
+              const { data } = await supabase.from('ordenes').select('imagenes').eq('id', order.id).single();
+              if (data && Array.isArray(data.imagenes) && data.imagenes.length > 0) setLocalImages(data.imagenes);
+              else setLocalImages([]);
+          } catch (err) { setLocalImages([]); } 
+          finally { setLoadingImages(false); }
       };
 
-      fetchImages(); // Ejecutamos la descarga ligera
+      // 🔥 FETCH COMPROBANTES 🔥
+      const fetchComprobantes = async () => {
+          if (!showFinancials) return;
+          setLoadingComprobantes(true);
+          try {
+              const { data } = await supabase.from('ordenes').select('comprobantes').eq('id', order.id).single();
+              if (data && Array.isArray(data.comprobantes) && data.comprobantes.length > 0) setLocalComprobantes(data.comprobantes);
+              else setLocalComprobantes([]);
+          } catch (err) { setLocalComprobantes([]); } 
+          finally { setLoadingComprobantes(false); }
+      };
+
+      fetchImages(); 
+      fetchComprobantes();
     }
     
     return () => { document.body.style.overflow = 'unset'; };
-  }, [order]);
+  }, [order, showFinancials]);
 
-  const isAdmin = user?.role === 'Administrador';
+  // 🔥 LÓGICA DE SUBIDA DE COMPROBANTES 🔥
+  const handleAddComprobantes = async (files) => {
+      setIsProcessingComprobantes(true);
+      const newImages = [];
+      for (const file of files) {
+          if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
+      }
+      const updatedComprobantes = [...localComprobantes, ...newImages];
+      setLocalComprobantes(updatedComprobantes);
+      
+      try {
+          await supabase.from('ordenes').update({ comprobantes: updatedComprobantes }).eq('id', order.id);
+          toast({title: "Comprobante de pago guardado"});
+      } catch(e) { toast({title: "Error al guardar en base de datos", variant: "destructive"}); }
+      setIsProcessingComprobantes(false);
+  };
+
+  const removeComprobante = async (index) => {
+      if (!isAdmin && user.role !== 'Contabilidad') return;
+      const updated = localComprobantes.filter((_, i) => i !== index);
+      setLocalComprobantes(updated);
+      try {
+          await supabase.from('ordenes').update({ comprobantes: updated }).eq('id', order.id);
+      } catch(e) {}
+  };
+
+  const onDropComprobantes = useCallback(acceptedFiles => { handleAddComprobantes(acceptedFiles); }, [localComprobantes]);
+  const { getRootProps: getRootPropsComp, getInputProps: getInputPropsComp } = useDropzone({ onDrop: onDropComprobantes, accept: {'image/*': []}, disabled: isProcessingComprobantes || (!isAdmin && user.role !== 'Contabilidad' && user.role !== 'Vendedor') });
+
   const validSellers = useMemo(() => removeDuplicateUsers(getValidSellers(staffUsers)), [staffUsers]);
   const allProductsFinished = useMemo(() => {
       if (!localProducts || localProducts.length === 0) return true;
@@ -379,10 +443,14 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     {canEdit && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2" onClick={() => onUpdateOrder && onUpdateOrder()}><Edit2 className="h-4 w-4" /> Editar Orden</Button>}
                     
                     <div className="flex bg-slate-100 rounded-md p-1 border border-slate-200">
-                        <Button size="sm" variant="ghost" className="text-blue-700 hover:bg-blue-200 hover:text-blue-800 gap-2 font-bold" onClick={() => handlePrint('sri')}>
-                            <Printer className="h-4 w-4" /> SRI
-                        </Button>
-                        <div className="w-px bg-slate-300 mx-1"></div>
+                        {showFinancials && (
+                            <>
+                                <Button size="sm" variant="ghost" className="text-blue-700 hover:bg-blue-200 hover:text-blue-800 gap-2 font-bold" onClick={() => handlePrint('sri')}>
+                                    <Printer className="h-4 w-4" /> SRI
+                                </Button>
+                                <div className="w-px bg-slate-300 mx-1"></div>
+                            </>
+                        )}
                         <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-200 hover:text-amber-800 gap-2 font-bold" onClick={() => handlePrint('produccion')}>
                             <Printer className="h-4 w-4" /> Prod
                         </Button>
@@ -436,9 +504,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 <tr>
                                     <th className="px-4 py-3 text-center font-bold w-12">#</th>
                                     <th className="px-4 py-3 text-left font-bold">Item a Producir</th>
-                                    <th className="px-4 py-3 text-right font-bold w-24">Unitario</th>
+                                    {showFinancials && <th className="px-4 py-3 text-right font-bold w-24">Unitario</th>}
                                     <th className="px-4 py-3 text-center font-bold w-16">Cant.</th>
-                                    <th className="px-4 py-3 text-right font-bold w-24">Total</th>
+                                    {showFinancials && <th className="px-4 py-3 text-right font-bold w-24">Total</th>}
                                     <th className="px-4 py-3 text-left font-bold w-[300px]">Estado / Inventario</th>
                                 </tr>
                             </thead>
@@ -446,47 +514,86 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 {localProducts.map((prod, idx) => (
                                     <ProductProductionRow key={idx} product={prod} index={idx} order={order} user={user} onProductUpdate={handleProductUpdateLocal} />
                                 ))}
-                                {(!localProducts || localProducts.length === 0) && (<tr><td colSpan="6" className="px-4 py-8 text-center text-slate-400 italic">No hay productos registrados</td></tr>)}
+                                {(!localProducts || localProducts.length === 0) && (<tr><td colSpan={showFinancials ? "6" : "4"} className="px-4 py-8 text-center text-slate-400 italic">No hay productos registrados</td></tr>)}
                             </tbody>
                         </table>
                     </div>
                 </div>
 
-                <div className="mb-6 bg-slate-50/50 p-4 border border-slate-200 rounded-lg">
-                    <h3 className="font-bold text-slate-700 mb-4 border-b border-slate-200 pb-2">Pagos</h3>
-                    <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                        <div className="bg-white border border-blue-200 rounded p-4 shadow-sm">
-                            <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Anticipo Original</span><span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span></div>
-                            <div className="space-y-1 text-xs text-slate-600">
-                                 <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
-                                 {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
-                                 {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
+                {showFinancials && (
+                    <div className="mb-6 bg-slate-50/50 p-4 border border-slate-200 rounded-lg">
+                        <h3 className="font-bold text-slate-700 mb-4 border-b border-slate-200 pb-2">Pagos y Comprobantes</h3>
+                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm">
+                                <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Anticipo Original</span><span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span></div>
+                                <div className="space-y-1 text-xs text-slate-600">
+                                     <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
+                                     {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
+                                     {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
+                                </div>
+                            </div>
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col justify-center items-center">
+                                <span className="text-blue-800 font-bold text-sm mb-1">Retención</span><span className="text-2xl font-bold text-slate-800">{Number(order.retencion || 0).toFixed(2)}</span>
+                            </div>
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col relative pb-12">
+                                <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Saldo Pendiente (Real)</span><span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span></div>
+                                <div className="space-y-1 text-xs text-slate-600 mb-2">
+                                     <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
+                                     {isCredito && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>)}
+                                     {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
+                                </div>
+                                {saldoCalculado > 0 && onAbonoOrder && (<div className="absolute bottom-3 left-4 right-4"><Button size="sm" onClick={() => onAbonoOrder(order)} className="w-full bg-green-600 hover:bg-green-700 text-white shadow-sm flex items-center justify-center gap-2"><DollarSign className="h-4 w-4"/> Registrar Cobro</Button></div>)}
                             </div>
                         </div>
-                        <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col justify-center items-center">
-                            <span className="text-blue-800 font-bold text-sm mb-1">Retención</span><span className="text-2xl font-bold text-slate-800">{Number(order.retencion || 0).toFixed(2)}</span>
-                        </div>
-                        <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col relative pb-12">
-                            <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Saldo Pendiente (Real)</span><span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span></div>
-                            <div className="space-y-1 text-xs text-slate-600 mb-2">
-                                 <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
-                                 {isCredito && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>)}
-                                 {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
-                            </div>
-                            {saldoCalculado > 0 && onAbonoOrder && (<div className="absolute bottom-3 left-4 right-4"><Button size="sm" onClick={() => onAbonoOrder(order)} className="w-full bg-green-600 hover:bg-green-700 text-white shadow-sm flex items-center justify-center gap-2"><DollarSign className="h-4 w-4"/> Registrar Cobro</Button></div>)}
-                        </div>
-                    </div>
-                </div>
 
-                <div className="mb-8 flex justify-end">
-                    <div className="w-full max-w-sm bg-white border border-slate-300 rounded-sm shadow-sm overflow-hidden">
-                        <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div></div>
-                        <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto ({fin.descuentoPorcentaje || 0}%)</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>
-                        <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
-                        <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({fin.ivaPercentage || 15}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
-                        <div className="grid grid-cols-2 divide-x divide-slate-200 bg-blue-50 text-base"><div className="px-4 py-3 text-right font-bold text-blue-900">TOTAL</div><div className="px-4 py-3 text-right font-bold text-blue-900">{formatCurrency(fin.total)}</div></div>
+                        {/* 🔥 SECCIÓN DE FOTOS DE TRANSFERENCIAS 🔥 */}
+                        <div className="mt-6 border-t border-slate-200 pt-4">
+                            <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">Comprobantes de Transferencia / Depósito</h4>
+                            <div className="border border-slate-300 p-4 rounded-md bg-white flex flex-col md:flex-row gap-4 items-start">
+                                <div className="min-h-[80px] flex-1 flex flex-wrap gap-4">
+                                   {localComprobantes.map((img, i) => (
+                                      <div key={i} className="relative group w-20 h-20 border border-slate-300 bg-slate-50 rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => setPreviewImage(img.url)}>
+                                         <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
+                                         {(isAdmin || user.role === 'Contabilidad') && (
+                                             <button type="button" onClick={(e) => { e.stopPropagation(); removeComprobante(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>
+                                         )}
+                                      </div>
+                                   ))}
+                                   {loadingComprobantes || isProcessingComprobantes ? (
+                                       <div className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
+                                           <Loader2 className="h-5 w-5 text-blue-500 animate-spin"/>
+                                       </div>
+                                   ) : localComprobantes.length === 0 && (
+                                       <div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-2">
+                                          <FileText className="h-6 w-6 mb-1 opacity-50" />
+                                          <span>Sin comprobantes adjuntos</span>
+                                       </div>
+                                   )}
+                                </div>
+                                {(isAdmin || user.role === 'Contabilidad' || user.role === 'Vendedor') && (
+                                    <div className="shrink-0">
+                                        <input {...getInputPropsComp()} className="hidden" />
+                                        <label {...getRootPropsComp()} className={`inline-flex items-center gap-1 ${isProcessingComprobantes ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'} text-white text-xs px-4 py-2 rounded-md transition-colors shadow-sm`}>
+                                            <Plus className="h-4 w-4" /> {isProcessingComprobantes ? 'Procesando...' : 'Subir Comprobante'}
+                                        </label>
+                                    </div>
+                                )}
+                            </div>
+                        </div>
                     </div>
-                </div>
+                )}
+
+                {showFinancials && (
+                    <div className="mb-8 flex justify-end">
+                        <div className="w-full max-w-sm bg-white border border-slate-300 rounded-sm shadow-sm overflow-hidden">
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto ({fin.descuentoPorcentaje || 0}%)</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({fin.ivaPercentage || 15}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 bg-blue-50 text-base"><div className="px-4 py-3 text-right font-bold text-blue-900">TOTAL</div><div className="px-4 py-3 text-right font-bold text-blue-900">{formatCurrency(fin.total)}</div></div>
+                        </div>
+                    </div>
+                )}
 
                 <hr className="border-gray-200 mb-8" />
 
@@ -524,7 +631,28 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                  <Button 
                                    size="lg" disabled={isAdvancing}
                                    className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3 disabled:opacity-75 disabled:hover:scale-100 disabled:cursor-wait"
-                                   onClick={async () => { setIsAdvancing(true); try { await onAdvanceWorkflow(order); onClose(); } catch (error) { setIsAdvancing(false); } }}
+                                   onClick={async () => { 
+                                       setIsAdvancing(true); 
+                                       try { 
+                                           // 🔥 VALIDACIÓN DE FOTO DE COMPROBANTE AL FINALIZAR 🔥
+                                           const nextStatus = workflowConfig.text.replace('Pasar a ', '').replace(' – ', '').trim();
+                                           if (nextStatus === 'FINALIZADA') {
+                                               const pAnticipo = (order.forma_pago_anticipo || order.formaPagoAnticipo || '').toLowerCase();
+                                               const pSaldo = (order.formaPagoSaldo || order.financials?.formaPagoSaldo || '').toLowerCase();
+                                               const isTransfer = pAnticipo.includes('transfer') || pAnticipo.includes('depósito') || pAnticipo.includes('deposito') || 
+                                                                  pSaldo.includes('transfer') || pSaldo.includes('depósito') || pSaldo.includes('deposito');
+                                                                  
+                                               if (isTransfer && localComprobantes.length === 0) {
+                                                   toast({title: "Comprobante Requerido", description: "Debe adjuntar la foto de la transferencia o depósito antes de finalizar la orden.", variant: "destructive"});
+                                                   setIsAdvancing(false);
+                                                   return;
+                                               }
+                                           }
+
+                                           await onAdvanceWorkflow(order); 
+                                           onClose(); 
+                                       } catch (error) { setIsAdvancing(false); } 
+                                   }}
                                  >
                                    {isAdvancing ? 'Pasando orden...' : workflowConfig.text}
                                    {isAdvancing ? <Loader2 className="h-6 w-6 animate-spin" /> : <ArrowRightCircle className="h-6 w-6" />}
@@ -552,246 +680,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                   </motion.div>
                 )}
             </AnimatePresence>
-        </div>
-
-
-        {/* ======================================================== */}
-        {/* 2. VISTAS DE IMPRESIÓN (OCULTAS EN PANTALLA)            */}
-        {/* ======================================================== */}
-        <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh' }}>
-            
-            {/* ---------------- VISTA SRI (FACTURA) ---------------- */}
-            {printType === 'sri' && (
-                <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
-                      <div className="grid grid-cols-2 gap-4 mb-4 w-full">
-                          <div className="w-full flex flex-col gap-2">
-                              <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
-                                  <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
-                              </div>
-                              <div className="border border-black rounded-xl p-3">
-                                  <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
-                                  <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                                  <div className="mb-1"><span className="font-bold">Dirección Sucursal:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                                  <div className="mt-3"><span className="font-bold">OBLIGADO A LLEVAR CONTABILIDAD:</span> NO</div>
-                              </div>
-                          </div>
-
-                          <div className="w-full border border-black rounded-xl p-3">
-                              <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
-                              <div className="text-lg font-bold my-2 tracking-widest">FACTURA</div>
-                              <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> 001-001-{formatOrderId(order.id)}</div>
-                              
-                              <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
-                              <div className="mb-2 text-[10px]">PENDIENTE / INFORMATIVO</div>
-                              
-                              <div className="flex justify-between mb-4">
-                                  <span className="font-bold">FECHA Y HORA DE EMISIÓN:</span>
-                                  <span>{formatDateFull(order.createdAt || order.created_at)}</span>
-                              </div>
-                              
-                              <div className="font-bold mb-1">CLAVE DE ACCESO</div>
-                              <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
-                                  [ Espacio para Clave de Acceso SRI ]
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="border border-black rounded-xl p-3 mb-4 w-full">
-                          <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
-                              <div className="space-y-1">
-                                  <div><span className="font-bold">Razón Social / Nombres:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                                  <div><span className="font-bold">Identificación:</span> {order.ruc || order.cedula || order.cliente_identificacion || '9999999999999'}</div>
-                                  <div><span className="font-bold">Fecha:</span> {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
-                                  <div><span className="font-bold">Dirección:</span> {order.direccion || 'S/N'}</div>
-                              </div>
-                              <div className="space-y-1">
-                                  <div><span className="font-bold">Guía Remisión:</span></div>
-                                  <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="mb-4 w-full min-h-[150px]">
-                          <table className="w-full border-collapse border border-black">
-                              <thead>
-                                  <tr className="border-b border-black bg-gray-100">
-                                      <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
-                                      <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
-                                  </tr>
-                              </thead>
-                              <tbody>
-                                  {localProducts.map((prod, idx) => (
-                                      <tr key={idx} className="border-b border-black">
-                                          <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
-                                          <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
-                                          {/* 🔥 APLICAMOS LA FUNCIÓN PARA LIMPIAR LAS NOTAS 🔥 */}
-                                          <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">{getPrintDesc(prod)}</td>
-                                          <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precio || prod.precioUnitario)}</td>
-                                          <td className="border-r border-black p-1.5 text-right">$0.00</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario)))}</td>
-                                      </tr>
-                                  ))}
-                              </tbody>
-                          </table>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4 w-full items-start">
-                          <div className="col-span-2 flex flex-col gap-4 w-full">
-                              <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
-                                  <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
-                                  <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
-                                      <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
-                                      <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
-                                      <span className="font-bold">Vendedor:</span> <span>{localVendedor || 'Sistema'}</span>
-                                      <span className="font-bold">F. Entrega:</span> <span>{order.fechaEntrega || order.fecha_entrega ? (order.fechaEntrega || order.fecha_entrega).split('T')[0] : 'Por Definir'}</span>
-                                      <span className="font-bold">N° Proforma:</span> <span>{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span>
-                                      <span className="font-bold">N° Factura:</span> <span>{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span>
-                                      <span className="font-bold">F. Finalizada:</span> <span>{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PROCESO'}</span>
-
-                                      {order.notas && (
-                                          <>
-                                              <span className="font-bold mt-1">Notas:</span>
-                                              <span className="whitespace-pre-line mt-1">{order.notas}</span>
-                                          </>
-                                      )}
-                                  </div>
-                              </div>
-
-                              <div className="border border-black rounded-xl overflow-hidden w-full">
-                                  <table className="w-full text-left border-collapse">
-                                      <thead>
-                                          <tr className="border-b border-black bg-gray-100">
-                                              <th className="p-2 font-bold border-r border-black w-[70%]">Formas de Pago</th>
-                                              <th className="p-2 font-bold text-right w-[30%]">Valor</th>
-                                      </tr>
-                                      </thead>
-                                      <tbody>
-                                          <tr className="border-b border-black">
-                                              <td className="p-2 border-r border-black uppercase text-[10px]">ANTICIPO - {order.formaPagoAnticipo || order.forma_pago_anticipo || 'EFECTIVO'}</td>
-                                              <td className="p-2 text-right font-bold">{formatCurrency(order.anticipo || 0)}</td>
-                                          </tr>
-                                          <tr>
-                                              <td className="p-2 border-r border-black uppercase text-[10px] text-red-700">SALDO PENDIENTE - {order.formaPagoSaldo || 'EFECTIVO'}</td>
-                                              <td className="p-2 text-right font-bold text-red-600">{formatCurrency(saldoCalculado)}</td>
-                                          </tr>
-                                      </tbody>
-                                  </table>
-                              </div>
-                          </div>
-
-                          <div className="col-span-1 w-full">
-                              <table className="w-full border-collapse border border-black text-[11px]">
-                                  <tbody>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">SUBTOTAL {fin.ivaPercentage || 15}%</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
-                                      </tr>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
-                                          <td className="p-1.5 text-right">$0.00</td>
-                                      </tr>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
-                                      </tr>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(fin.descuentoVal || 0)}</td>
-                                      </tr>
-                                      <tr className="border-b border-black bg-gray-50">
-                                          <td className="p-1.5 border-r border-black font-bold">IVA {fin.ivaPercentage || 15}%</td>
-                                          <td className="p-1.5 text-right font-bold">{formatCurrency(fin.iva || 0)}</td>
-                                      </tr>
-                                      <tr>
-                                          <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
-                                          <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(fin.total || 0)}</td>
-                                      </tr>
-                                  </tbody>
-                              </table>
-                          </div>
-                      </div>
-                </div>
-            )}
-
-            {/* ---------------- VISTA PRODUCCIÓN ---------------- */}
-            {printType === 'produccion' && (
-                <div className="w-full max-w-[850px] mx-auto p-8 font-sans text-black">
-                    <div className="flex justify-between items-start border-b-2 border-slate-800 pb-6 mb-6">
-                        <div className="w-48">
-                             <img src="/logo.png" alt="Logo" className="max-w-full h-auto object-contain" />
-                        </div>
-                        <div className="text-right">
-                             <h1 className="text-2xl font-black tracking-widest text-slate-900 mb-1">ORDEN DE PRODUCCIÓN</h1>
-                             <div className="text-lg font-bold text-red-600">N° ORDEN: {formatOrderId(order.id)}</div>
-                             <div className="text-sm font-bold text-slate-700 mt-1">FECHA: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
-                        </div>
-                    </div>
-
-                    <div className="border-2 border-slate-800 rounded-lg p-4 mb-6">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
-                             <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                             <div><span className="font-bold">FECHA ENTREGA:</span> <span className="text-red-600 font-bold">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
-                             <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                             <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{localVendedor || 'SISTEMA'}</span></div>
-                             
-                             <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
-                             <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
-                             <div><span className="font-bold">FECHA FINALIZACIÓN:</span> <span className="uppercase">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PRODUCCIÓN'}</span></div>
-                        </div>
-                    </div>
-
-                    <div className="mb-6">
-                        <table className="w-full border-collapse border-2 border-slate-800 text-sm">
-                            <thead>
-                                <tr className="bg-slate-100 border-b-2 border-slate-800">
-                                    <th className="border-r-2 border-slate-800 p-2 w-16 text-center">CANT.</th>
-                                    <th className="border-r-2 border-slate-800 p-2 text-left">DESCRIPCIÓN</th>
-                                    <th className="p-2 text-left w-64">OBSERVACIONES / MATERIALES</th>
-                                </tr>
-                            </thead>
-                            <tbody>
-                                {localProducts.map((prod, idx) => (
-                                    <tr key={idx} className="border-b border-slate-400">
-                                        <td className="border-r-2 border-slate-800 p-3 text-center font-bold text-lg">{prod.cantidad}</td>
-                                        {/* 🔥 APLICAMOS LA FUNCIÓN PARA LIMPIAR LAS NOTAS 🔥 */}
-                                        <td className="border-r-2 border-slate-800 p-3 uppercase font-medium whitespace-pre-wrap">{getPrintDesc(prod)}</td>
-                                        <td className="p-3 text-xs text-slate-600">
-                                            {/* EN PRODUCCIÓN MOSTRAMOS LAS OBSERVACIONES SI EXISTEN */}
-                                            {prod.observaciones && <div className="mb-1 font-bold text-slate-800 border-b border-slate-300 pb-1">Nota: {prod.observaciones}</div>}
-                                            {prod.sin_materiales ? 'Sin material de inventario.' : (prod.materiales && prod.materiales.length > 0 ? prod.materiales.map(m => `- ${m.nombre} (${m.cant_usada} ${m.unidad})`).join('\n') : '')}
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    {localImages.length > 0 && (
-                        <div className="border-2 border-slate-800 rounded-lg p-4 mb-6" style={{ pageBreakInside: 'avoid' }}>
-                            <div className="font-bold text-sm mb-4 underline">ARTES Y DISEÑOS ADJUNTOS:</div>
-                            <div className="flex flex-wrap gap-4 items-start justify-center">
-                               {localImages.map((img, index) => (
-                                   <img 
-                                     key={index}
-                                     src={img.url} 
-                                     alt={img.name || `Arte ${index + 1}`} 
-                                     className="max-w-[45%] max-h-[300px] object-contain border border-slate-300 rounded shadow-sm"
-                                   />
-                               ))}
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="border-2 border-slate-800 rounded-lg p-4 mb-12 min-h-[100px]" style={{ pageBreakInside: 'avoid' }}>
-                        <div className="font-bold text-sm mb-2 underline">OBSERVACIONES GENERALES:</div>
-                        <div className="text-sm whitespace-pre-wrap">{order.notas || 'Ninguna.'}</div>
-                    </div>
-                </div>
-            )}
         </div>
     </>
   );

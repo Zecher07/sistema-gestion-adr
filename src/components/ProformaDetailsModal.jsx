@@ -2,6 +2,13 @@ import React, { useState } from 'react';
 import { X, Printer, CheckCircle2, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 
+// --- 🔥 FUNCIÓN ESTRICTA PARA LIMPIAR NOTAS DEL PDF 🔥 ---
+const getPrintDesc = (prod) => {
+    const text = prod.descripcion || prod.nombre || '';
+    // Cortamos automáticamente todo desde la palabra "Nota:" (con o sin corchetes)
+    return text.split(/\[?nota:/i)[0].trim();
+};
+
 const ProformaDetailsModal = ({ 
   proforma, 
   onClose, 
@@ -13,7 +20,6 @@ const ProformaDetailsModal = ({
 
   if (!proforma) return null;
 
-  // Helpers de formato
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
   const formatDate = (dateString) => {
     try { 
@@ -22,7 +28,6 @@ const ProformaDetailsModal = ({
     } catch { return '-'; }
   };
 
-  // Mapeo seguro de datos y lectura de financials
   const fin = proforma.financials || {};
   const data = {
     numero: proforma.proformaNumber || proforma.numero || proforma.id,
@@ -65,7 +70,6 @@ const ProformaDetailsModal = ({
 
   return (
     <>
-      {/* VISTA EN PANTALLA (MODAL NORMAL) */}
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 print:hidden">
         <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
           
@@ -122,9 +126,10 @@ const ProformaDetailsModal = ({
                               {data.productos.map((prod, idx) => (
                                   <tr key={idx}>
                                       <td className="px-4 py-2 text-center text-slate-500">{prod.cantidad}</td>
-                                      <td className="px-4 py-2 font-medium uppercase">{prod.descripcion}</td>
+                                      {/* Aquí en pantalla el vendedor sí ve las notas */}
+                                      <td className="px-4 py-2 font-medium uppercase whitespace-pre-wrap">{prod.descripcion}</td>
                                       <td className="px-4 py-2 text-right text-slate-600">{formatCurrency(prod.precioUnitario)}</td>
-                                      <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCurrency(prod.cantidad * prod.precioUnitario)}</td>
+                                      <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
                                   </tr>
                               ))}
                           </tbody>
@@ -187,8 +192,7 @@ const ProformaDetailsModal = ({
                   <Button variant="secondary" onClick={onClose}>Cerrar</Button>
                   {data.status === 'BORRADOR' && (
                       <Button 
-                          onClick={handleConvertClick} 
-                          disabled={converting}
+                          onClick={handleConvertClick} disabled={converting}
                           className="bg-green-600 hover:bg-green-700 text-white gap-2 shadow-md hover:scale-105 transition-all"
                       >
                           {converting ? 'Procesando...' : 'Aprobar y Crear Orden'}
@@ -201,49 +205,35 @@ const ProformaDetailsModal = ({
       </div>
 
       {/* ======================================================== */}
-      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI) OCULTA EN PANTALLA  */}
+      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI) LIMPIADA            */}
       {/* ======================================================== */}
       <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh' }}>
           <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
-                
-                {/* SECCIÓN SUPERIOR: DATOS EMISOR Y DOCUMENTO */}
                 <div className="grid grid-cols-2 gap-4 mb-4 w-full">
-                    {/* IZQUIERDA: LOGO Y DATOS DE LA EMPRESA */}
                     <div className="w-full flex flex-col gap-2">
                         <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
-                            {/* EL LOGO: Asegúrate de tener logo.png en tu carpeta 'public' */}
                             <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
                         </div>
+                        {/* 🔥 BLOQUE EMPRESA LIMPIADO 🔥 */}
                         <div className="border border-black rounded-xl p-3">
                             <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
                             <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                            <div className="mb-1"><span className="font-bold">Dirección Sucursal:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                            <div className="mt-3"><span className="font-bold">OBLIGADO A LLEVAR CONTABILIDAD:</span> NO</div>
                         </div>
                     </div>
 
-                    {/* DERECHA: DATOS DEL DOCUMENTO */}
-                    <div className="w-full border border-black rounded-xl p-3">
+                    {/* 🔥 BLOQUE FACTURA LIMPIADO 🔥 */}
+                    <div className="w-full border border-black rounded-xl p-4 flex flex-col justify-center">
                         <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
-                        <div className="text-lg font-bold my-2 tracking-widest">PROFORMA</div>
-                        <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> 001-001-{String(data.numero).padStart(9, '0')}</div>
+                        <div className="text-xl font-bold my-2 tracking-widest text-slate-800">PROFORMA</div>
+                        <div className="mb-4 text-[14px]"><span className="font-bold">No.</span> 001-001-{String(data.numero).padStart(9, '0')}</div>
                         
-                        <div className="mb-1"><span className="font-bold">NÚMERO DE AUTORIZACIÓN</span></div>
-                        <div className="mb-4 text-[10px]">DOCUMENTO NO TRIBUTARIO - INFORMATIVO</div>
-                        
-                        <div className="flex justify-between mb-4">
+                        <div className="flex justify-between border-t border-slate-300 pt-3">
                             <span className="font-bold">FECHA EMISIÓN:</span>
-                            <span>{formatDate(data.fechaCreacion)}</span>
-                        </div>
-                        
-                        <div className="font-bold mb-1">CLAVE DE ACCESO</div>
-                        <div className="h-10 w-full border border-dashed border-gray-400 flex items-center justify-center text-gray-400 text-[10px] bg-slate-50">
-                            [ Espacio para Clave de Acceso SRI ]
+                            <span className="font-medium text-slate-800">{formatDate(data.fechaCreacion)}</span>
                         </div>
                     </div>
                 </div>
 
-                {/* SECCIÓN CLIENTE */}
                 <div className="border border-black rounded-xl p-3 mb-4 w-full">
                     <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
                         <div className="space-y-1">
@@ -259,7 +249,6 @@ const ProformaDetailsModal = ({
                     </div>
                 </div>
 
-                {/* TABLA DE PRODUCTOS */}
                 <div className="mb-4 w-full min-h-[150px]">
                     <table className="w-full border-collapse border border-black">
                         <thead>
@@ -277,19 +266,18 @@ const ProformaDetailsModal = ({
                                 <tr key={idx} className="border-b border-black">
                                     <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
                                     <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
-                                    <td className="border-r border-black p-1.5 uppercase">{prod.descripcion}</td>
+                                    {/* 🔥 AQUÍ EL CLIENTE SÓLO VE EL NOMBRE LIMPIO 🔥 */}
+                                    <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">{getPrintDesc(prod)}</td>
                                     <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precioUnitario)}</td>
                                     <td className="border-r border-black p-1.5 text-right">$0.00</td>
-                                    <td className="p-1.5 text-right">{formatCurrency(prod.cantidad * prod.precioUnitario)}</td>
+                                    <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
                                 </tr>
                             ))}
                         </tbody>
                     </table>
                 </div>
 
-                {/* SECCIÓN INFERIOR */}
                 <div className="grid grid-cols-3 gap-4 w-full items-start">
-                    
                     <div className="col-span-2 flex flex-col gap-4 w-full">
                         <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
                             <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>

@@ -1,11 +1,37 @@
-import React, { useState, useEffect, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useCallback } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, BookOpen, DollarSign, Building, TrendingDown, Filter, Users, Search } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, BookOpen, DollarSign, Building, TrendingDown, Filter, Users, Search, Plus, X, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
+import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
 
 const FILTROS = ['TODOS', 'EFECTIVO', 'BANCOS / TRANSFERENCIAS', 'SOLO INGRESOS', 'SOLO EGRESOS'];
+
+// --- FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_WIDTH = 1024; 
+                let width = img.width;
+                let height = img.height;
+                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                resolve({ name: file.name, url: dataUrl });
+            };
+        };
+    });
+};
 
 const GeneralLedgerPanel = ({ orders = [], user }) => {
   const { toast } = useToast();
@@ -26,6 +52,11 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
   const [filtroVendedor, setFiltroVendedor] = useState('TODOS');
   const [filtroOrden, setFiltroOrden] = useState('');
 
+  // 🔥 ESTADOS PARA CIERRE DIARIO 🔥
+  const [cierreComprobantes, setCierreComprobantes] = useState([]);
+  const [loadingCierre, setLoadingCierre] = useState(false);
+  const [isProcessingCierre, setIsProcessingCierre] = useState(false);
+
   useEffect(() => {
     const fetchVales = async () => {
       setLoading(true);
@@ -45,7 +76,53 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       }
     };
     fetchVales();
+
+    // 🔥 CARGAR FOTOS DE CIERRE DIARIO 🔥
+    const fetchCierre = async () => {
+        setLoadingCierre(true);
+        try {
+            const { data } = await supabase.from('cierres_diarios').select('comprobantes').eq('fecha', selectedDate).maybeSingle();
+            if (data && Array.isArray(data.comprobantes)) setCierreComprobantes(data.comprobantes);
+            else setCierreComprobantes([]);
+        } catch(e) { setCierreComprobantes([]); }
+        setLoadingCierre(false);
+    };
+    fetchCierre();
   }, [selectedDate]);
+
+  // 🔥 LÓGICA DE SUBIDA DE CIERRE DIARIO 🔥
+  const handleAddCierreDocs = async (files) => {
+      setIsProcessingCierre(true);
+      const newImages = [];
+      for (const file of files) {
+          if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (e) {}
+      }
+      const updated = [...cierreComprobantes, ...newImages];
+      setCierreComprobantes(updated);
+      
+      try {
+          await supabase.from('cierres_diarios').upsert({ fecha: selectedDate, comprobantes: updated, cerrador: user.name });
+          toast({title: "Soporte de cierre guardado exitosamente."});
+      } catch(e) { 
+          toast({title: "Cierre Guardado Localmente", description: "Asegúrate de crear la tabla 'cierres_diarios' en Supabase para guardarlo en la nube.", variant: "warning"}); 
+      }
+      setIsProcessingCierre(false);
+  };
+
+  const removeCierreDoc = async (index) => {
+      const updated = cierreComprobantes.filter((_, i) => i !== index);
+      setCierreComprobantes(updated);
+      try {
+          await supabase.from('cierres_diarios').upsert({ fecha: selectedDate, comprobantes: updated, cerrador: user.name });
+      } catch(e) {}
+  };
+
+  const onDropCierre = useCallback(acceptedFiles => { handleAddCierreDocs(acceptedFiles); }, [cierreComprobantes, selectedDate]);
+  const { getRootProps: getRootPropsCierre, getInputProps: getInputPropsCierre } = useDropzone({ onDrop: onDropCierre, accept: {'image/*': []}, disabled: isProcessingCierre });
 
   const transactions = useMemo(() => {
     const txs = [];
@@ -60,7 +137,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       const titulo = o.tipoLetrero || o.tipo_trabajo || 'Sin Título';
 
       // 1. ANTICIPOS (VENTAS)
-      // 🔥 AHORA SIEMPRE SE REGISTRA EL INGRESO, SIN IMPORTAR SI LUEGO SE ANULÓ 🔥
       if (createdDateStr === selectedDate && Number(o.anticipo) > 0) {
         const metodo = o.formaPagoAnticipo || o.forma_pago_anticipo || 'Efectivo';
         txs.push({
@@ -105,7 +181,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       }
 
       // 4. ANULACIONES
-      // 🔥 AHORA SÍ REGISTRAMOS EL EGRESO PARA QUE CUADRE LA CAJA 🔥
       if (o.status === 'ANULADA' && updatedDateStr === selectedDate && Number(o.anticipo) > 0) {
         txs.push({
           id: `anu-${o.id}`,
@@ -133,13 +208,11 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
     return txs.sort((a, b) => b.ingreso - a.ingreso);
   }, [orders, selectedDate, valesDelDia]);
 
-  // Lista dinámica de vendedores que tuvieron movimiento en el día
   const vendedoresDisponibles = useMemo(() => {
       const vends = new Set(transactions.map(tx => tx.vendedor));
       return ['TODOS', ...Array.from(vends).filter(Boolean).sort()];
   }, [transactions]);
 
-  // Resumen global fijo de las 4 tarjetas (nunca cambia con el filtro)
   const summary = useMemo(() => {
     let efectivo = 0;
     let bancos = 0;
@@ -159,22 +232,18 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
     return { efectivo, bancos, totalIngresos: efectivo + bancos, egresos };
   }, [transactions]);
 
-  // Aplicar MÚLTIPLES filtros a la tabla
   const transaccionesFiltradas = useMemo(() => {
       let filtradas = transactions;
 
-      // 1. Filtro de Tipo de Movimiento
       if (filtroActivo === 'EFECTIVO') filtradas = filtradas.filter(tx => tx.metodo.toLowerCase().includes('efectivo'));
       else if (filtroActivo === 'BANCOS / TRANSFERENCIAS') filtradas = filtradas.filter(tx => !tx.metodo.toLowerCase().includes('efectivo') && tx.ingreso > 0);
       else if (filtroActivo === 'SOLO INGRESOS') filtradas = filtradas.filter(tx => tx.ingreso > 0);
       else if (filtroActivo === 'SOLO EGRESOS') filtradas = filtradas.filter(tx => tx.egreso > 0);
 
-      // 2. Filtro de Vendedor
       if (filtroVendedor !== 'TODOS') {
           filtradas = filtradas.filter(tx => tx.vendedor === filtroVendedor);
       }
 
-      // 3. Filtro de Número de Orden
       if (filtroOrden.trim() !== '') {
           filtradas = filtradas.filter(tx => tx.orden.includes(filtroOrden.trim()));
       }
@@ -182,7 +251,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       return filtradas;
   }, [transactions, filtroActivo, filtroVendedor, filtroOrden]);
 
-  // Totales dinámicos del pie de tabla (cambian según el filtro)
   const totalesTabla = useMemo(() => {
       return transaccionesFiltradas.reduce((acc, tx) => {
           acc.ingresos += tx.ingreso || 0;
@@ -203,9 +271,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
 
   return (
     <>
-      {/* ================================================================= */}
-      {/* 1. VISTA EN PANTALLA (Se oculta al imprimir)                      */}
-      {/* ================================================================= */}
       <div className="space-y-6 animate-in fade-in duration-500 max-w-[1400px] mx-auto pb-10 print:hidden">
         
         {/* CABECERA */}
@@ -232,7 +297,7 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
            </div>
         </div>
 
-        {/* TARJETAS DE RESUMEN GLOBAL (NO CAMBIAN CON EL FILTRO) */}
+        {/* TARJETAS DE RESUMEN GLOBAL */}
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
            <div className="bg-white border-l-4 border-green-500 p-4 rounded-lg shadow-sm flex items-center gap-4">
               <div className="bg-green-100 p-3 rounded-full"><DollarSign className="h-6 w-6 text-green-600" /></div>
@@ -253,10 +318,7 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
 
         {/* TABLA DE MOVIMIENTOS Y FILTROS MÚLTIPLES */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-           
-           {/* PANEL DE FILTROS SUPERIOR */}
            <div className="bg-slate-50 border-b border-slate-200 p-4 space-y-4">
-               {/* Fila 1: Filtro de Tipo y Búsqueda por Orden */}
                <div className="flex flex-col md:flex-row justify-between gap-4">
                    <div className="flex flex-col md:flex-row items-start md:items-center gap-3">
                        <div className="flex items-center gap-2 text-slate-600 font-bold text-sm">
@@ -288,7 +350,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                    </div>
                </div>
 
-               {/* Fila 2: Filtro de Vendedores (Botonera) */}
                <div className="flex flex-col md:flex-row items-start md:items-center gap-3 border-t border-slate-200 pt-4">
                    <div className="flex items-center gap-2 text-slate-600 font-bold text-sm">
                        <Users className="h-4 w-4" /> Vendedor:
@@ -332,20 +393,20 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                               <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
                                   <td className="px-4 py-3 text-center text-slate-400 font-bold">{idx + 1}</td>
                                   <td className="px-4 py-3">
-                                      <div className="flex flex-col gap-1">
-                                          <div className="flex items-center gap-2">
-                                              <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded border uppercase", 
-                                                  tx.tipo === 'VENTA' ? 'bg-green-100 text-green-700 border-green-200' :
-                                                  tx.tipo === 'ABONO' ? 'bg-blue-100 text-blue-700 border-blue-200' :
-                                                  tx.tipo === 'RETIRO' ? 'bg-purple-100 text-purple-700 border-purple-200' :
-                                                  tx.tipo === 'VALE DE CAJA' ? 'bg-orange-600 text-white border-orange-700' :
-                                                  'bg-red-600 text-white border-red-700' // Anulación ahora es rojo fuerte
-                                              )}>
-                                                  {tx.tipo}
-                                              </span>
-                                              <span className="font-bold text-slate-800 uppercase">{tx.cliente}</span>
-                                          </div>
-                                          <span className="text-xs text-slate-500 italic ml-1">Ref: {tx.titulo}</span>
+                                      <div className="font-bold uppercase text-xs flex flex-wrap items-center gap-1">
+                                          <span className={cn(
+                                              tx.tipo === 'VENTA' ? 'text-blue-700' :
+                                              tx.tipo === 'ABONO' ? 'text-emerald-700' :
+                                              tx.tipo === 'RETIRO' ? 'text-orange-700' :
+                                              tx.tipo === 'ANULACIÓN' ? 'text-red-600' :
+                                              'text-purple-700'
+                                          )}>
+                                              {tx.tipo}
+                                          </span>
+                                          <span className="text-slate-400 mx-1">-</span>
+                                          <span className="text-slate-800">{tx.cliente}</span>
+                                          <span className="text-slate-400 mx-1">-</span>
+                                          <span className="text-slate-600">{tx.titulo}</span>
                                       </div>
                                   </td>
                                   <td className="px-4 py-3 text-center font-mono text-slate-600 font-medium">{tx.orden}</td>
@@ -361,7 +422,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                           ))
                       )}
                   </tbody>
-                  {/* TOTALES DINÁMICOS DE LA TABLA */}
                   <tfoot className="bg-slate-50 font-bold border-t-2 border-slate-300">
                       <tr>
                           <td colSpan="5" className="px-4 py-3 text-right uppercase text-slate-600">Total Filtrado:</td>
@@ -371,6 +431,41 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                   </tfoot>
               </table>
            )}
+        </div>
+
+        {/* 🔥 SECCIÓN CIERRE DIARIO (FOTOS) 🔥 */}
+        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6 p-6">
+            <h3 className="text-lg font-bold text-slate-800 border-b border-slate-100 pb-3 mb-4 flex items-center gap-2">
+                <FileText className="h-5 w-5 text-indigo-600" /> Soportes de Cierre Diario
+            </h3>
+            <p className="text-sm text-slate-500 mb-4">Adjunta aquí los vouchers de tarjetas, papeletas de depósito o fotos del cierre de caja del día <strong>{selectedDate}</strong>.</p>
+            
+            <div className="border border-slate-300 p-4 rounded-md bg-slate-50">
+                <div className="min-h-[100px] mb-4 flex flex-wrap gap-4">
+                    {cierreComprobantes.map((img, i) => (
+                       <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => window.open(img.url, '_blank')}>
+                          <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
+                          <button type="button" onClick={(e) => { e.stopPropagation(); removeCierreDoc(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>
+                       </div>
+                    ))}
+                    {loadingCierre || isProcessingCierre ? (
+                        <div className="w-24 h-24 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
+                            <Loader2 className="h-6 w-6 text-blue-500 animate-spin"/>
+                        </div>
+                    ) : cierreComprobantes.length === 0 && (
+                        <div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-4">
+                           <FileText className="h-8 w-8 mb-2 opacity-50" />
+                           <span>Sin soportes adjuntos en este día</span>
+                        </div>
+                    )}
+                </div>
+                <div>
+                    <input {...getInputPropsCierre()} className="hidden" />
+                    <label {...getRootPropsCierre()} className={`inline-flex items-center gap-2 ${isProcessingCierre ? 'bg-slate-400 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'} text-white text-sm font-bold px-4 py-2 rounded-md transition-colors shadow-sm`}>
+                        <Plus className="h-4 w-4" /> {isProcessingCierre ? 'Procesando...' : 'Subir Soporte (Foto)'}
+                    </label>
+                </div>
+            </div>
         </div>
       </div>
 
@@ -383,7 +478,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       >
         <div className="w-full max-w-[900px] mx-auto p-8 font-sans text-black">
             
-            {/* ENCABEZADO DEL REPORTE */}
             <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
                 <div className="flex items-center gap-4">
                     <img src="/logo.png" alt="Logo" className="h-16 object-contain" />
@@ -401,7 +495,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </div>
             </div>
 
-            {/* CAJAS DE RESUMEN GLOBALES */}
             <div className="grid grid-cols-4 gap-4 mb-6">
                 <div className="border border-black rounded-lg p-3 text-center bg-gray-50">
                     <div className="text-[10px] font-bold text-slate-600 uppercase mb-1">Ingresos Efectivo</div>
@@ -421,7 +514,6 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </div>
             </div>
 
-            {/* INDICADOR DE FILTRO EN IMPRESIÓN (Si hay filtros activos) */}
             {(filtroActivo !== 'TODOS' || filtroVendedor !== 'TODOS' || filtroOrden.trim() !== '') && (
                 <div className="mb-2 text-sm font-bold italic text-slate-700 bg-slate-100 p-2 rounded border border-slate-300">
                     * Filtros aplicados a esta impresión: 
@@ -435,13 +527,11 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </div>
             )}
 
-            {/* TABLA DE DETALLES */}
             <table className="w-full border-collapse border border-black text-xs mb-8">
                 <thead>
                     <tr className="bg-gray-200 border-b border-black">
                         <th className="border-r border-black p-2 w-8 text-center">#</th>
-                        <th className="border-r border-black p-2 text-left">TIPO</th>
-                        <th className="border-r border-black p-2 text-left">CLIENTE / REFERENCIA</th>
+                        <th className="border-r border-black p-2 text-left">DESCRIPCIÓN DEL MOVIMIENTO</th>
                         <th className="border-r border-black p-2 text-center">ORDEN</th>
                         <th className="border-r border-black p-2 text-left">VENDEDOR</th>
                         <th className="border-r border-black p-2 text-center">MÉTODO</th>
@@ -451,16 +541,16 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </thead>
                 <tbody>
                     {transaccionesFiltradas.length === 0 ? (
-                        <tr><td colSpan="8" className="p-4 text-center italic">No se registraron movimientos que coincidan.</td></tr>
+                        <tr><td colSpan="7" className="p-4 text-center italic">No se registraron movimientos que coincidan.</td></tr>
                     ) : (
                         transaccionesFiltradas.map((tx, idx) => (
                             <tr key={tx.id} className="border-b border-black">
                                 <td className="border-r border-black p-1.5 text-center">{idx + 1}</td>
-                                <td className="border-r border-black p-1.5 font-bold uppercase">{tx.tipo}</td>
-                                <td className="border-r border-black p-1.5">
-                                    <div className="font-bold uppercase">{tx.cliente}</div>
-                                    <div className="text-[10px] italic">Ref: {tx.titulo}</div>
+                                
+                                <td className="border-r border-black p-1.5 uppercase">
+                                    <span className="font-bold">{tx.tipo}</span> - <span className="font-bold">{tx.cliente}</span> - <span>{tx.titulo}</span>
                                 </td>
+                                
                                 <td className="border-r border-black p-1.5 text-center font-mono">{tx.orden}</td>
                                 <td className="border-r border-black p-1.5">{tx.vendedor}</td>
                                 <td className="border-r border-black p-1.5 text-center text-[10px] uppercase">
@@ -478,7 +568,7 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </tbody>
                 <tfoot>
                     <tr className="bg-gray-200 border-t-2 border-black">
-                        <td colSpan="6" className="border-r border-black p-2 text-right font-bold uppercase">Totales mostrados:</td>
+                        <td colSpan="5" className="border-r border-black p-2 text-right font-bold uppercase">Totales mostrados:</td>
                         <td className="border-r border-black p-2 text-right font-black">{formatCurrency(totalesTabla.ingresos)}</td>
                         <td className="p-2 text-right font-black text-red-700">{formatCurrency(totalesTabla.egresos)}</td>
                     </tr>
