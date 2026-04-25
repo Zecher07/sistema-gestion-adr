@@ -10,7 +10,6 @@ import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/Text';
-import { Switch } from '@/components/ui/switch';
 import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '../supabaseClient';
 import ClientForm from './ClientForm';
@@ -96,7 +95,6 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
-// 🔥 SE AÑADIÓ LA PROPIEDAD "orders" PARA CALCULAR LA DEUDA 🔥
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
@@ -118,6 +116,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
   const [cancelReason, setCancelReason] = useState('');
 
+  const [localDiscountVal, setLocalDiscountVal] = useState('');
+  const [localDiscountPercent, setLocalDiscountPercent] = useState('');
+
   useEffect(() => { setLocalClients(clients); }, [clients]);
 
   useEffect(() => {
@@ -130,23 +131,18 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [paymentMode, setPaymentMode] = useState('partial'); 
   const [applyRetention, setApplyRetention] = useState(false);
-  const [localDiscountVal, setLocalDiscountVal] = useState('');
-  const [localDiscountPercent, setLocalDiscountPercent] = useState('');
   const [localAnticipo, setLocalAnticipo] = useState(''); 
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    productos: Array(5).fill({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }), 
+    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, completed: false, es_por_metro: false }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
-    descuentoPorcentaje: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', esDistribuidor: false
+    descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: ''
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
 
-  // ==========================================
-  // 🔥 LÓGICA PARA LÍMITES DE CRÉDITO 🔥
-  // ==========================================
   const selectedClientData = useMemo(() => {
       return localClients.find(c => c.id === formData.clienteId) || null;
   }, [localClients, formData.clienteId]);
@@ -157,7 +153,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       if (!formData.clienteId) return 0;
       let deuda = 0;
       orders.forEach(o => {
-          if (initialData?.id && o.id === initialData.id) return; // Excluye la orden actual si la está editando
+          if (initialData?.id && o.id === initialData.id) return; 
           
           if (o.cliente_id === formData.clienteId && o.status !== 'ANULADA' && o.status !== 'ARCHIVADA') {
               const total = Number(o.financials?.total) || 0;
@@ -203,8 +199,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       const retentionVal = initialData.retencion || finData.retencion || 0;
       setApplyRetention(retentionVal > 0);
 
-      const savedPercent = finData.descuentoPorcentaje || initialData.descuentoPorcentaje || 0;
       const savedAnticipo = initialData.anticipo || finData.anticipo || 0;
+      const savedDescuentoMonto = initialData.descuentoMonto || finData.descuentoMonto || 0;
 
       let savedPaymentMethod = initialData.forma_pago_anticipo || initialData.formaPagoAnticipo || finData.formaPago || 'Efectivo';
       let savedReference = '';
@@ -247,24 +243,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
-        imagenes: initialData.imagenes || [],
-        notas: initialData.notas || '', descuentoPorcentaje: savedPercent, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
-        esDistribuidor: initialData.esDistribuidor || false
+        imagenes: initialData.imagenes || [], notas: initialData.notas || '',
+        descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage
       }));
       
-      if (initialData.id && (!initialData.imagenes || initialData.imagenes.length === 0)) {
-          const fetchImages = async () => {
-              try {
-                  const { data } = await supabase.from('ordenes').select('imagenes').eq('id', initialData.id).single();
-                  if (data && Array.isArray(data.imagenes)) {
-                      setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
-                  }
-              } catch (e) { console.error("No se pudieron cargar las fotos en edición"); }
-          };
-          fetchImages();
-      }
-
-      setLocalDiscountPercent(savedPercent > 0 ? savedPercent.toString() : '');
+      setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
       setSearchTerm(initialData.cliente_nombre || initialData.cliente || '');
     }
@@ -281,19 +264,19 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, es_por_metro: false }) }));
     }
   }, []);
 
+  // 🔥 CÁLCULO MAESTRO FINANCIERO (CON DESCUENTO DIRECTO AL TOTAL) 🔥
   useEffect(() => {
-    const subtotal = formData.productos.reduce((sum, p) => {
-      if (!p.descripcion && !p.nombre) return sum;
-      return sum + (Number(p.total) || 0); 
-    }, 0);
-
-    const descuentoVal = subtotal * (formData.descuentoPorcentaje / 100);
-    const baseImponible = subtotal - descuentoVal;
-    const tasaIva = formData.ivaPercentage / 100;
+    const subtotal = formData.productos.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
+    
+    const descuentoDirectoTotal = Number(formData.descuentoMonto) || 0;
+    const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
+    
+    const descuentoBase = formData.aplicarIva ? (descuentoDirectoTotal / (1 + tasaIva)) : descuentoDirectoTotal;
+    const baseImponible = Math.max(0, subtotal - descuentoBase);
     const iva = formData.aplicarIva ? baseImponible * tasaIva : 0;
     const total = baseImponible + iva;
 
@@ -307,10 +290,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     const saldoPendiente = total - anticipoCalculado - retencionValor;
-    setFinancials({ subtotal, descuentoVal, baseImponible, iva, total, saldoPendiente });
+    setFinancials({ subtotal, descuentoVal: descuentoBase, baseImponible, iva, total, saldoPendiente });
     
-    if (document.activeElement.name !== 'discountValInput') { setLocalDiscountVal(descuentoVal > 0 ? descuentoVal.toFixed(2) : ''); }
-    if (document.activeElement.name !== 'discountPercentInput') { setLocalDiscountPercent(formData.descuentoPorcentaje > 0 ? Math.round(formData.descuentoPorcentaje).toString() : ''); }
+    if (document.activeElement?.name !== 'discountPercentInput') {
+        const perc = subtotal > 0 ? (descuentoBase / subtotal) * 100 : 0;
+        setLocalDiscountPercent(perc > 0 ? perc.toFixed(2) : '');
+    }
 
     setFormData(prev => {
         if (prev.retencion !== retencionValor || (paymentMode === 'full' && prev.anticipo !== anticipoCalculado)) {
@@ -319,24 +304,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         return prev;
     });
 
-  }, [formData.productos, formData.descuentoPorcentaje, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode]);
+  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode]);
 
   const porcentajeAnticipoUI = financials.total > 0 ? ((formData.anticipo / financials.total) * 100).toFixed(1) : '0.0';
   const porcentajeSaldoUI = financials.total > 0 ? ((financials.saldoPendiente / financials.total) * 100).toFixed(1) : '0.0';
-
-  const commitDiscountValue = () => {
-    const val = parseFloat(localDiscountVal) || 0;
-    const percent = financials.subtotal > 0 ? (val / financials.subtotal) * 100 : 0;
-    setFormData(prev => ({ ...prev, descuentoPorcentaje: percent }));
-  };
-
-  const commitDiscountPercent = () => {
-    const intPercent = parseInt(localDiscountPercent) || 0;
-    setFormData(prev => ({ ...prev, descuentoPorcentaje: intPercent }));
-    setLocalDiscountPercent(intPercent > 0 ? intPercent.toString() : '');
-  };
-
-  const handleKeyDown = (e, commitFunction) => { if (e.key === 'Enter') { e.preventDefault(); commitFunction(); e.target.blur(); } };
 
   const handleAnticipoChange = (e) => {
       const valStr = e.target.value;
@@ -358,65 +329,47 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
-  const getPriceForQty = (qty, item, isDistributorMode) => {
-      if (isDistributorMode && (item.precioDistribuidorBase > 0 || (item.precios_distribuidor && item.precios_distribuidor.length > 0))) {
-          const tiers = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
-          const tier = tiers.find(t => qty >= t.cantidad);
-          if (tier) return tier.precio;
-          return item.precioDistribuidorBase > 0 ? item.precioDistribuidorBase : (item.precioBaseOriginal || 0);
-      } else {
-          const tiers = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
-          const tier = tiers.find(t => qty >= t.cantidad);
-          if (tier) return tier.precio;
-          return item.precioBaseOriginal || 0;
-      }
+  // 🔥 CÁLCULO DE PRECIO LIMPIO 🔥
+  const getPriceForQty = (qty, item) => {
+      const tiers = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
+      const tier = tiers.find(t => qty >= t.cantidad);
+      if (tier) return tier.precio;
+      return item.precioBaseOriginal || 0;
   };
 
-  const handleDistribuidorToggle = (checked) => {
-      setFormData(prev => {
-          const newProducts = prev.productos.map(p => {
-              if (!p.descripcion && !p.nombre) return p;
-              const currentQty = Number(p.cantidad) || 0;
-              const newPrice = getPriceForQty(currentQty, p, checked);
-              return { ...p, precio: newPrice, precioUnitario: newPrice, total: p.es_por_metro ? newPrice : currentQty * newPrice };
-          });
-          return { ...prev, esDistribuidor: checked, productos: newProducts };
-      });
-  };
-
+  // 🔥 SELECCIÓN DEL CATÁLOGO (OBSERVACIONES SEPARADAS) 🔥
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima || 1;
     const computedPrice = getPriceForQty(minQty, {
         precioBaseOriginal: Number(item.precio) || 0,
-        precios_escalonados: item.precios_escalonados || [],
-        precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
-        precios_distribuidor: item.precios_distribuidor || []
-    }, formData.esDistribuidor);
+        precios_escalonados: item.precios_escalonados || []
+    });
 
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
-    if (item.observaciones) finalDesc += `\n[Nota: ${item.observaciones}]`;
 
     setFormData(prev => {
         const newProducts = [...prev.productos];
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
         const newProduct = {
-            cantidad: minQty, venta_minima: minQty, descripcion: finalDesc,
-            precioUnitario: computedPrice, precioBaseOriginal: Number(item.precio) || 0,
+            cantidad: minQty,
+            venta_minima: minQty,
+            descripcion: finalDesc,
+            observaciones: item.observaciones || '', 
+            precioUnitario: computedPrice,
+            precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
-            precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
-            precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
             total: (item.es_por_metro || false) ? computedPrice : computedPrice * minQty
         };
 
         if (emptyIndex !== -1) {
             newProducts[emptyIndex] = newProduct;
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
         } else {
             newProducts.push(newProduct);
-            newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
         }
         return { ...prev, productos: newProducts };
     });
@@ -425,6 +378,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
   };
 
+  // 🔥 BÚSQUEDA INTELIGENTE 🔥
   const handleProductSearchRequest = async (index, value) => {
       updateProduct(index, 'descripcion', value);
       if (value.trim().length < 2) {
@@ -445,35 +399,32 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setProductSuggestions(data || []);
   };
 
+  // 🔥 SELECCIÓN DE BÚSQUEDA INTELIGENTE (OBSERVACIONES SEPARADAS) 🔥
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima || 1;
       const computedPrice = getPriceForQty(minQty, {
           precioBaseOriginal: Number(product.precio) || 0,
-          precios_escalonados: product.precios_escalonados || [],
-          precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
-          precios_distribuidor: product.precios_distribuidor || []
-      }, formData.esDistribuidor);
+          precios_escalonados: product.precios_escalonados || []
+      });
 
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
-      if (product.observaciones) finalDesc += `\n[Nota: ${product.observaciones}]`;
 
       setFormData(prev => {
           const newProducts = [...prev.productos];
           newProducts[index] = { 
               ...newProducts[index], 
               descripcion: finalDesc,
+              observaciones: product.observaciones || '', 
               precioUnitario: computedPrice,
               precioBaseOriginal: Number(product.precio) || 0,
               precios_escalonados: product.precios_escalonados || [],
-              precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
-              precios_distribuidor: product.precios_distribuidor || [],
               venta_minima: minQty,
               cantidad: minQty,
               es_por_metro: product.es_por_metro || false,
               total: (product.es_por_metro || false) ? computedPrice : minQty * computedPrice
           };
-          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
@@ -487,7 +438,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         
         if (field === 'cantidad') {
             const qty = Number(value) || 0;
-            item.precioUnitario = getPriceForQty(qty, item, prev.esDistribuidor);
+            item.precioUnitario = getPriceForQty(qty, item);
         }
 
         if (field === 'cantidad' || field === 'precioUnitario') {
@@ -497,7 +448,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
         }
 
         newProducts[index] = item;
@@ -528,7 +479,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const addProduct = () => {
     setFormData(prev => ({
         ...prev,
-        productos: [...prev.productos, { descripcion: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }]
+        productos: [...prev.productos, { descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }]
     }));
   };
 
@@ -622,9 +573,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         setLoading(false); return;
     }
 
-    // ==============================================
-    // 🔥 VALIDACIÓN ESTRICTA DEL LÍMITE DE CRÉDITO 🔥
-    // ==============================================
     const isCreditoAnticipo = formData.formaPagoAnticipo === 'Crédito';
     const isCreditoSaldo = paymentMode === 'partial' && formData.formaPagoSaldo === 'Crédito';
 
@@ -656,7 +604,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     let finalPaymentString = formData.formaPagoAnticipo;
-    if (formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.referenciaPago) {
+    if (formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.formaPagoAnticipo !== 'No aplica' && formData.referenciaPago) {
         finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
     }
 
@@ -685,7 +633,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             financials: { 
                 ...financials, 
                 saldo: financials.saldoPendiente,
-                descuentoPorcentaje: formData.descuentoPorcentaje,
+                descuentoMonto: formData.descuentoMonto, 
+                descuentoVal: financials.descuentoVal, 
                 ivaPercentage: formData.ivaPercentage, 
                 retentionPercent: formData.retentionPercent,
                 retencion: formData.retencion,
@@ -699,8 +648,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             nota_anticipo: formData.notaAnticipo, 
             credito_vence_anticipo: formData.creditoVenceAnticipo, 
             imagenes: formData.imagenes, 
-            updated_at: new Date().toISOString(),
-            esDistribuidor: formData.esDistribuidor
+            updated_at: new Date().toISOString()
         };
 
         if (!initialData || !initialData.id || initialData.status === 'BORRADOR') {
@@ -723,7 +671,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         if(onSuccess) onSuccess();
 
     } catch (error) {
-        console.error(error);
         toast({ title: "Error al guardar", description: error.message, variant: "destructive" });
     } finally {
         setLoading(false);
@@ -806,7 +753,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            {!isReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
                        </div>
 
-                       {/* 🔥 INFORMACIÓN DEL LÍMITE DE CRÉDITO DEL CLIENTE 🔥 */}
                        {formData.clienteId && (
                            <div>
                                {selectedClientData?.permiteCredito ? (
@@ -824,11 +770,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                )}
                            </div>
                        )}
-
-                       <div className="mt-1 flex items-center gap-2 p-2 bg-blue-50/50 border border-blue-100 rounded-md w-fit">
-                            <Switch id="chk-dist" checked={formData.esDistribuidor} onCheckedChange={handleDistribuidorToggle} disabled={isReadOnly} />
-                            <label htmlFor="chk-dist" className="text-xs font-bold text-blue-800 cursor-pointer select-none">Aplicar tarifas de Distribuidor a esta orden</label>
-                       </div>
                    </div>
                    
                    {isSearching && (
@@ -893,6 +834,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                                     readOnly={isReadOnly}
                                 />
+                                {row.observaciones && (
+                                    <div className="text-[10px] text-slate-500 italic mt-1 leading-tight">
+                                        {row.observaciones}
+                                    </div>
+                                )}
                                 {activeProductSearchRow === idx && productSuggestions.length > 0 && !isReadOnly && (
                                     <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-xl max-h-60 overflow-y-auto left-0">
                                         {productSuggestions.map(prod => (
@@ -952,10 +898,38 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <tr><td colSpan="4" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
-                            <span className="text-slate-500">Dscto ($)</span>
-                            <input name="discountValInput" type="number" step="0.01" className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white" placeholder="0.00" value={localDiscountVal} onChange={e => setLocalDiscountVal(e.target.value)} onBlur={commitDiscountValue} onKeyDown={(e) => handleKeyDown(e, commitDiscountValue)} readOnly={isReadOnly} />
+                            <span className="text-slate-500 font-bold" title="Este valor se restará directamente del Total Final">Ajuste al Total ($)</span>
+                            <input 
+                                name="discountValInput" 
+                                type="number" step="0.01" 
+                                className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white font-bold text-red-600" 
+                                placeholder="0.00" 
+                                value={localDiscountVal} 
+                                onChange={e => {
+                                    setLocalDiscountVal(e.target.value);
+                                    setFormData(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
+                                }} 
+                                readOnly={isReadOnly} 
+                            />
                             <span className="text-slate-500">(%)</span>
-                            <input name="discountPercentInput" type="number" step="1" className="w-12 text-right border border-slate-300 rounded px-1 text-xs bg-white" placeholder="0" value={localDiscountPercent} onChange={e => setLocalDiscountPercent(e.target.value)} onBlur={commitDiscountPercent} onKeyDown={(e) => handleKeyDown(e, commitDiscountPercent)} readOnly={isReadOnly} />
+                            <input 
+                                name="discountPercentInput" 
+                                type="number" step="0.01" 
+                                className="w-12 text-right border border-slate-300 rounded px-1 text-xs bg-white" 
+                                placeholder="0" 
+                                value={localDiscountPercent} 
+                                onChange={e => {
+                                    setLocalDiscountPercent(e.target.value);
+                                    const perc = parseFloat(e.target.value) || 0;
+                                    const subtotal = financials.subtotal || 0;
+                                    const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
+                                    const baseDesc = subtotal * (perc / 100);
+                                    const finalDesc = formData.aplicarIva ? baseDesc * (1 + tasaIva) : baseDesc;
+                                    setLocalDiscountVal(finalDesc > 0 ? finalDesc.toFixed(2) : '');
+                                    setFormData(prev => ({...prev, descuentoMonto: finalDesc}));
+                                }} 
+                                readOnly={isReadOnly} 
+                            />
                          </td>
                          <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuentoVal.toFixed(2)}</td><td></td>
                       </tr>
@@ -1134,7 +1108,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                             {item.es_por_metro && <span className="text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-1.5 py-0.5 rounded">Precio Fijo/Rango</span>}
                             {item.venta_minima > 1 && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">Mínimo: {item.venta_minima}</span>}
                             {item.precios_escalonados && item.precios_escalonados.length > 0 && <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Descuentos por volumen</span>}
-                            {item.precio_distribuidor > 0 && <span className="text-[10px] font-bold text-teal-600 bg-teal-50 px-2 py-0.5 rounded border border-teal-100">Tarifa Mayorista</span>}
                         </div>
                     </div>
                 ))}

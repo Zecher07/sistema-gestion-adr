@@ -96,7 +96,6 @@ function App() {
           setStaffUsers(profilesData.map(p => ({ id: p.id, name: p.full_name, role: p.role })));
       }
 
-      // 🔥 SOLUCIÓN DEL EGRESS (LÍMITE DE 5GB): NO DESCARGAMOS LA COLUMNA DE IMÁGENES 🔥
       const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, abonos, motivoAnulacion';
       
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
@@ -280,10 +279,14 @@ function App() {
       let finData = proforma.financials || {};
       if (typeof finData === 'string') { try { finData = JSON.parse(finData); } catch(e) { finData = {}; } }
 
+      // 🔥 RECUPERAMOS EL DESCUENTO EN DÓLARES EXACTO DE LA PROFORMA 🔥
+      const savedDescuentoMonto = finData.descuentoMonto || (finData.descuento ? finData.descuento * (proforma.iva > 0 ? (1 + (proforma.iva_percentage || 15)/100) : 1) : 0);
+
       const prefilledOrderData = {
           cliente_nombre: proforma.cliente_nombre, cliente: proforma.cliente_nombre, ruc: proforma.cliente_identificacion, 
           productos: (proforma.items || []).map(item => ({ cantidad: item.cantidad, descripcion: item.descripcion, precio: item.precioUnitario, total: item.total })),
-          financials: { subtotal: proforma.subtotal, iva: proforma.iva, total: proforma.total, ivaPercentage: proforma.iva_percentage || 15, saldo: proforma.total, diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0 },
+          financials: { subtotal: proforma.subtotal, iva: proforma.iva, total: proforma.total, ivaPercentage: proforma.iva_percentage || 15, saldo: proforma.total, diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0, descuentoMonto: savedDescuentoMonto },
+          descuentoMonto: savedDescuentoMonto,
           dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0,
           tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', origenProformaInfo: proforma.proformaNumber || proforma.numero || '', 
           aplicarIva: proforma.iva > 0, notas: proforma.notas, vendedor: proforma.responsable_nombre || user.name,
@@ -352,7 +355,6 @@ function App() {
        if (currentView === 'ordenes-con-factura') filtered = filtered.filter(o => o.financials?.iva > 0);
        if (currentView === 'ordenes-archivadas') filtered = orders.filter(o => o.status === 'ARCHIVADA');
        
-       // 🔥 NUEVO FILTRO INTELIGENTE PARA LA VISTA DE CRÉDITOS 🔥
        if (currentView === 'ordenes-credito') {
            filtered = filtered.filter(o => {
                const pA = String(o.formaPagoAnticipo || o.forma_pago_anticipo || '');
@@ -392,7 +394,6 @@ function App() {
         <div className="flex-1 w-full md:w-[calc(100%-16rem)] min-h-screen transition-all duration-300 flex flex-col"><div className="hidden md:flex bg-white border-b border-slate-200 h-16 px-8 items-center justify-end sticky top-0 z-20 shadow-sm print:hidden"><div className="flex items-center gap-4"><Notifications user={user} orders={orders} archivedIds={archivedNotifications} onArchive={handleArchiveNotification} onViewOrder={(o) => handleViewOrder(o, 'tasks')} realtimeEvents={realtimeEvents} onClearEvent={handleClearEvent} onViewChange={handleViewChange} /><div className="h-8 w-[1px] bg-slate-200"></div><span className="text-sm font-semibold text-slate-700">{user.name}</span></div></div><div className="container mx-auto px-4 py-8 md:p-8 mt-12 md:mt-0 flex-1 print:p-0 print:max-w-none print:mt-0">{renderContent()}</div></div>
       </div>
 
-      {/* 🔥 ENVIAMOS LA PROPIEDAD "orders" PARA QUE CALCULE EL CRÉDITO DISPONIBLE 🔥 */}
       {(showForm || cloningOrder || editingOrder) && (
         <div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"> 
           <div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto">
@@ -401,7 +402,6 @@ function App() {
         </div>
       )}
 
-      {/* 🔥 ENVIAMOS LA PROPIEDAD "orders" AQUÍ TAMBIÉN 🔥 */}
       {paymentOrder && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-50 p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto"><OrderForm currentUser={user} clients={clients} staffUsers={staffUsers} orders={orders} initialData={paymentOrder} onSuccess={handleOrderSuccess} onCancel={() => setPaymentOrder(null)} mode="payment_only"/></div></div>)}
       
       {showClientFormModal && (<div className="fixed inset-0 bg-black/60 flex items-center justify-center z-[70] p-4 no-print"><ClientForm user={user} clienteAEditar={editingClient} onSuccess={() => { fetchAllData(); setShowClientFormModal(false); setEditingClient(null); }} onCancel={() => { setShowClientFormModal(false); setEditingClient(null); }} /></div>)}

@@ -10,7 +10,15 @@ import { useDropzone } from 'react-dropzone';
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
+// --- 🔥 FUNCIÓN PARA LIMPIAR NOTAS DEL PDF 🔥 ---
+const getPrintDesc = (prod) => {
+    const text = prod.descripcion || prod.nombre || '';
+    if (text.includes('[Nota:')) {
+        return text.split('[Nota:')[0].trim();
+    }
+    return text.trim();
+};
+
 const compressImage = async (file) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -35,13 +43,7 @@ const compressImage = async (file) => {
     });
 };
 
-const getPrintDesc = (prod) => {
-    const text = prod.descripcion || prod.nombre || '';
-    return text.split(/\[?nota:/i)[0].trim();
-};
-
 const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) => {
-    // Código idéntico y optimizado (sin cambios)
     const { toast } = useToast();
     const isProduction = user?.role === 'Producción' || user?.role === 'Administrador';
     const showFinancials = user?.role !== 'Producción'; 
@@ -232,7 +234,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const [loadingImages, setLoadingImages] = useState(false); 
   const [isAdvancing, setIsAdvancing] = useState(false);
 
-  // 🔥 ESTADOS PARA COMPROBANTES DE PAGO 🔥
   const [localComprobantes, setLocalComprobantes] = useState([]);
   const [loadingComprobantes, setLoadingComprobantes] = useState(false);
   const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
@@ -258,7 +259,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
           finally { setLoadingImages(false); }
       };
 
-      // 🔥 FETCH COMPROBANTES 🔥
       const fetchComprobantes = async () => {
           if (!showFinancials) return;
           setLoadingComprobantes(true);
@@ -277,7 +277,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
     return () => { document.body.style.overflow = 'unset'; };
   }, [order, showFinancials]);
 
-  // 🔥 LÓGICA DE SUBIDA DE COMPROBANTES 🔥
   const handleAddComprobantes = async (files) => {
       setIsProcessingComprobantes(true);
       const newImages = [];
@@ -293,7 +292,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
       
       try {
           await supabase.from('ordenes').update({ comprobantes: updatedComprobantes }).eq('id', order.id);
-          toast({title: "Comprobante de pago guardado"});
+          toast({title: "Comprobante guardado exitosamente."});
       } catch(e) { toast({title: "Error al guardar en base de datos", variant: "destructive"}); }
       setIsProcessingComprobantes(false);
   };
@@ -316,7 +315,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
       return localProducts.every(p => p.estado_prod === 'FINALIZADO');
   }, [localProducts]);
 
-  const fin = order?.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0 };
+  const fin = order?.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0, descuentoVal: 0 };
   const totalVal = Number(fin.total) || 0;
   const anticipoVal = Number(order?.anticipo) || 0;
   const retencionVal = Number(order?.retencion) || 0;
@@ -326,6 +325,21 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const isCredito = (order?.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order?.formaPagoSaldo || '').toLowerCase().includes('credito') || (order?.formaPagoAnticipo || '').toLowerCase().includes('crédito');
 
   const lockToContabilidad = order?.status === 'VENTAS POR RETIRAR' && !isCredito && saldoCalculado > 0 && !isAdmin;
+
+  // --- 🔥 LÓGICA CONDICIONAL DE COMPROBANTES 🔥 ---
+  const requiresComprobante = (method) => {
+      if (!method) return false;
+      const m = method.toLowerCase();
+      return !m.includes('efectivo') && !m.includes('no aplica') && !m.includes('crédito') && !m.includes('credito');
+  };
+
+  const hasNonCashPayments = 
+      requiresComprobante(order?.formaPagoAnticipo || order?.forma_pago_anticipo) || 
+      requiresComprobante(order?.formaPagoSaldo || fin.formaPagoSaldo) ||
+      (order?.abonos || []).some(a => requiresComprobante(a.metodoPago || a.metodo_pago));
+
+  const showComprobantesSection = hasNonCashPayments || localComprobantes.length > 0;
+
 
   const canAdvance = useMemo(() => {
       if (!order) return false;
@@ -341,7 +355,10 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
   if (!order) return null; 
 
-  const handlePrint = (type) => { setPrintType(type); setTimeout(() => { window.print(); }, 100); };
+  const handlePrint = (type) => { 
+      setPrintType(type); 
+      setTimeout(() => { window.print(); }, 100); 
+  };
 
   const handleResponsableChange = async (e) => {
     const nuevoVendedor = e.target.value;
@@ -375,7 +392,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
     if (!dateString) return '';
     try {
       const d = new Date(dateString);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}:${String(d.getSeconds()).padStart(2, '0')}`;
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
     } catch (e) { return ''; }
   };
 
@@ -520,12 +537,33 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     </div>
                 </div>
 
+                {/* 🔥 BLOQUE DE TOTALES AHORA ARRIBA DE PAGOS 🔥 */}
+                {showFinancials && (
+                    <div className="mb-6 flex justify-end">
+                        <div className="w-full max-w-sm bg-white border border-slate-300 rounded-sm shadow-sm overflow-hidden">
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div></div>
+                            {Number(fin.descuentoVal) > 0 && <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto Total</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>}
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({fin.ivaPercentage || 15}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 bg-blue-50 text-base"><div className="px-4 py-3 text-right font-bold text-blue-900">TOTAL</div><div className="px-4 py-3 text-right font-bold text-blue-900">{formatCurrency(fin.total)}</div></div>
+                        </div>
+                    </div>
+                )}
+
                 {showFinancials && (
                     <div className="mb-6 bg-slate-50/50 p-4 border border-slate-200 rounded-lg">
-                        <h3 className="font-bold text-slate-700 mb-4 border-b border-slate-200 pb-2">Pagos y Comprobantes</h3>
+                        <div className="flex justify-between items-center mb-4 border-b border-slate-200 pb-2">
+                            <h3 className="font-bold text-slate-700">Pagos y Comprobantes</h3>
+                            {saldoCalculado > 0 && onAbonoOrder && (
+                                <Button size="sm" onClick={() => onAbonoOrder(order)} className="bg-green-600 hover:bg-green-700 text-white shadow-sm flex items-center justify-center gap-2">
+                                    <DollarSign className="h-4 w-4"/> Registrar Cobro Extra
+                                </Button>
+                            )}
+                        </div>
+
                         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm">
-                                <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Anticipo Original</span><span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span></div>
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm relative">
+                                <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Anticipo Inicial</span><span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span></div>
                                 <div className="space-y-1 text-xs text-slate-600">
                                      <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
                                      {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
@@ -535,63 +573,72 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col justify-center items-center">
                                 <span className="text-blue-800 font-bold text-sm mb-1">Retención</span><span className="text-2xl font-bold text-slate-800">{Number(order.retencion || 0).toFixed(2)}</span>
                             </div>
-                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col relative pb-12">
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col relative pb-6">
                                 <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Saldo Pendiente (Real)</span><span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span></div>
                                 <div className="space-y-1 text-xs text-slate-600 mb-2">
                                      <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
                                      {isCredito && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>)}
                                      {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
                                 </div>
-                                {saldoCalculado > 0 && onAbonoOrder && (<div className="absolute bottom-3 left-4 right-4"><Button size="sm" onClick={() => onAbonoOrder(order)} className="w-full bg-green-600 hover:bg-green-700 text-white shadow-sm flex items-center justify-center gap-2"><DollarSign className="h-4 w-4"/> Registrar Cobro</Button></div>)}
                             </div>
                         </div>
 
-                        {/* 🔥 SECCIÓN DE FOTOS DE TRANSFERENCIAS 🔥 */}
-                        <div className="mt-6 border-t border-slate-200 pt-4">
-                            <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">Comprobantes de Transferencia / Depósito</h4>
-                            <div className="border border-slate-300 p-4 rounded-md bg-white flex flex-col md:flex-row gap-4 items-start">
-                                <div className="min-h-[80px] flex-1 flex flex-wrap gap-4">
-                                   {localComprobantes.map((img, i) => (
-                                      <div key={i} className="relative group w-20 h-20 border border-slate-300 bg-slate-50 rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => setPreviewImage(img.url)}>
-                                         <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
-                                         {(isAdmin || user.role === 'Contabilidad') && (
-                                             <button type="button" onClick={(e) => { e.stopPropagation(); removeComprobante(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>
-                                         )}
-                                      </div>
-                                   ))}
-                                   {loadingComprobantes || isProcessingComprobantes ? (
-                                       <div className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
-                                           <Loader2 className="h-5 w-5 text-blue-500 animate-spin"/>
-                                       </div>
-                                   ) : localComprobantes.length === 0 && (
-                                       <div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-2">
-                                          <FileText className="h-6 w-6 mb-1 opacity-50" />
-                                          <span>Sin comprobantes adjuntos</span>
-                                       </div>
-                                   )}
+                        {/* 🔥 SECCIÓN DE ABONOS EXTRAS (REVISIÓN ROJA) 🔥 */}
+                        {order.abonos && order.abonos.length > 0 && (
+                            <div className="mt-4 col-span-1 md:col-span-3">
+                                <h4 className="font-bold text-red-700 text-xs mb-2 uppercase border-b border-red-200 pb-1">Abonos Extras Registrados</h4>
+                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                                    {order.abonos.map((a, i) => (
+                                        <div key={i} className="bg-red-50 border border-red-200 rounded p-2 flex justify-between items-center shadow-sm">
+                                            <div>
+                                                <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
+                                                <div className="text-xs font-bold text-red-700 uppercase">{a.metodoPago || a.metodo_pago}</div>
+                                            </div>
+                                            <div className="font-black text-red-600 text-sm">
+                                                +{formatCurrency(a.monto)}
+                                            </div>
+                                        </div>
+                                    ))}
                                 </div>
-                                {(isAdmin || user.role === 'Contabilidad' || user.role === 'Vendedor') && (
-                                    <div className="shrink-0">
-                                        <input {...getInputPropsComp()} className="hidden" />
-                                        <label {...getRootPropsComp()} className={`inline-flex items-center gap-1 ${isProcessingComprobantes ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'} text-white text-xs px-4 py-2 rounded-md transition-colors shadow-sm`}>
-                                            <Plus className="h-4 w-4" /> {isProcessingComprobantes ? 'Procesando...' : 'Subir Comprobante'}
-                                        </label>
-                                    </div>
-                                )}
                             </div>
-                        </div>
-                    </div>
-                )}
+                        )}
 
-                {showFinancials && (
-                    <div className="mb-8 flex justify-end">
-                        <div className="w-full max-w-sm bg-white border border-slate-300 rounded-sm shadow-sm overflow-hidden">
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto ({fin.descuentoPorcentaje || 0}%)</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({fin.ivaPercentage || 15}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 bg-blue-50 text-base"><div className="px-4 py-3 text-right font-bold text-blue-900">TOTAL</div><div className="px-4 py-3 text-right font-bold text-blue-900">{formatCurrency(fin.total)}</div></div>
-                        </div>
+                        {/* 🔥 SECCIÓN DE FOTOS DE TRANSFERENCIAS (SOLO SI SE NECESITAN) 🔥 */}
+                        {showComprobantesSection && (
+                            <div className="mt-6 border-t border-slate-200 pt-4">
+                                <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">Comprobantes de Transferencia / Depósito / Cheque</h4>
+                                <div className="border border-slate-300 p-4 rounded-md bg-white flex flex-col md:flex-row gap-4 items-start">
+                                    <div className="min-h-[80px] flex-1 flex flex-wrap gap-4">
+                                       {localComprobantes.map((img, i) => (
+                                          <div key={i} className="relative group w-20 h-20 border border-slate-300 bg-slate-50 rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => setPreviewImage(img.url)}>
+                                             <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
+                                             {(isAdmin || user.role === 'Contabilidad') && (
+                                                 <button type="button" onClick={(e) => { e.stopPropagation(); removeComprobante(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>
+                                             )}
+                                          </div>
+                                       ))}
+                                       {loadingComprobantes || isProcessingComprobantes ? (
+                                           <div className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
+                                               <Loader2 className="h-5 w-5 text-blue-500 animate-spin"/>
+                                           </div>
+                                       ) : localComprobantes.length === 0 && (
+                                           <div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-2">
+                                              <FileText className="h-6 w-6 mb-1 opacity-50" />
+                                              <span>Sin comprobantes adjuntos</span>
+                                           </div>
+                                       )}
+                                    </div>
+                                    {(isAdmin || user.role === 'Contabilidad' || user.role === 'Vendedor') && (
+                                        <div className="shrink-0">
+                                            <input {...getInputPropsComp()} className="hidden" />
+                                            <label {...getRootPropsComp()} className={`inline-flex items-center gap-1 ${isProcessingComprobantes ? 'bg-slate-400 cursor-wait' : 'bg-emerald-600 hover:bg-emerald-700 cursor-pointer'} text-white text-xs px-4 py-2 rounded-md transition-colors shadow-sm`}>
+                                                <Plus className="h-4 w-4" /> {isProcessingComprobantes ? 'Procesando...' : 'Subir Comprobante'}
+                                            </label>
+                                        </div>
+                                    )}
+                                </div>
+                            </div>
+                        )}
                     </div>
                 )}
 
@@ -680,6 +727,301 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                   </motion.div>
                 )}
             </AnimatePresence>
+        </div>
+
+
+        {/* ======================================================== */}
+        {/* 2. VISTAS DE IMPRESIÓN (OCULTAS EN PANTALLA)            */}
+        {/* ======================================================== */}
+        {/* 🔥 ESTE CONTENEDOR ESCONDE EL RESTO DEL DOM AL IMPRIMIR 🔥 */}
+        <div id="modal-print-container" className="hidden print:block absolute top-0 left-0 w-full bg-white z-[10000] text-black" style={{ minHeight: '100vh', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
+            <style>{`
+                @media print {
+                    body * { visibility: hidden; }
+                    #modal-print-container, #modal-print-container * { visibility: visible; }
+                    #modal-print-container { position: absolute; left: 0; top: 0; width: 100%; margin: 0; padding: 0; }
+                }
+            `}</style>
+
+            {/* ---------------- VISTA SRI (FACTURA) ---------------- */}
+            {printType === 'sri' && (
+                <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
+                      <div className="grid grid-cols-2 gap-4 mb-4 w-full">
+                          <div className="w-full flex flex-col gap-2">
+                              <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
+                                  <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
+                              </div>
+                              <div className="border border-black rounded-xl p-3">
+                                  <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
+                                  <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
+                              </div>
+                          </div>
+
+                          <div className="w-full border border-black rounded-xl p-3">
+                              <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
+                              <div className="text-lg font-bold my-2 tracking-widest">COMPROBANTE ORDEN</div>
+                              <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> {formatOrderId(order.id)}</div>
+                              
+                              <div className="flex justify-between mb-4 mt-4">
+                                  <span className="font-bold">FECHA Y HORA DE EMISIÓN:</span>
+                                  <span>{formatDateFull(order.createdAt || order.created_at)}</span>
+                              </div>
+                          </div>
+                      </div>
+
+                      <div className="border border-black rounded-xl p-3 mb-4 w-full">
+                          <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
+                              <div className="space-y-1">
+                                  <div><span className="font-bold">Razón Social / Nombres:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
+                                  <div><span className="font-bold">Identificación:</span> {order.ruc || order.cedula || order.cliente_identificacion || '9999999999999'}</div>
+                                  <div><span className="font-bold">Fecha:</span> {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
+                                  <div><span className="font-bold">Dirección:</span> {order.direccion || 'S/N'}</div>
+                              </div>
+                              <div className="space-y-1">
+                                  <div><span className="font-bold">Guía Remisión:</span></div>
+                                  <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
+                              </div>
+                          </div>
+                      </div>
+
+                      {/* 🔥 TABLA DE PRODUCTOS RESTAURADA 🔥 */}
+                      <div className="mb-4 w-full min-h-[150px]">
+                          <table className="w-full border-collapse border border-black">
+                              <thead>
+                                  <tr className="border-b border-black bg-gray-100">
+                                      <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
+                                      <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
+                                      <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
+                                  </tr>
+                              </thead>
+                              <tbody>
+                                  {localProducts.map((prod, idx) => (
+                                      <tr key={idx} className="border-b border-black">
+                                          <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
+                                          <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
+                                          <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">{getPrintDesc(prod)}</td>
+                                          <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precio || prod.precioUnitario)}</td>
+                                          <td className="border-r border-black p-1.5 text-right">$0.00</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario)))}</td>
+                                      </tr>
+                                  ))}
+                              </tbody>
+                          </table>
+                      </div>
+
+                      <div className="grid grid-cols-3 gap-4 w-full items-start">
+                          <div className="col-span-2 flex flex-col gap-4 w-full">
+                              <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
+                                  <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
+                                  <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
+                                      <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
+                                      <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
+                                      <span className="font-bold">Vendedor:</span> <span>{localVendedor || 'Sistema'}</span>
+                                      <span className="font-bold">F. Entrega:</span> <span>{order.fechaEntrega || order.fecha_entrega ? (order.fechaEntrega || order.fecha_entrega).split('T')[0] : 'Por Definir'}</span>
+                                      <span className="font-bold">N° Proforma:</span> <span>{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span>
+                                      <span className="font-bold">N° Factura:</span> <span>{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span>
+                                      <span className="font-bold">F. Finalizada:</span> <span>{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PROCESO'}</span>
+
+                                      {/* Las notas generales SOLO se muestran en SRI si existen */}
+                                      {order.notas && (
+                                          <>
+                                              <span className="font-bold mt-1">Notas:</span>
+                                              <span className="whitespace-pre-line mt-1">{order.notas}</span>
+                                          </>
+                                      )}
+                                  </div>
+                              </div>
+
+                              {/* 🔥 ABONOS DETALLADOS EN IMPRESIÓN SRI 🔥 */}
+                              <div className="border border-black rounded-xl overflow-hidden w-full">
+                                  <table className="w-full text-left border-collapse">
+                                      <thead>
+                                          <tr className="border-b border-black bg-gray-100">
+                                              <th className="p-2 font-bold border-r border-black w-[70%]">Formas de Pago</th>
+                                              <th className="p-2 font-bold text-right w-[30%]">Valor</th>
+                                      </tr>
+                                      </thead>
+                                      <tbody>
+                                          <tr className="border-b border-black">
+                                              <td className="p-2 border-r border-black uppercase text-[10px]">ANTICIPO - {order.formaPagoAnticipo || order.forma_pago_anticipo || 'EFECTIVO'}</td>
+                                              <td className="p-2 text-right font-bold">{formatCurrency(order.anticipo || 0)}</td>
+                                          </tr>
+                                          {order.abonos && order.abonos.map((a, i) => (
+                                              <tr key={i} className="border-b border-black text-red-700">
+                                                  <td className="p-2 border-r border-black uppercase text-[10px]">ABONO {i+1} - {a.metodoPago || a.metodo_pago}</td>
+                                                  <td className="p-2 text-right font-bold">{formatCurrency(a.monto)}</td>
+                                              </tr>
+                                          ))}
+                                          <tr>
+                                              <td className="p-2 border-r border-black uppercase text-[10px] text-red-700">SALDO PENDIENTE - {order.formaPagoSaldo || 'EFECTIVO'}</td>
+                                              <td className="p-2 text-right font-bold text-red-600">{formatCurrency(saldoCalculado)}</td>
+                                          </tr>
+                                      </tbody>
+                                  </table>
+                              </div>
+                          </div>
+
+                          <div className="col-span-1 w-full">
+                              <table className="w-full border-collapse border border-black text-[11px]">
+                                  <tbody>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">SUBTOTAL {fin.ivaPercentage || 15}%</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
+                                      </tr>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
+                                          <td className="p-1.5 text-right">$0.00</td>
+                                      </tr>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
+                                      </tr>
+                                      <tr className="border-b border-black">
+                                          <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
+                                          <td className="p-1.5 text-right">{formatCurrency(fin.descuentoVal || 0)}</td>
+                                      </tr>
+                                      <tr className="border-b border-black bg-gray-50">
+                                          <td className="p-1.5 border-r border-black font-bold">IVA {fin.ivaPercentage || 15}%</td>
+                                          <td className="p-1.5 text-right font-bold">{formatCurrency(fin.iva || 0)}</td>
+                                      </tr>
+                                      <tr>
+                                          <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
+                                          <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(fin.total || 0)}</td>
+                                      </tr>
+                                  </tbody>
+                              </table>
+                          </div>
+                      </div>
+                </div>
+            )}
+
+            {/* ---------------- VISTA PRODUCCIÓN ---------------- */}
+            {printType === 'produccion' && (
+                <div className="w-full max-w-[850px] mx-auto p-4 md:p-6 font-sans text-black">
+                    <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-4">
+                        <div className="w-40">
+                             <img src="/logo.png" alt="Logo" className="max-w-full h-auto object-contain" />
+                        </div>
+                        <div className="text-right">
+                             <h1 className="text-xl font-black tracking-widest text-slate-900 mb-1 uppercase">Orden de Producción</h1>
+                             <div className="text-lg font-bold text-slate-800">N° ORDEN: {formatOrderId(order.id)}</div>
+                             <div className="text-[11px] font-bold text-slate-700 mt-1">FECHA INGRESO: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
+                        </div>
+                    </div>
+
+                    {/* 🔥 CAMPOS DE CONTROL RESTAURADOS EN EL ENCABEZADO 🔥 */}
+                    <div className="border-2 border-black rounded-lg p-3 mb-6 bg-gray-50">
+                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                             <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
+                             <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
+                             
+                             <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
+                             <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{localVendedor || 'SISTEMA'}</span></div>
+                             
+                             <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
+                             <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
+                             
+                             <div><span className="font-bold">FECHA FINALIZACIÓN:</span> <span className="uppercase">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PRODUCCIÓN'}</span></div>
+                             <div></div>
+                        </div>
+                    </div>
+
+                    {/* Tabla de Productos Separada */}
+                    <div className="mb-8">
+                        <table className="w-full border-collapse border-2 border-black text-sm mb-0">
+                            <thead>
+                                <tr className="bg-gray-200 border-b-2 border-black text-[11px]">
+                                    <th className="border-r-2 border-black p-2 w-12 text-center uppercase">CANT.</th>
+                                    <th className="border-r-2 border-black p-2 text-left uppercase">DESCRIPCIÓN</th>
+                                    <th className="border-r-2 border-black p-2 text-right w-24 uppercase">V. UNITARIO</th>
+                                    <th className="p-2 text-right w-24 uppercase">V. TOTAL</th>
+                                </tr>
+                            </thead>
+                            <tbody>
+                                {localProducts.map((prod, idx) => (
+                                    <tr key={idx} className="border-b border-black">
+                                        <td className="border-r-2 border-black p-2 text-center font-bold text-base align-middle">{prod.cantidad}</td>
+                                        <td className="border-r-2 border-black p-2 uppercase font-medium whitespace-pre-wrap text-xs align-top">
+                                            {getPrintDesc(prod)}
+                                        </td>
+                                        <td className="border-r-2 border-black p-2 font-medium align-middle">
+                                            <div className="flex justify-between w-full"><span>$</span> <span>{Number(prod.precio || prod.precioUnitario).toFixed(2)}</span></div>
+                                        </td>
+                                        <td className="p-2 font-bold align-middle">
+                                            <div className="flex justify-between w-full"><span>$</span> <span>{Number(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario))).toFixed(2)}</span></div>
+                                        </td>
+                                    </tr>
+                                ))}
+                            </tbody>
+                        </table>
+                    </div>
+
+                    {/* Bloque Financiero y de Saldos Separado con Margen */}
+                    <div className="flex border-2 border-black text-xs bg-white mb-8" style={{ pageBreakInside: 'avoid' }}>
+                        
+                        {/* ABONOS Y SALDOS DETALLADOS */}
+                        <div className="flex-1 border-r-2 border-black p-4 flex flex-col justify-center gap-3">
+                            <div className="flex justify-between items-center border-b border-dashed border-gray-400 pb-1">
+                                <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
+                                <span className="font-bold text-sm text-slate-800">{formatCurrency(anticipoVal)}</span>
+                            </div>
+                            
+                            {order.abonos && order.abonos.map((a, i) => (
+                                <div key={i} className="flex justify-between items-center border-b border-dashed border-red-300 pb-1 text-red-700">
+                                    <span className="font-bold">ABONO {i+1} ({a.fecha ? a.fecha.split('T')[0] : ''}):</span>
+                                    <span className="font-bold">{formatCurrency(a.monto)}</span>
+                                </div>
+                            ))}
+
+                            <div className="flex justify-between items-center pt-2">
+                                <span className="font-black text-base text-red-600">SALDO PENDIENTE:</span>
+                                <span className="font-black text-base text-red-600">{formatCurrency(saldoCalculado)}</span>
+                            </div>
+                        </div>
+
+                        {/* DESGLOSE FINANCIERO */}
+                        <div className="w-[40%] flex flex-col">
+                            <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                                <span className="font-bold">SUBTOTAL</span>
+                                <span className="font-medium">{formatCurrency(fin.subtotal)}</span>
+                            </div>
+                            {Number(fin.descuentoVal) > 0 && (
+                                <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                                    <span className="font-bold">DESCUENTO</span>
+                                    <span className="font-medium">-{formatCurrency(fin.descuentoVal)}</span>
+                                </div>
+                            )}
+                            <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                                <span className="font-bold">IVA {fin.ivaPercentage || 15}%</span>
+                                <span className="font-medium">{formatCurrency(fin.iva)}</span>
+                            </div>
+                            <div className="flex justify-between items-center p-2 bg-gray-200 h-full">
+                                <span className="font-black text-sm">TOTAL</span>
+                                <span className="font-black text-sm">{formatCurrency(fin.total)}</span>
+                            </div>
+                        </div>
+                    </div>
+
+                    {localImages.length > 0 && (
+                        <div className="border-2 border-black rounded-lg p-3" style={{ pageBreakInside: 'avoid' }}>
+                            <div className="font-bold text-xs mb-3 uppercase">Artes y Diseños Adjuntos:</div>
+                            <div className="flex flex-wrap gap-2 items-start justify-center">
+                               {localImages.map((img, index) => (
+                                   <img 
+                                     key={index}
+                                     src={img.url} 
+                                     alt={img.name || `Arte ${index + 1}`} 
+                                     className="max-w-[48%] max-h-[220px] object-contain border border-gray-300 rounded shadow-sm"
+                                   />
+                               ))}
+                            </div>
+                        </div>
+                    )}
+                </div>
+            )}
         </div>
     </>
   );
