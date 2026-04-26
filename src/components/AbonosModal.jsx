@@ -1,131 +1,142 @@
 import React, { useState } from 'react';
 import { supabase } from '../supabaseClient';
-import { X, Save, Coins, Banknote, Calendar, Loader2, FileText } from 'lucide-react';
+import { X, Save, DollarSign, Calendar, FileText, CreditCard, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/use-toast';
-import { motion } from 'framer-motion';
+
+// 🔥 Métodos de pago actualizados (Tarjeta unificada, Cheque agregado) 🔥
+const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Depósito', 'Tarjeta', 'Cheque'];
 
 const AbonosModal = ({ order, user, onClose, onSuccess }) => {
   const { toast } = useToast();
-  const [saving, setSaving] = useState(false);
-  const [monto, setMonto] = useState('');
-  const [metodoPago, setMetodoPago] = useState('Efectivo');
-  const [nota, setNota] = useState('');
+  const [loading, setLoading] = useState(false);
+  const [formData, setFormData] = useState({
+    monto: '',
+    metodoPago: 'Efectivo',
+    referencia: '',
+    nota: '',
+    fecha: new Date().toISOString().split('T')[0]
+  });
 
-  const saldoActual = Number(order.financials?.saldo || 0);
-  const abonos = order.abonos || [];
+  const total = Number(order.financials?.total) || 0;
+  const anticipo = Number(order.anticipo) || 0;
+  const retencion = Number(order.retencion) || 0;
+  const abonosPrevios = (order.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+  const saldoActual = Math.max(total - anticipo - retencion - abonosPrevios, 0);
 
-  const handleSave = async () => {
-    const abonoValue = Number(monto);
-    if (abonoValue <= 0) return toast({ title: "Error", description: "El abono debe ser mayor a $0", variant: "destructive" });
-    if (abonoValue > saldoActual) return toast({ title: "Error", description: "El abono no puede ser mayor al saldo pendiente", variant: "destructive" });
+  const handleSubmit = async (e) => {
+    e.preventDefault();
+    const montoNum = parseFloat(formData.monto);
+    
+    if (isNaN(montoNum) || montoNum <= 0) {
+        toast({ title: "Monto inválido", variant: "destructive" });
+        return;
+    }
+    if (montoNum > saldoActual + 0.05) {
+        toast({ title: "Monto excede el saldo", description: `El saldo máximo a cobrar es $${saldoActual.toFixed(2)}`, variant: "destructive" });
+        return;
+    }
 
-    setSaving(true);
+    setLoading(true);
     try {
-      const nuevoAbono = {
-        id: Date.now().toString(),
-        fecha: new Date().toISOString(),
-        monto: abonoValue,
-        metodoPago,
-        nota: nota.trim() || 'Sin nota',
-        cobrador: user.name
-      };
+        let metodoFinal = formData.metodoPago;
+        if (formData.metodoPago !== 'Efectivo' && formData.referencia.trim()) {
+            metodoFinal = `${formData.metodoPago} - Ref: ${formData.referencia}`;
+        }
 
-      const abonosActualizados = [...abonos, nuevoAbono];
-      const nuevoSaldo = Math.max(0, saldoActual - abonoValue);
+        const nuevoAbono = {
+            id: Date.now(),
+            monto: montoNum,
+            metodoPago: metodoFinal,
+            fecha: `${formData.fecha}T12:00:00`,
+            nota: formData.nota,
+            cobrador: user.name
+        };
 
-      const { error } = await supabase.from('ordenes').update({
-        abonos: abonosActualizados,
-        financials: { ...order.financials, saldo: nuevoSaldo }
-      }).eq('id', order.id);
+        const abonosActualizados = [...(order.abonos || []), nuevoAbono];
+        const nuevoSaldoReal = Math.max(total - anticipo - retencion - abonosActualizados.reduce((acc, a) => acc + Number(a.monto), 0), 0);
 
-      if (error) throw error;
+        // Actualizamos en base de datos
+        const { error } = await supabase.from('ordenes').update({ 
+            abonos: abonosActualizados,
+            financials: { ...order.financials, saldo: nuevoSaldoReal }
+        }).eq('id', order.id);
 
-      toast({ title: "Abono Registrado", description: `Se ha restado $${abonoValue.toFixed(2)} al saldo.` });
-      onSuccess();
+        if (error) throw error;
+
+        toast({ title: "Abono Registrado", description: "Se ha descontado del saldo pendiente correctamente." });
+        if(onSuccess) onSuccess();
+        onClose();
     } catch (error) {
-      console.error(error);
-      toast({ title: "Error", description: "No se pudo registrar el abono", variant: "destructive" });
+        toast({ title: "Error al registrar", description: error.message, variant: "destructive" });
     } finally {
-      setSaving(false);
+        setLoading(false);
     }
   };
 
   return (
-    <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-      <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
+    <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/60 p-4">
+      <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
         
-        <div className="bg-emerald-600 p-4 text-white flex justify-between items-center">
-            <h3 className="font-bold text-lg flex items-center gap-2"><Coins className="h-5 w-5"/> Historial de Abonos: Orden #{order.order_number || order.id}</h3>
-            <button onClick={onClose} className="hover:bg-emerald-700 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
+        <div className="bg-green-600 text-white px-6 py-4 flex justify-between items-center">
+            <h2 className="text-xl font-bold flex items-center gap-2"><DollarSign className="h-6 w-6"/> Registrar Cobro / Abono</h2>
+            <button onClick={onClose} className="hover:bg-green-700 p-1 rounded-full transition-colors"><X className="h-5 w-5"/></button>
         </div>
 
-        <div className="p-6">
-            {/* Saldo Actual */}
-            <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 mb-6 flex justify-between items-center">
-                <div>
-                    <p className="text-xs font-bold text-slate-500 uppercase">Cliente</p>
-                    <p className="font-bold text-slate-800">{order.cliente}</p>
+        <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+            <div>
+                <div className="text-sm font-bold text-slate-500 uppercase">Orden #{order.orderNumber || order.order_number || order.id}</div>
+                <div className="font-bold text-slate-800 uppercase">{order.cliente || order.cliente_nombre}</div>
+            </div>
+            <div className="text-right">
+                <div className="text-xs font-bold text-slate-500 uppercase">Saldo Pendiente</div>
+                <div className="text-2xl font-black text-red-600">${saldoActual.toFixed(2)}</div>
+            </div>
+        </div>
+
+        <form onSubmit={handleSubmit} className="p-6 space-y-5 bg-white">
+            <div className="grid grid-cols-2 gap-4">
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Monto a Cobrar</label>
+                    <div className="relative">
+                        <span className="absolute left-3 top-2.5 font-bold text-slate-400">$</span>
+                        <input type="number" step="0.01" min="0.01" max={saldoActual.toFixed(2)} required autoFocus className="w-full pl-7 pr-3 py-2 border border-green-300 rounded-md focus:ring-2 focus:ring-green-500 outline-none font-bold text-green-700 bg-green-50 text-lg" value={formData.monto} onChange={e => setFormData({...formData, monto: e.target.value})} placeholder="0.00" />
+                    </div>
                 </div>
-                <div className="text-right">
-                    <p className="text-xs font-bold text-slate-500 uppercase">Saldo Pendiente</p>
-                    <p className="font-black text-2xl text-emerald-600">${saldoActual.toFixed(2)}</p>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><Calendar className="h-3 w-3"/> Fecha</label>
+                    <input type="date" required className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} />
                 </div>
             </div>
 
-            {/* Historial de Abonos */}
-            <div className="mb-6">
-                <h4 className="text-sm font-bold text-slate-700 mb-2 border-b pb-1">Abonos Anteriores</h4>
-                {abonos.length === 0 ? (
-                    <p className="text-xs text-slate-500 italic">No hay abonos registrados.</p>
-                ) : (
-                    <div className="space-y-2 max-h-40 overflow-y-auto pr-2">
-                        {abonos.map((a, i) => (
-                            <div key={a.id || i} className="bg-white border border-slate-200 p-2 rounded text-xs flex justify-between items-center shadow-sm">
-                                <div>
-                                    <div className="font-bold text-slate-800 flex items-center gap-1"><Calendar className="h-3 w-3 text-slate-400"/> {new Date(a.fecha).toLocaleDateString()}</div>
-                                    <div className="text-slate-500">Cobrado por: {a.cobrador} | Vía: {a.metodoPago}</div>
-                                    {a.nota && <div className="text-[10px] text-slate-400 mt-0.5 flex items-center gap-1"><FileText className="h-3 w-3"/>{a.nota}</div>}
-                                </div>
-                                <span className="font-black text-emerald-600 text-sm">+ ${Number(a.monto).toFixed(2)}</span>
-                            </div>
-                        ))}
-                    </div>
-                )}
+            <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><CreditCard className="h-3 w-3"/> Método de Pago</label>
+                <select className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white font-medium" value={formData.metodoPago} onChange={e => setFormData({...formData, metodoPago: e.target.value})}>
+                    {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                </select>
             </div>
 
-            {/* Formulario Nuevo Abono */}
-            {saldoActual > 0 && (
-                <div className="bg-emerald-50 p-4 rounded-lg border border-emerald-200">
-                    <h4 className="text-sm font-bold text-emerald-800 mb-3">Registrar Nuevo Abono</h4>
-                    <div className="grid grid-cols-2 gap-4 mb-3">
-                        <div>
-                            <label className="text-[10px] font-bold text-emerald-700 uppercase block mb-1">Monto ($)</label>
-                            <Input type="number" step="0.01" max={saldoActual} value={monto} onChange={e => setMonto(e.target.value)} placeholder="0.00" className="font-bold text-lg text-emerald-900 border-emerald-300" />
-                        </div>
-                        <div>
-                            <label className="text-[10px] font-bold text-emerald-700 uppercase block mb-1">Método de Pago</label>
-                            <select className="w-full border border-emerald-300 rounded-md px-3 py-2 text-sm bg-white outline-none focus:ring-2 focus:ring-emerald-500 h-10 font-medium text-emerald-800" value={metodoPago} onChange={e => setMetodoPago(e.target.value)}>
-                                <option value="Efectivo">Efectivo</option>
-                                <option value="Transferencia">Transferencia</option>
-                                <option value="Depósito">Depósito</option>
-                                <option value="Tarjeta de Crédito">Tarjeta de Crédito</option>
-                                <option value="Tarjeta de Débito">Tarjeta de Débito</option>
-                            </select>
-                        </div>
-                        <div className="col-span-2">
-                            <label className="text-[10px] font-bold text-emerald-700 uppercase block mb-1">Nota (Opcional)</label>
-                            <Input value={nota} onChange={e => setNota(e.target.value)} placeholder="Ej: Abono de la mitad pendiente..." className="border-emerald-300 text-sm" />
-                        </div>
-                    </div>
-                    <Button onClick={handleSave} disabled={saving || !monto || Number(monto) <= 0} className="w-full bg-emerald-600 hover:bg-emerald-700 text-white font-bold gap-2">
-                        {saving ? <Loader2 className="h-4 w-4 animate-spin"/> : <Banknote className="h-4 w-4"/>} Guardar Abono
-                    </Button>
+            {formData.metodoPago !== 'Efectivo' && (
+                <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                    <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
+                    <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referencia} onChange={e => setFormData({...formData, referencia: e.target.value})} placeholder="Opcional..." />
                 </div>
             )}
-        </div>
-      </motion.div>
+
+            <div className="space-y-1.5">
+                <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><FileText className="h-3 w-3"/> Nota / Observación</label>
+                <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.nota} onChange={e => setFormData({...formData, nota: e.target.value})} placeholder="Ej: Pago realizado en taller..." />
+            </div>
+
+            <div className="pt-4 border-t border-slate-200 flex justify-end gap-3">
+                <Button type="button" variant="outline" onClick={onClose} disabled={loading}>Cancelar</Button>
+                <Button type="submit" disabled={loading || !formData.monto} className="bg-green-600 hover:bg-green-700 text-white font-bold gap-2">
+                    {loading ? <Loader2 className="h-4 w-4 animate-spin"/> : <Save className="h-4 w-4"/>} Guardar Cobro
+                </Button>
+            </div>
+        </form>
+      </div>
     </div>
   );
 };
