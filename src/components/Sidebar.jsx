@@ -50,11 +50,12 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     { id: 'proformas', label: 'Cotizaciones', icon: FileSpreadsheet },
     { id: 'ordenes', label: 'Órdenes Producción', icon: FileText, submenu: [
         { label: 'Ver Todas', id: 'ordenes-todas' },
+        { label: 'Activas', id: 'ordenes-activas' }, // <-- NUEVA SUB-CATEGORÍA
         { label: 'Nueva Orden', id: 'ordenes-nueva' },
         { label: 'Sin Factura', id: 'ordenes-sin-factura' },
         { label: 'Con Factura', id: 'ordenes-con-factura' },
         { label: 'Crédito', id: 'ordenes-credito' },
-        { label: 'Vales de Caja', id: 'vales' }, // <-- DEVUELTO AQUÍ
+        { label: 'Vales de Caja', id: 'vales' },
         { label: 'Archivadas', id: 'ordenes-archivadas' }
       ]
     },
@@ -91,8 +92,19 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
   ];
 
   const isAllowed = (id) => {
+      // 1. Los administradores ven todo
       if (user?.role === 'Administrador') return true;
+      
+      // 2. Vistas básicas permitidas para todos
       if (id === 'salir' || id === 'inicio' || id === 'mi-perfil') return true;
+      
+      // 3. 🔥 REGLA ESPECIAL PARA 'ACTIVAS': 
+      // Si el rol tiene permiso para ver cualquier cosa de órdenes, se le permite ver Activas automáticamente
+      if (id === 'ordenes-activas' && allowedViews.some(v => String(v).startsWith('ordenes'))) {
+          return true;
+      }
+
+      // 4. Verificación estándar contra la base de datos
       return allowedViews.includes(id);
   };
 
