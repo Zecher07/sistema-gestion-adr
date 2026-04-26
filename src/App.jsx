@@ -279,7 +279,6 @@ function App() {
       let finData = proforma.financials || {};
       if (typeof finData === 'string') { try { finData = JSON.parse(finData); } catch(e) { finData = {}; } }
 
-      // 🔥 RECUPERAMOS EL DESCUENTO EN DÓLARES EXACTO DE LA PROFORMA 🔥
       const savedDescuentoMonto = finData.descuentoMonto || (finData.descuento ? finData.descuento * (proforma.iva > 0 ? (1 + (proforma.iva_percentage || 15)/100) : 1) : 0);
 
       const prefilledOrderData = {
@@ -351,6 +350,12 @@ function App() {
 
     if (currentView.startsWith('ordenes-')) {
        let filtered = orders.filter(o => o.status !== 'ARCHIVADA');
+       
+       // 🔥 LÓGICA DE FILTRADO 'ACTIVAS' AGREGADA AQUÍ 🔥
+       if (currentView === 'ordenes-activas') {
+           filtered = filtered.filter(o => o.status !== 'ANULADA' && o.status !== 'FINALIZADA');
+       }
+
        if (currentView === 'ordenes-sin-factura') filtered = filtered.filter(o => !o.financials?.iva);
        if (currentView === 'ordenes-con-factura') filtered = filtered.filter(o => o.financials?.iva > 0);
        if (currentView === 'ordenes-archivadas') filtered = orders.filter(o => o.status === 'ARCHIVADA');
