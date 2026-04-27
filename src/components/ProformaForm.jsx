@@ -7,9 +7,35 @@ import { Switch } from '@/components/ui/switch';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 
+// --- 🔥 FUNCIÓN PARA COMPRIMIR IMÁGENES 🔥 ---
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_WIDTH = 1024; 
+                let width = img.width;
+                let height = img.height;
+                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                resolve({ name: file.name, url: dataUrl });
+            };
+        };
+    });
+};
+
 const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = null, nextProformaNumber, onCreateClient }) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
+  const [isLoadingImages, setIsLoadingImages] = useState(false);
 
   const [titulo, setTitulo] = useState(''); 
   const [diasEntrega, setDiasEntrega] = useState(''); 
@@ -22,6 +48,9 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
     { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }
   ]);
   
+  // 🔥 ESTADO PARA LAS IMÁGENES 🔥
+  const [imagenes, setImagenes] = useState([]);
+
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState([]);
   const [searchCatalog, setSearchCatalog] = useState('');
@@ -57,6 +86,10 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
       const items = Array.isArray(initialData.items) ? initialData.items : [];
       setProducts(items.length > 0 ? items : [{ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }]);
       setNotes(initialData.notas || ''); setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
+      
+      // Cargar imágenes guardadas
+      setImagenes(initialData.imagenes || []);
+
       if (initialData.financials) { 
           const dMonto = initialData.financials.descuentoMonto || 0;
           setFinancials(prev => ({ 
@@ -102,11 +135,30 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
     }
   }, [products, ivaPercentage, applyIva, financials.descuentoMonto, financials.anticipoPorc]);
 
+  // 🔥 HANDLERS PARA IMÁGENES 🔥
+  const handleAddImages = async (e) => {
+      const files = Array.from(e.target.files);
+      if(!files.length) return;
+      setIsLoadingImages(true);
+      const newImages = [];
+      for (const file of files) {
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (error) { console.error(error); }
+      }
+      setImagenes(prev => [...prev, ...newImages]);
+      setIsLoadingImages(false);
+  };
+
+  const removeImage = (index) => {
+      setImagenes(prev => prev.filter((_, i) => i !== index));
+  };
+
   const filteredClients = clients.filter(c => { const term = clientSearch.toLowerCase().trim(); if (!term) return false; const name = (c.nombre || c.razonSocial || c.full_name || '').toLowerCase(); const id = String(findClientId(c)); return name.includes(term) || id.includes(term); });
   const handleClientSelect = (client) => { const idFound = findClientId(client); setSelectedClient({ nombre: client.nombre || client.razonSocial || client.full_name, identificacion: idFound, telefono: client.telefono || client.celular || '', direccion: client.direccion || '', email: client.email || client.correo || '' }); setClientSearch(client.nombre || client.razonSocial || client.full_name); setShowClientSuggestions(false); };
   const handleNewClient = () => { if (onCreateClient) onCreateClient(); else { setSelectedClient({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' }); setClientSearch(''); } };
 
-  // 🔥 CÁLCULO DE PRECIO LIMPIO (SIN DISTRIBUIDOR) 🔥
   const getPriceForQty = (qty, item) => {
       const tiers = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
       const tier = tiers.find(t => qty >= t.cantidad);
@@ -114,7 +166,6 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
       return item.precioBaseOriginal || 0;
   };
 
-  // 🔥 SELECCIÓN DEL CATÁLOGO (OBSERVACIONES SEPARADAS) 🔥
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima || 1;
     const computedPrice = getPriceForQty(minQty, {
@@ -145,7 +196,6 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
     setIsCatalogOpen(false); toast({ title: "Añadido", description: `${item.nombre} agregado a la proforma.` });
   };
 
-  // 🔥 BÚSQUEDA INTELIGENTE 🔥
   const handleProductSearchRequest = async (index, value) => {
       updateProduct(index, 'descripcion', value);
       if (value.trim().length < 2) { setProductSuggestions([]); setActiveProductSearchRow(null); return; }
@@ -159,7 +209,6 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
       setProductSuggestions(data || []);
   };
 
-  // 🔥 SELECCIÓN DE BÚSQUEDA INTELIGENTE (OBSERVACIONES SEPARADAS) 🔥
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima || 1;
       const computedPrice = getPriceForQty(minQty, {
@@ -233,7 +282,8 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
             descuento: financials.descuento, descuentoMonto: financials.descuentoMonto, 
             anticipoPorc: financials.anticipoPorc, anticipoValor: financials.anticipoValor, saldoPorc: financials.saldoPorc, saldoValor: financials.saldoValor
         },
-        notas: notes, responsable_nombre: user.name, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString()
+        notas: notes, responsable_nombre: user.name, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
+        imagenes: imagenes // 🔥 GUARDAMOS LAS IMÁGENES 🔥
       };
 
       if (!initialData) { payload.created_at = new Date().toISOString(); payload.creado_por = user.id; }
@@ -347,12 +397,79 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
                         </tr>
                       ))}
                    </tbody>
+                   <tfoot className="bg-slate-50 text-xs font-medium text-slate-700 border-t border-slate-300">
+                      <tr>
+                         <td colSpan="3" className="text-right py-1 px-2">SubTotal</td>
+                         <td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td>
+                         <td></td>
+                      </tr>
+                      <tr>
+                         <td colSpan="3" className="text-right py-1 px-2 flex items-center justify-end gap-2">
+                            <span>Descuento</span>
+                            <div className="flex items-center border border-slate-300 rounded bg-white overflow-hidden">
+                               <span className="text-xs px-2 py-0.5 border-r border-slate-200 outline-none bg-slate-100">$</span>
+                               <input 
+                                 type="number" step="0.01"
+                                 className="w-16 text-right px-1 py-0.5 outline-none text-xs"
+                                 value={localDiscountVal}
+                                 onChange={e => {
+                                     setLocalDiscountVal(e.target.value);
+                                     setFinancials(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
+                                 }}
+                               />
+                            </div>
+                         </td>
+                         <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuento.toFixed(2)}</td>
+                         <td></td>
+                      </tr>
+                      <tr>
+                         <td colSpan="3" className="text-right py-1 px-2 flex items-center justify-end gap-2">
+                             <span>IVA (%)</span>
+                             <input 
+                               type="number" step="0.01"
+                               className="w-12 text-right border border-slate-300 rounded px-1 text-xs"
+                               value={ivaPercentage}
+                               onChange={e => setIvaPercentage(parseFloat(e.target.value) || 0)}
+                             />
+                         </td>
+                         <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td>
+                         <td></td>
+                      </tr>
+                      <tr className="bg-slate-100 font-bold text-slate-900 border-t border-slate-300">
+                         <td colSpan="3" className="text-right py-2 px-2">TOTAL</td>
+                         <td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td>
+                         <td></td>
+                      </tr>
+                   </tfoot>
                 </table>
               </div>
             </CardContent>
           </Card>
 
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
+          {/* 🔥 SECCIÓN: IMÁGENES DE REFERENCIA 🔥 */}
+          <div className="space-y-3 pt-2">
+             <label className="text-xs font-bold text-slate-700 block mb-1">Imágenes de Referencia / Artes (Opcional):</label>
+             <div className="flex flex-wrap gap-4 items-start bg-white border border-slate-200 rounded-lg p-4">
+                 {imagenes.map((img, i) => (
+                     <div key={i} className="relative w-24 h-24 border border-slate-300 rounded overflow-hidden group shadow-sm">
+                         <img src={img.url} className="w-full h-full object-cover" alt="Referencia" />
+                         <button type="button" onClick={() => removeImage(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"><X className="h-3 w-3"/></button>
+                     </div>
+                 ))}
+                 
+                 {isLoadingImages ? (
+                     <div className="w-24 h-24 flex items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 text-blue-600 rounded"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                 ) : (
+                     <label className="w-24 h-24 border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 text-slate-400 rounded flex flex-col items-center justify-center cursor-pointer transition-colors shadow-sm">
+                         <input type="file" multiple accept="image/*" className="hidden" onChange={handleAddImages} />
+                         <Plus className="h-6 w-6" />
+                         <span className="text-[10px] font-bold mt-1 text-center leading-tight">Añadir<br/>Imágenes</span>
+                     </label>
+                 )}
+             </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
             <div className="md:col-span-2">
                 <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Condiciones / Notas Comerciales</label>
                 <textarea className="w-full border border-slate-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 resize-none" placeholder="El cliente debe enviar el logo en curvas..." value={notes} onChange={(e) => setNotes(e.target.value)} />
@@ -362,48 +479,12 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
               <CardContent className="p-5 space-y-3">
                 <div className="flex justify-between text-sm text-slate-600"><span>Subtotal:</span><span className="font-medium">${financials.subtotal.toFixed(2)}</span></div>
                 
-                <div className="flex justify-between items-center text-sm text-slate-600">
-                  <span className="flex items-center gap-1 font-bold" title="Este valor se resta directamente del Total">
-                     Ajuste al Total ($)
-                     <input 
-                         name="proformaValInput"
-                         type="number" step="0.01" 
-                         className="w-16 h-6 border border-red-200 rounded text-right text-xs text-red-600 font-bold bg-red-50 ml-1" 
-                         value={localDiscountVal} 
-                         onChange={e => {
-                             setLocalDiscountVal(e.target.value);
-                             setFinancials(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
-                         }} 
-                     />
-                  </span>
-                  <div className="flex items-center">
-                     <span className="text-slate-400 mr-1">(</span>
-                     <input 
-                        name="proformaPercentInput"
-                        type="number" step="0.01" 
-                        className="w-12 h-6 border rounded text-center text-xs" 
-                        placeholder="%" 
-                        value={localDiscountPercent} 
-                        onChange={e => {
-                            setLocalDiscountPercent(e.target.value);
-                            const perc = parseFloat(e.target.value) || 0;
-                            const subtotal = financials.subtotal || 0;
-                            const tasaIva = applyIva ? (ivaPercentage / 100) : 0;
-                            const baseDesc = subtotal * (perc / 100);
-                            const finalDesc = applyIva ? baseDesc * (1 + tasaIva) : baseDesc;
-                            setLocalDiscountVal(finalDesc > 0 ? finalDesc.toFixed(2) : '');
-                            setFinancials(prev => ({...prev, descuentoMonto: finalDesc}));
-                        }} 
-                     />
-                     <span className="text-slate-400 ml-1">%)</span>
-                  </div>
-                </div>
-
                 <div className="flex justify-between items-center text-sm text-slate-600 bg-white p-2 rounded border border-slate-100 mt-2">
                   <div className="flex items-center gap-2"><Switch checked={applyIva} onCheckedChange={setApplyIva} className="scale-75 data-[state=checked]:bg-blue-600" /><span className={!applyIva ? 'text-slate-400 line-through' : 'font-medium'}>IVA ({ivaPercentage}%)</span></div>
                   <span className={`font-medium ${!applyIva ? 'text-slate-300' : ''}`}>${financials.iva.toFixed(2)}</span>
                 </div>
                 <div className="border-t border-slate-300 pt-3 flex justify-between items-center"><span className="font-bold text-lg text-slate-800">TOTAL:</span><span className="font-bold text-2xl text-blue-700">${financials.total.toFixed(2)}</span></div>
+                
                 <div className="border-t border-blue-200 mt-4 pt-3 space-y-2">
                     <span className="text-xs font-bold text-blue-800 uppercase block mb-2">Forma de Pago Requerida</span>
                     <div className="flex items-center justify-between text-sm">
