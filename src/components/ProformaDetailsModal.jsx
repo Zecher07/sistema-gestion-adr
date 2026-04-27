@@ -70,6 +70,9 @@ const ProformaDetailsModal = ({
 
   return (
     <>
+      {/* ======================================================== */}
+      {/* 1. VISTA EN PANTALLA (WEB)                               */}
+      {/* ======================================================== */}
       <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[100] p-4 print:hidden">
         <div className="bg-white w-full max-w-4xl max-h-[90vh] rounded-2xl shadow-2xl flex flex-col overflow-hidden border border-slate-200">
           
@@ -126,7 +129,6 @@ const ProformaDetailsModal = ({
                               {data.productos.map((prod, idx) => (
                                   <tr key={idx}>
                                       <td className="px-4 py-2 text-center text-slate-500">{prod.cantidad}</td>
-                                      {/* Aquí en pantalla el vendedor sí ve las notas */}
                                       <td className="px-4 py-2 font-medium uppercase whitespace-pre-wrap">{prod.descripcion}</td>
                                       <td className="px-4 py-2 text-right text-slate-600">{formatCurrency(prod.precioUnitario)}</td>
                                       <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
@@ -136,6 +138,20 @@ const ProformaDetailsModal = ({
                       </table>
                   </div>
               </div>
+
+              {/* 🔥 FOTOS EN VISTA PANTALLA 🔥 */}
+              {proforma.imagenes && proforma.imagenes.length > 0 && (
+                  <div>
+                      <h3 className="text-xs font-bold text-slate-400 uppercase tracking-wider mb-3">Artes Adjuntos</h3>
+                      <div className="flex flex-wrap gap-4">
+                          {proforma.imagenes.map((img, i) => (
+                              <a key={i} href={img.url} target="_blank" rel="noreferrer" className="relative w-24 h-24 border border-slate-300 rounded shadow-sm overflow-hidden block hover:opacity-80 transition-opacity">
+                                  <img src={img.url} alt="Referencia" className="w-full h-full object-cover" />
+                              </a>
+                          ))}
+                      </div>
+                  </div>
+              )}
 
               <div className="flex flex-col md:flex-row justify-between items-start gap-6">
                   <div className="w-full md:w-1/2 space-y-4">
@@ -147,7 +163,7 @@ const ProformaDetailsModal = ({
                       )}
                       
                       <div className="bg-slate-50 border border-slate-200 p-4 rounded-lg text-sm text-slate-700">
-                          <span className="font-bold block mb-2 uppercase text-xs text-slate-500 tracking-wider">Forma de Pago</span>
+                          <span className="font-bold block mb-2 uppercase text-xs text-slate-500 tracking-wider">Forma de Payment</span>
                           <div className="flex justify-between items-center font-bold mb-1">
                               <span>Anticipo {data.financials.anticipoPorc}%:</span>
                               <span>{formatCurrency(data.financials.anticipoValor)}</span>
@@ -205,35 +221,37 @@ const ProformaDetailsModal = ({
       </div>
 
       {/* ======================================================== */}
-      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI) LIMPIADA            */}
+      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI) ACTUALIZADA         */}
       {/* ======================================================== */}
       <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh' }}>
           <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
-                <div className="grid grid-cols-2 gap-4 mb-4 w-full">
-                    <div className="w-full flex flex-col gap-2">
-                        <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
-                            <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
-                        </div>
-                        {/* 🔥 BLOQUE EMPRESA LIMPIADO 🔥 */}
-                        <div className="border border-black rounded-xl p-3">
-                            <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
-                            <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                        </div>
+                
+                {/* 🔥 1. HEADER REESTRUCTURADO 🔥 */}
+                <div className="grid grid-cols-[1fr_2fr] gap-6 mb-4 w-full items-center">
+                    {/* IZQUIERDA: Solo Logo */}
+                    <div className="w-full flex items-center justify-center p-2">
+                        <img src="/logo.png" alt="Rótulos ADR" className="max-h-[110px] max-w-full object-contain" />
                     </div>
 
-                    {/* 🔥 BLOQUE FACTURA LIMPIADO 🔥 */}
-                    <div className="w-full border border-black rounded-xl p-4 flex flex-col justify-center">
-                        <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
-                        <div className="text-xl font-bold my-2 tracking-widest text-slate-800">PROFORMA</div>
-                        <div className="mb-4 text-[14px]"><span className="font-bold">No.</span> 001-001-{String(data.numero).padStart(9, '0')}</div>
+                    {/* DERECHA: Toda la info de empresa agrupada */}
+                    <div className="w-full border border-black rounded-xl p-3 flex flex-col text-center shadow-sm">
+                        <div className="font-bold text-[16px] mb-1 uppercase tracking-wider">ADRCOMPANY SAS</div>
+                        <div className="text-[11px] leading-tight text-slate-800">
+                            AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS
+                        </div>
+                        <div className="text-[11px] leading-tight mb-2 text-slate-800">
+                            <span className="font-bold">Tel:</span> +593 98 265 7066 &nbsp;|&nbsp; <span className="font-bold">Email:</span> imprenta_milena@hotmail.com
+                        </div>
                         
-                        <div className="flex justify-between border-t border-slate-300 pt-3">
-                            <span className="font-bold">FECHA EMISIÓN:</span>
-                            <span className="font-medium text-slate-800">{formatDate(data.fechaCreacion)}</span>
+                        <div className="border-t border-black pt-2 mt-1 flex justify-around items-center">
+                            <div className="text-sm"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
+                            <div className="text-xl font-black tracking-widest uppercase">PROFORMA</div>
+                            <div className="text-[14px]"><span className="font-bold">No.</span> {String(data.numero).padStart(7, '0')}</div>
                         </div>
                     </div>
                 </div>
 
+                {/* DATOS DEL CLIENTE */}
                 <div className="border border-black rounded-xl p-3 mb-4 w-full">
                     <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
                         <div className="space-y-1">
@@ -245,11 +263,14 @@ const ProformaDetailsModal = ({
                         <div className="space-y-1">
                             <div><span className="font-bold">Guía Remisión:</span></div>
                             <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{data.titulo}</span></div>
+                            {/* 🔥 VENDEDOR JUSTO DEBAJO DE REF/PROYECTO 🔥 */}
+                            <div><span className="font-bold">Vendedor:</span> <span className="uppercase">{data.autor}</span></div>
                         </div>
                     </div>
                 </div>
 
-                <div className="mb-4 w-full min-h-[150px]">
+                {/* TABLA DE PRODUCTOS */}
+                <div className="mb-4 w-full min-h-[120px]">
                     <table className="w-full border-collapse border border-black">
                         <thead>
                             <tr className="border-b border-black bg-gray-100">
@@ -277,47 +298,53 @@ const ProformaDetailsModal = ({
                     </table>
                 </div>
 
-                <div className="grid grid-cols-3 gap-4 w-full items-start">
-                    <div className="col-span-2 flex flex-col gap-4 w-full">
-                        <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
-                            <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
-                            <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
-                                <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
-                                <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
-                                <span className="font-bold">Vendedor:</span> <span>{data.autor}</span>
-                                <span className="font-bold">T. Entrega:</span> <span>{data.financials.diasEntrega > 0 ? `${data.financials.diasEntrega} Días Laborables` : 'Por Definir'}</span>
-                                {data.descripcion && (
-                                    <>
-                                        <span className="font-bold">Notas:</span>
-                                        <span className="whitespace-pre-line">{data.descripcion}</span>
-                                    </>
-                                )}
-                            </div>
+                {/* 🔥 IMÁGENES DE REFERENCIA EN MEDIO (SI HAY) 🔥 */}
+                {proforma.imagenes && proforma.imagenes.length > 0 && (
+                    <div className="mb-4 pt-2" style={{ pageBreakInside: 'avoid' }}>
+                        <div className="font-bold text-[11px] mb-2 uppercase border-b border-black inline-block pb-0.5">Artes / Referencias Adjuntas:</div>
+                        <div className="flex flex-wrap gap-4 items-start justify-center">
+                            {proforma.imagenes.map((img, i) => (
+                                <img key={i} src={img.url} alt="Arte" className="max-w-[48%] max-h-[220px] object-contain border border-gray-300 rounded shadow-sm" />
+                            ))}
                         </div>
+                    </div>
+                )}
 
+                {/* BLOQUE INFERIOR DIVIDIDO EN 2 */}
+                <div className="grid grid-cols-2 gap-4 w-full items-start" style={{ pageBreakInside: 'avoid' }}>
+                    <div className="w-full">
+                        
                         <div className="border border-black rounded-xl overflow-hidden w-full">
                             <table className="w-full text-left border-collapse">
                                 <thead>
                                     <tr className="border-b border-black bg-gray-100">
-                                        <th className="p-2 font-bold border-r border-black w-[70%]">Forma de Pago (Condiciones)</th>
+                                        <th className="p-2 font-bold border-r border-black w-[70%]">Condiciones de Pago</th>
                                         <th className="p-2 font-bold text-right w-[30%]">Valor</th>
                                     </tr>
                                 </thead>
                                 <tbody>
                                     <tr className="border-b border-black">
-                                        <td className="p-2 border-r border-black">ANTICIPO REQUERIDO ({data.financials.anticipoPorc}%)</td>
+                                        <td className="p-2 border-r border-black uppercase text-[10px]">ANTICIPO REQUERIDO ({data.financials.anticipoPorc}%)</td>
                                         <td className="p-2 text-right font-bold">{formatCurrency(data.financials.anticipoValor)}</td>
                                     </tr>
                                     <tr>
-                                        <td className="p-2 border-r border-black">SALDO CONTRA ENTREGA ({data.financials.saldoPorc}%)</td>
-                                        <td className="p-2 text-right">{formatCurrency(data.financials.saldoValor)}</td>
+                                        <td className="p-2 border-r border-black uppercase text-[10px]">SALDO CONTRA ENTREGA ({data.financials.saldoPorc}%)</td>
+                                        <td className="p-2 text-right font-bold">{formatCurrency(data.financials.saldoValor)}</td>
                                     </tr>
                                 </tbody>
                             </table>
                         </div>
+                        
+                        {/* 🔥 TIEMPO DE ENTREGA (Texto libre en cursiva) 🔥 */}
+                        <div className="mt-3 px-1">
+                            <p className="italic text-[12px] font-medium text-slate-800">
+                                Tiempo de entrega estimado: {data.financials.diasEntrega > 0 ? `${data.financials.diasEntrega} días laborables` : 'Por Definir'}.
+                            </p>
+                            <p className="italic text-[10px] text-gray-500 mt-0.5">Validez de la cotización: 15 días.</p>
+                        </div>
                     </div>
 
-                    <div className="col-span-1 w-full">
+                    <div className="w-full">
                         <table className="w-full border-collapse border border-black text-[11px]">
                             <tbody>
                                 <tr className="border-b border-black">
@@ -334,15 +361,15 @@ const ProformaDetailsModal = ({
                                 </tr>
                                 <tr className="border-b border-black">
                                     <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
-                                    <td className="p-1.5 text-right">{formatCurrency(data.financials.descuentoVal)}</td>
+                                    <td className="p-1.5 text-right text-red-600">-{formatCurrency(data.financials.descuentoVal)}</td>
                                 </tr>
                                 <tr className="border-b border-black bg-gray-50">
                                     <td className="p-1.5 border-r border-black font-bold">IVA {data.financials.ivaPercentage}%</td>
                                     <td className="p-1.5 text-right font-bold">{formatCurrency(data.financials.iva)}</td>
                                 </tr>
                                 <tr>
-                                    <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
-                                    <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(data.financials.total)}</td>
+                                    <td className="p-2 border-r border-black font-black text-sm">VALOR TOTAL</td>
+                                    <td className="p-2 text-right font-black text-sm">{formatCurrency(data.financials.total)}</td>
                                 </tr>
                             </tbody>
                         </table>

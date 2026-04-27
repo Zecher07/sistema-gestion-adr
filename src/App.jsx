@@ -98,17 +98,13 @@ function App() {
 
       const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, abonos, motivoAnulacion';
       
+      // 🔥 AHORA TODOS DESCARGAN TODAS LAS ÓRDENES PARA PODER VERLAS 🔥
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
-      
-      if (currentUser.role === 'Vendedor') {
-          ordersQuery = ordersQuery.eq('vendedor', currentUser.name);
-      }
-
       const { data: ordenesData } = await ordersQuery;
       
       let proformasQuery = supabase.from('proformas').select('*').order('created_at', { ascending: false });
       if (currentUser.role === 'Vendedor') {
-          proformasQuery = proformasQuery.eq('responsable_nombre', currentUser.name);
+          proformasQuery = proformasQuery.ilike('responsable_nombre', `%${currentUser.name}%`);
       }
 
       const { data: proformasData } = await proformasQuery;
@@ -165,17 +161,21 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes' }, (payload) => {
         
         const { eventType, new: newRecord, old: oldRecord } = payload;
-        const seeAll = ['Administrador', 'Producción', 'Contabilidad'].includes(user.role);
+        
+        // 🔥 AHORA TODOS RECIBEN ACTUALIZACIONES EN TIEMPO REAL PARA VER LA LISTA ACTUALIZADA 🔥
+        const seeAll = true; 
 
         if (eventType === 'UPDATE') {
             const numOrden = newRecord.order_number || newRecord.id;
-            
-            if (newRecord.vendedor === user.name && oldRecord.vendedor !== user.name) {
+            const isMineNow = newRecord.vendedor?.includes(user.name);
+            const wasMine = oldRecord.vendedor?.includes(user.name);
+
+            if (isMineNow && !wasMine) {
                 const notif = {
                     id: Date.now(),
                     type: 'assignment',
                     title: 'Nueva Orden Asignada',
-                    message: `Te han delegado la orden #${numOrden}`,
+                    message: `Te han delegado la orden #${numOrden} como colaborador`,
                     orderId: newRecord.id,
                     isRead: false,
                     timestamp: new Date().toISOString()
@@ -186,7 +186,7 @@ function App() {
 
             if (newRecord.status !== oldRecord.status) {
                 let relevant = false;
-                if (newRecord.vendedor === user.name) relevant = true;
+                if (newRecord.vendedor?.includes(user.name)) relevant = true;
                 if (user.role === 'Producción' && newRecord.status === 'PRODUCCION') relevant = true;
                 if (user.role === 'Contabilidad' && newRecord.status === 'CONTABILIDAD') relevant = true;
 
@@ -208,20 +208,10 @@ function App() {
 
         setOrders(prevOrders => {
             if (eventType === 'INSERT') {
-                if (seeAll || newRecord.vendedor === user.name) return [newRecord, ...prevOrders];
-                return prevOrders;
+                return [newRecord, ...prevOrders];
             }
             if (eventType === 'UPDATE') {
-                const isMine = newRecord.vendedor === user.name;
-                const wasMine = oldRecord.vendedor === user.name;
-                const exists = prevOrders.some(o => o.id === newRecord.id);
-
-                if (seeAll) return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
-                if (isMine && !exists) return [newRecord, ...prevOrders];
-                if (!isMine && wasMine) return prevOrders.filter(o => o.id !== newRecord.id);
-                if (isMine && exists) return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
-
-                return prevOrders;
+                return prevOrders.map(o => o.id === newRecord.id ? { ...o, ...newRecord } : o);
             }
             if (eventType === 'DELETE') return prevOrders.filter(o => o.id !== oldRecord.id);
             return prevOrders;
@@ -289,6 +279,7 @@ function App() {
           dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0,
           tipoLetrero: proforma.titulo || proforma.tipo_trabajo || '', origenProformaInfo: proforma.proformaNumber || proforma.numero || '', 
           aplicarIva: proforma.iva > 0, notas: proforma.notas, vendedor: proforma.responsable_nombre || user.name,
+          imagenes: proforma.imagenes || [],
       };
       
       setProformaToConvertId(proforma.id);
@@ -313,6 +304,7 @@ function App() {
           if (error) throw error;
       } catch (error) { toast({ title: "Error", description: "No se guardó el estado de producción", variant: "destructive" }); }
   };
+
   const handleAdvanceWorkflow = async (order) => {
     const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
     const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
@@ -328,6 +320,24 @@ function App() {
             if(error) throw error;
             toast({ title: "Estado Actualizado", description: `Orden movida a ${nextStatus}` });
         } catch (error) { toast({ title: "Error", description: "No se pudo actualizar el estado.", variant: "destructive" }); }
+    }
+  };
+
+  const handleRegressWorkflow = async (order) => {
+    const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
+    const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
+
+    const flow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
+    const currentStatus = order.status;
+    const idx = flow.indexOf(currentStatus);
+    
+    if (idx > 0) {
+        const prevStatus = flow[idx - 1];
+        try {
+            const { error } = await supabase.from('ordenes').update({ status: prevStatus }).eq('id', order.id);
+            if(error) throw error;
+            toast({ title: "Estado Revertido", description: `La orden regresó a ${prevStatus}` });
+        } catch (error) { toast({ title: "Error", description: "No se pudo revertir el estado.", variant: "destructive" }); }
     }
   };
 
@@ -351,7 +361,6 @@ function App() {
     if (currentView.startsWith('ordenes-')) {
        let filtered = orders.filter(o => o.status !== 'ARCHIVADA');
        
-       // 🔥 LÓGICA DE FILTRADO 'ACTIVAS' AGREGADA AQUÍ 🔥
        if (currentView === 'ordenes-activas') {
            filtered = filtered.filter(o => o.status !== 'ANULADA' && o.status !== 'FINALIZADA');
        }
@@ -371,7 +380,33 @@ function App() {
        return (
           <div className="space-y-6 animate-in fade-in">
             {(user.role === 'Administrador' || user.role === 'Vendedor') && <Stats orders={orders} user={user} />}
-            <OrdersPanel orders={filtered} user={user} onUpdateStatus={() => {}} onDeleteOrder={async (id) => { await supabase.from('ordenes').delete().eq('id', id); }} onEditOrder={setEditingOrder} onCloneOrder={setCloningOrder} onPaymentOrder={setPaymentOrder} onCreateOrder={() => setShowForm(true)} onViewOrder={(o) => handleViewOrder(o, null)} currentView={currentView} onAbonoOrder={setAbonoOrder} />
+            <OrdersPanel 
+                orders={filtered} 
+                user={user} 
+                onUpdateStatus={() => {}} 
+                onDeleteOrder={async (id) => { 
+                    const orderToDelete = orders.find(o => o.id === id);
+                    if (user.role !== 'Administrador' && !orderToDelete?.vendedor?.includes(user.name)) {
+                        toast({ title: "Acceso Denegado", description: "No puedes eliminar esta orden.", variant: "destructive" });
+                        return;
+                    }
+                    await supabase.from('ordenes').delete().eq('id', id); 
+                }} 
+                onEditOrder={(o) => {
+                    // 🔥 VALIDACIÓN DE EDICIÓN: SOLO ADMIN O VENDEDORES ASIGNADOS 🔥
+                    if (user.role !== 'Administrador' && !o.vendedor?.includes(user.name)) {
+                        toast({ title: "Acceso Denegado", description: "Solo el Administrador o los vendedores asignados pueden editar esta orden.", variant: "destructive" });
+                        return;
+                    }
+                    setEditingOrder(o);
+                }} 
+                onCloneOrder={setCloningOrder} 
+                onPaymentOrder={setPaymentOrder} 
+                onCreateOrder={() => setShowForm(true)} 
+                onViewOrder={(o) => handleViewOrder(o, null)} 
+                currentView={currentView} 
+                onAbonoOrder={setAbonoOrder} 
+            />
           </div>
        );
     }
@@ -415,13 +450,31 @@ function App() {
 
       {showInvoiceForm && (<div className="fixed inset-0 bg-black/50 flex items-center justify-center z-[60] p-4"><div className="w-full max-w-5xl max-h-[95vh] overflow-y-auto h-full"><InvoiceForm user={user} initialOrder={initialInvoiceOrder} nextInvoiceNumber={getNextInvoiceNumber()} onSubmit={handleCreateInvoice} onCancel={() => { setShowInvoiceForm(false); setInitialInvoiceOrder(null); }} /></div></div>)}
       
-      {viewProforma && (<ProformaDetailsModal proforma={viewProforma} onClose={() => setViewProforma(null)} onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} onConvert={(p) => handleConvertProformaToOrder(p)} user={user} staffUsers={staffUsers} />)}
+      {viewProforma && (<ProformaDetailsModal proforma={viewProforma} onClose={() => setViewProforma(null)} onEdit={(p) => { setViewProforma(null); setEditingProforma(p); }} onConvert={(p) => handleConvertProformaToOrder(p)} onUpdateProforma={async (updates) => { try { await supabase.from('proformas').update(updates).eq('id', viewProforma.id); fetchAllData(); toast({ title: "Proforma Actualizada" }); } catch (error) { console.error(error); } }} user={user} staffUsers={staffUsers} />)}
       
       {viewInvoice && (<InvoiceDetailsModal invoice={viewInvoice} onClose={() => setViewInvoice(null)} onAnulate={handleAnulateInvoice} onViewOrder={(id) => { const o = orders.find(x => x.id === id || x.orderNumber == id || x.order_number == id); if(o) { setViewInvoice(null); handleViewOrder(o); } }} />)}
       
       {showAvailabilityModal && (<div className="fixed inset-0 bg-black/70 flex items-center justify-center z-[70] p-4"><div className="w-full max-w-5xl bg-white h-[85vh] rounded-xl shadow-2xl flex flex-col"><div className="p-4 border-b flex justify-between items-center bg-slate-50 rounded-t-xl"><h3 className="font-bold text-lg">Disponibilidad</h3><Button variant="ghost" size="icon" onClick={() => setShowAvailabilityModal(false)}><X className="h-5 w-5" /></Button></div><div className="flex-1 overflow-hidden p-4"><WorkAreaCalendar orders={orders} onViewOrder={(o) => { setShowAvailabilityModal(false); handleViewOrder(o, 'tasks'); }} /></div></div></div>)}
       
-      <OrderDetailsModal order={viewOrder} user={user} staffUsers={staffUsers} onClose={() => setViewOrder(null)} onProductToggle={handleProductToggle} isTaskView={viewOrderSource === 'tasks'} onAdvanceWorkflow={handleAdvanceWorkflow} onArchiveOrder={handleArchiveOrder} onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} onAnulateOrder={handleAnulateOrder} canAnulate={user.role === 'Administrador' || canUserAnulate} canEdit={user.role === 'Administrador' || canUserEdit} onAbonoOrder={setAbonoOrder} />
+      <OrderDetailsModal 
+        order={viewOrder} 
+        user={user} 
+        staffUsers={staffUsers} 
+        onClose={() => setViewOrder(null)} 
+        onProductToggle={handleProductToggle} 
+        isTaskView={viewOrderSource === 'tasks'} 
+        onAdvanceWorkflow={handleAdvanceWorkflow} 
+        onRegressWorkflow={handleRegressWorkflow}
+        onArchiveOrder={handleArchiveOrder} 
+        onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} 
+        onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
+        onAnulateOrder={handleAnulateOrder} 
+        
+        // 🔥 VALIDACIÓN DE BOTONES DENTRO DEL MODAL (ADMIN O DUEÑO) 🔥
+        canAnulate={user.role === 'Administrador' || (canUserAnulate && viewOrder?.vendedor?.includes(user.name))} 
+        canEdit={user.role === 'Administrador' || (canUserEdit && viewOrder?.vendedor?.includes(user.name))} 
+        onAbonoOrder={setAbonoOrder} 
+      />
 
       <div className="relative z-[9999]">
           {abonoOrder && (<AbonosModal order={abonoOrder} user={user} onClose={() => setAbonoOrder(null)} onSuccess={() => { setAbonoOrder(null); fetchAllData(); }} />)}

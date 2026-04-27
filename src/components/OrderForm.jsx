@@ -2,9 +2,8 @@ import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from '
 import { motion } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
 import { 
-  Save, X, Upload, Calendar as CalendarIcon, User, Search, Calculator, 
-  FileText, Loader2, UserPlus, Image as ImageIcon, Mail, 
-  FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart
+  Save, X, Calendar as CalendarIcon, User, Search, Calculator, 
+  FileText, Loader2, UserPlus, FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart, DollarSign, Image as ImageIcon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -23,6 +22,7 @@ import {
   AlertDialogHeader,
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
+import { getValidSellers } from '@/lib/utils';
 
 const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Cheque', 'Depósito', 'Tarjeta', 'Crédito', 'No aplica'];
 
@@ -95,6 +95,34 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
+// 🔥 COMPONENTE PARA GESTIONAR FOTOS DE PAGOS INDIVIDUALES 🔥
+const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing }) => {
+    const onDrop = useCallback(files => onAdd(files, type, abonoIndex), [onAdd, type, abonoIndex]);
+    const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing });
+
+    return (
+        <div className="mt-2 pt-2 border-t border-dashed border-slate-300 w-full animate-in fade-in zoom-in-95">
+            <div className="text-[10px] font-bold text-slate-500 uppercase mb-2 flex items-center gap-1"><FileText className="h-3 w-3"/> Soportes de pago adjuntos</div>
+            <div className="flex flex-wrap gap-2 items-center">
+                {items.map((img, i) => (
+                    <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => window.open(img.url, '_blank')}>
+                        <img src={img.url} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="Comprobante" />
+                        <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(type, abonoIndex, i); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                            <X className="h-3 w-3" />
+                        </button>
+                    </div>
+                ))}
+                {isProcessing && <div className="w-12 h-12 flex items-center justify-center border border-dashed border-blue-300 bg-blue-50 rounded"><Loader2 className="w-4 h-4 animate-spin text-blue-500" /></div>}
+                
+                <div {...getRootProps()} className="cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded px-2 flex items-center gap-1 text-[10px] font-bold border border-emerald-200 transition-colors h-12 shadow-sm">
+                    <input {...getInputProps()} />
+                    <Plus className="w-3 h-3" /> {items.length === 0 ? 'Adjuntar' : 'Añadir'}
+                </div>
+            </div>
+        </div>
+    );
+};
+
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
   const { toast } = useToast();
   const isReadOnly = mode === 'payment_only';
@@ -102,6 +130,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
+
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
   const [showNewClientModal, setShowNewClientModal] = useState(false);
@@ -118,6 +147,23 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [localDiscountVal, setLocalDiscountVal] = useState('');
   const [localDiscountPercent, setLocalDiscountPercent] = useState('');
+  
+  const [isSellerDropdownOpen, setIsSellerDropdownOpen] = useState(false);
+
+  const [abonos, setAbonos] = useState([]);
+  
+  // 🔥 ESTADO ESTRUCTURADO PARA COMPROBANTES DE PAGO 🔥
+  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
+  const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
+  
+  const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
+  const [abonoFormData, setAbonoFormData] = useState({
+      monto: '', metodoPago: 'Efectivo', referencia: '', nota: '', fecha: new Date().toISOString().split('T')[0]
+  });
+  const [abonoComprobantes, setAbonoComprobantes] = useState([]);
+  const [isProcessingAbonoImages, setIsProcessingAbonoImages] = useState(false);
+
+  const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
 
@@ -143,6 +189,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
 
+  const validSellers = useMemo(() => {
+     return getValidSellers(staffUsers);
+  }, [staffUsers]);
+
   const selectedClientData = useMemo(() => {
       return localClients.find(c => c.id === formData.clienteId) || null;
   }, [localClients, formData.clienteId]);
@@ -159,8 +209,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               const total = Number(o.financials?.total) || 0;
               const anticipo = Number(o.anticipo) || 0;
               const retencion = Number(o.retencion) || 0;
-              const abonos = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
-              const saldo = Math.max(total - anticipo - retencion - abonos, 0);
+              const abonosSum = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+              const saldo = Math.max(total - anticipo - retencion - abonosSum, 0);
               deuda += saldo;
           }
       });
@@ -250,6 +300,32 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
       setSearchTerm(initialData.cliente_nombre || initialData.cliente || '');
+
+      setAbonos(initialData.abonos || []);
+      
+      // 🔥 LA MAGIA: Rescatar comprobantes e imágenes perdidas de la base de datos 🔥
+      if (initialData.id) {
+          const fetchMissingData = async () => {
+              try {
+                  const { data } = await supabase.from('ordenes').select('imagenes, comprobantes').eq('id', initialData.id).single();
+                  if (data) {
+                      if (data.imagenes && Array.isArray(data.imagenes)) {
+                          setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
+                      }
+                      if (data.comprobantes) {
+                          let cData = data.comprobantes;
+                          if (Array.isArray(cData)) cData = { anticipo: cData, saldo: [], abonos: {} };
+                          setComprobantesData({
+                              anticipo: cData.anticipo || [],
+                              saldo: cData.saldo || [],
+                              abonos: cData.abonos || {}
+                          });
+                      }
+                  }
+              } catch(e) {}
+          };
+          fetchMissingData();
+      }
     }
   }, [initialData, nextOrderNumber, currentUser]);
 
@@ -268,10 +344,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
   }, []);
 
-  // 🔥 CÁLCULO MAESTRO FINANCIERO (CON DESCUENTO DIRECTO AL TOTAL) 🔥
   useEffect(() => {
     const subtotal = formData.productos.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
-    
     const descuentoDirectoTotal = Number(formData.descuentoMonto) || 0;
     const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
     
@@ -289,7 +363,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : ''); }
     }
 
-    const saldoPendiente = total - anticipoCalculado - retencionValor;
+    const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
+    const saldoPendiente = total - anticipoCalculado - retencionValor - abonosTotal;
+
     setFinancials({ subtotal, descuentoVal: descuentoBase, baseImponible, iva, total, saldoPendiente });
     
     if (document.activeElement?.name !== 'discountPercentInput') {
@@ -304,7 +380,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         return prev;
     });
 
-  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode]);
+  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos]);
 
   const porcentajeAnticipoUI = financials.total > 0 ? ((formData.anticipo / financials.total) * 100).toFixed(1) : '0.0';
   const porcentajeSaldoUI = financials.total > 0 ? ((financials.saldoPendiente / financials.total) * 100).toFixed(1) : '0.0';
@@ -329,7 +405,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
-  // 🔥 CÁLCULO DE PRECIO LIMPIO 🔥
   const getPriceForQty = (qty, item) => {
       const tiers = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
       const tier = tiers.find(t => qty >= t.cantidad);
@@ -337,7 +412,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       return item.precioBaseOriginal || 0;
   };
 
-  // 🔥 SELECCIÓN DEL CATÁLOGO (OBSERVACIONES SEPARADAS) 🔥
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima || 1;
     const computedPrice = getPriceForQty(minQty, {
@@ -378,7 +452,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
   };
 
-  // 🔥 BÚSQUEDA INTELIGENTE 🔥
   const handleProductSearchRequest = async (index, value) => {
       updateProduct(index, 'descripcion', value);
       if (value.trim().length < 2) {
@@ -399,7 +472,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setProductSuggestions(data || []);
   };
 
-  // 🔥 SELECCIÓN DE BÚSQUEDA INTELIGENTE (OBSERVACIONES SEPARADAS) 🔥
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima || 1;
       const computedPrice = getPriceForQty(minQty, {
@@ -501,6 +573,18 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
   };
 
+  const handleResponsableToggle = (sellerName) => {
+    setFormData(prev => {
+        let currentSellers = prev.vendedor ? prev.vendedor.split(',').map(s => s.trim()).filter(Boolean) : [];
+        if (currentSellers.includes(sellerName)) {
+            currentSellers = currentSellers.filter(s => s !== sellerName);
+        } else {
+            currentSellers.push(sellerName);
+        }
+        return { ...prev, vendedor: currentSellers.join(', ') };
+    });
+  };
+
   useEffect(() => {
     function handleClickOutside(event) {
       if (searchRef.current && !searchRef.current.contains(event.target)) setIsSearching(false);
@@ -527,6 +611,129 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const removeImage = (index) => {
     setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) }));
+  };
+
+  // 🔥 MANEJO DE COMPROBANTES EN EL FORMULARIO 🔥
+  const requiresComprobante = (method) => {
+      if (!method) return false;
+      const m = method.toLowerCase();
+      return !m.includes('efectivo') && !m.includes('no aplica') && !m.includes('tarjeta');
+  };
+
+  const handleAddComprobantes = async (files, type, abonoIndex = null) => {
+      setIsProcessingComprobantes(true);
+      const newImages = [];
+      for (const file of files) {
+          if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (e) {}
+      }
+
+      setComprobantesData(prev => {
+          const updated = { ...prev };
+          if (type === 'abono') {
+              updated.abonos = { ...(updated.abonos || {}) };
+              updated.abonos[abonoIndex] = [...(updated.abonos[abonoIndex] || []), ...newImages];
+          } else {
+              updated[type] = [...(updated[type] || []), ...newImages];
+          }
+          return updated;
+      });
+      setIsProcessingComprobantes(false);
+  };
+
+  const handleRemoveComprobante = (type, abonoIndex, imgIndex) => {
+      setComprobantesData(prev => {
+          const updated = { ...prev };
+          if (type === 'abono') {
+              updated.abonos = { ...(updated.abonos || {}) };
+              updated.abonos[abonoIndex] = updated.abonos[abonoIndex].filter((_, i) => i !== imgIndex);
+          } else {
+              updated[type] = updated[type].filter((_, i) => i !== imgIndex);
+          }
+          return updated;
+      });
+  };
+
+  // 🔥 LÓGICA DEL MODAL INTERNO DE ABONOS 🔥
+  const onDropAbono = useCallback(async (acceptedFiles) => {
+      setIsProcessingAbonoImages(true);
+      const newImages = [];
+      for (const file of acceptedFiles) {
+          if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
+      }
+      setAbonoComprobantes(prev => [...prev, ...newImages]);
+      setIsProcessingAbonoImages(false);
+  }, [toast]);
+  
+  const { getRootProps: getRootPropsAbono, getInputProps: getInputPropsAbono } = useDropzone({ onDrop: onDropAbono, accept: {'image/*': []} });
+
+  const openAbonoModal = () => {
+      setAbonoFormData({ monto: '', metodoPago: 'Efectivo', referencia: '', nota: '', fecha: new Date().toISOString().split('T')[0] });
+      setAbonoComprobantes([]);
+      setIsAbonoModalOpen(true);
+  };
+
+  const handleSaveLocalAbono = (e) => {
+      e.preventDefault();
+      const montoNum = parseFloat(abonoFormData.monto);
+      if (isNaN(montoNum) || montoNum <= 0) {
+          toast({ title: "Monto inválido", variant: "destructive" });
+          return;
+      }
+      if (montoNum > financials.saldoPendiente + 0.05) {
+          toast({ title: "Monto excede el saldo", description: `El saldo máximo a cobrar es $${financials.saldoPendiente.toFixed(2)}`, variant: "destructive" });
+          return;
+      }
+
+      let metodoFinal = abonoFormData.metodoPago;
+      if (requiresComprobante(abonoFormData.metodoPago) && abonoFormData.referencia.trim()) {
+          metodoFinal = `${abonoFormData.metodoPago} - Ref: ${abonoFormData.referencia}`;
+      }
+
+      const nuevoAbono = {
+          monto: montoNum,
+          metodoPago: metodoFinal,
+          fecha: `${abonoFormData.fecha}T12:00:00`,
+          nota: abonoFormData.nota,
+          cobrador: currentUser.name
+      };
+
+      const newAbonos = [...abonos, nuevoAbono];
+      setAbonos(newAbonos);
+
+      if (abonoComprobantes.length > 0) {
+          setComprobantesData(prev => {
+              const updated = { ...prev, abonos: { ...(prev.abonos || {}) } };
+              updated.abonos[newAbonos.length - 1] = abonoComprobantes;
+              return updated;
+          });
+      }
+
+      setIsAbonoModalOpen(false);
+  };
+
+  const removeAbonoLocal = (index) => {
+      setAbonos(prev => prev.filter((_, i) => i !== index));
+      setComprobantesData(prev => {
+          const updated = { ...prev, abonos: { ...prev.abonos } };
+          const newAbonos = {};
+          let newIdx = 0;
+          Object.keys(updated.abonos).forEach(key => {
+              if (parseInt(key) !== index) {
+                  newAbonos[newIdx] = updated.abonos[key];
+                  newIdx++;
+              }
+          });
+          updated.abonos = newAbonos;
+          return updated;
+      });
   };
 
   const handleCancelOrder = async () => {
@@ -569,7 +776,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     if (financials.saldoPendiente < -0.02) {
-        toast({ title: "Error en montos", description: "El anticipo supera el total.", variant: "destructive" });
+        toast({ title: "Error en montos", description: "La suma de anticipos y abonos supera el total.", variant: "destructive" });
         setLoading(false); return;
     }
 
@@ -630,6 +837,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             prioridad: 'Normal',
             origenProformaInfo: formData.origenProformaInfo,
             productos: validProducts,
+            abonos: abonos,
+            comprobantes: comprobantesData,
             financials: { 
                 ...financials, 
                 saldo: financials.saldoPendiente,
@@ -656,7 +865,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             payload.created_at = new Date().toISOString();
             payload.recibido_por_anticipo = currentUser.name; 
         } else if (isAdmin && initialData.vendedor !== formData.vendedor) {
-            toast({ title: "Orden Reasignada", description: `Transferida a ${formData.vendedor}` });
+            toast({ title: "Orden Reasignada", description: `Vendedores actualizados.` });
         }
 
         if (initialData?.id && initialData.status !== 'BORRADOR') {
@@ -718,20 +927,40 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </select>
                 </div>
 
-                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Responsable:</label>
+                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Responsable(s):</label>
                 <div className="col-span-12 md:col-span-4 relative">
                    {isAdmin ? (
                        <div className="relative">
-                           <select 
-                               className="w-full border border-blue-300 bg-blue-50 rounded px-2 py-1 text-sm font-semibold text-blue-800 focus:outline-none appearance-none pr-8"
-                               value={formData.vendedor}
-                               onChange={(e) => setFormData({...formData, vendedor: e.target.value})}
+                           <div 
+                               className="flex items-center justify-between cursor-pointer w-full border border-blue-300 bg-blue-50 rounded px-2 py-1.5 text-sm font-semibold text-blue-800 focus:outline-none appearance-none"
+                               onClick={() => setIsSellerDropdownOpen(!isSellerDropdownOpen)}
                            >
-                               {staffUsers.filter(u => u.role === 'Vendedor' || u.role === 'Administrador').map(u => (
-                                   <option key={u.id} value={u.name}>{u.name}</option>
-                               ))}
-                           </select>
-                           <Users className="absolute right-2 top-1.5 h-4 w-4 text-blue-500 pointer-events-none" />
+                               <span className="truncate block pr-6">{formData.vendedor || 'Seleccionar...'}</span>
+                               <Users className="absolute right-2 top-2 h-4 w-4 text-blue-500 pointer-events-none" />
+                           </div>
+
+                           {isSellerDropdownOpen && (
+                                <div className="absolute top-full left-0 mt-1 w-full min-w-[200px] bg-white border border-slate-200 shadow-xl rounded-md z-50 p-2 space-y-1 max-h-60 overflow-y-auto">
+                                    <div className="flex justify-between items-center text-xs font-bold text-slate-500 mb-2 border-b pb-1">
+                                        <span>Asignar Colaboradores</span>
+                                        <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setIsSellerDropdownOpen(false)}><X className="h-4 w-4"/></Button>
+                                    </div>
+                                    {validSellers.map(u => {
+                                        const isAssigned = (formData.vendedor || '').includes(u.name);
+                                        return (
+                                            <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-blue-50 rounded cursor-pointer border border-transparent hover:border-blue-100 transition-colors">
+                                                <input 
+                                                   type="checkbox" 
+                                                   checked={isAssigned}
+                                                   onChange={() => handleResponsableToggle(u.name)}
+                                                   className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
+                                                />
+                                                <span className="text-sm font-medium text-slate-700">{u.name}</span>
+                                            </label>
+                                        )
+                                    })}
+                                </div>
+                            )}
                        </div>
                    ) : (
                        <>
@@ -981,14 +1210,22 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       </select>
                    </div>
 
-                   {formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.formaPagoAnticipo !== 'No aplica' && (
-                       <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
-                           <label className="text-xs font-bold w-20 text-blue-600">Referencia:</label>
-                           <div className="relative flex-1">
-                               <CreditCard className="absolute left-2 top-1.5 h-4 w-4 text-blue-400" />
-                               <input type="text" placeholder="# Depósito / Transferencia / Cheque" className="w-full pl-8 pr-2 py-1 border border-blue-300 bg-blue-50 rounded text-sm focus:border-blue-500 focus:outline-none" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} />
-                           </div>
+                   {requiresComprobante(formData.formaPagoAnticipo) && (
+                       <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                           <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
+                           <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." />
                        </div>
+                   )}
+                   
+                   {/* 🔥 COMPROBANTE ANTICIPO 🔥 */}
+                   {requiresComprobante(formData.formaPagoAnticipo) && (
+                       <InlineComprobanteEdit 
+                           type="anticipo" 
+                           items={comprobantesData.anticipo || []} 
+                           onAdd={handleAddComprobantes} 
+                           onRemove={handleRemoveComprobante} 
+                           isProcessing={isProcessingComprobantes} 
+                       />
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
@@ -1033,6 +1270,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                ))}
                            </select>
                         </div>
+
+                        {/* 🔥 COMPROBANTE SALDO 🔥 */}
+                        {requiresComprobante(formData.formaPagoSaldo) && (
+                           <InlineComprobanteEdit 
+                               type="saldo" 
+                               items={comprobantesData.saldo || []} 
+                               onAdd={handleAddComprobantes} 
+                               onRemove={handleRemoveComprobante} 
+                               isProcessing={isProcessingComprobantes} 
+                           />
+                        )}
                         
                         {formData.formaPagoSaldo === 'Crédito' && (
                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
@@ -1044,6 +1292,49 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         <div className="flex items-center gap-2"><label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label><input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} /></div>
                     </div>
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
+             </div>
+
+             {/* 🔥 SECCIÓN DE ABONOS EXTRAS EN EL FORMULARIO 🔥 */}
+             <div className="mt-4 border-t border-slate-200 pt-4">
+                 <div className="flex justify-between items-center mb-3">
+                     <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Abonos Extras Registrados</h4>
+                     <Button type="button" size="sm" variant="outline" onClick={openAbonoModal} className="border-green-400 text-green-600 hover:bg-green-50 h-7 text-xs px-2">
+                         <Plus className="h-3 w-3 mr-1" /> Añadir Abono
+                     </Button>
+                 </div>
+                 
+                 {abonos.length > 0 ? (
+                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                         {abonos.map((abono, idx) => (
+                             <div key={idx} className="bg-red-50 border border-red-200 rounded p-3 shadow-sm relative group flex flex-col">
+                                 <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4"/></button>
+                                 <div className="flex justify-between items-start w-full pr-6 mb-2">
+                                     <div>
+                                         <div className="text-[10px] text-slate-500 font-bold">{abono.fecha ? abono.fecha.split('T')[0] : ''}</div>
+                                         <div className="text-xs font-bold text-red-700 uppercase">{abono.metodoPago || abono.metodo_pago}</div>
+                                     </div>
+                                     <div className="font-black text-red-600 text-lg">
+                                         +{formatCurrency(abono.monto)}
+                                     </div>
+                                 </div>
+                                 
+                                 {/* 🔥 COMPROBANTE ABONOS 🔥 */}
+                                 {requiresComprobante(abono.metodoPago || abono.metodo_pago) && (
+                                     <InlineComprobanteEdit 
+                                         type="abono" 
+                                         abonoIndex={idx} 
+                                         items={(comprobantesData.abonos || {})[idx] || []} 
+                                         onAdd={handleAddComprobantes} 
+                                         onRemove={handleRemoveComprobante} 
+                                         isProcessing={isProcessingComprobantes} 
+                                     />
+                                 )}
+                             </div>
+                         ))}
+                     </div>
+                 ) : (
+                     <div className="text-xs text-slate-400 italic">No hay abonos extras.</div>
+                 )}
              </div>
           </div>
 
@@ -1076,6 +1367,97 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              </Button>
          </div>
       </div>
+
+      {/* 🔥 MODAL INTERNO PARA AÑADIR ABONO 🔥 */}
+      {isAbonoModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-green-600 text-white px-6 py-4 flex justify-between items-center">
+                <h2 className="text-xl font-bold flex items-center gap-2"><DollarSign className="h-6 w-6"/> Añadir Abono a la Orden</h2>
+                <button type="button" onClick={() => setIsAbonoModalOpen(false)} className="hover:bg-green-700 p-1 rounded-full transition-colors"><X className="h-5 w-5"/></button>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                <div>
+                    <div className="text-sm font-bold text-slate-500 uppercase">Cliente</div>
+                    <div className="font-bold text-slate-800 uppercase">{formData.cliente || 'Cliente General'}</div>
+                </div>
+                <div className="text-right">
+                    <div className="text-xs font-bold text-slate-500 uppercase">Saldo Pendiente</div>
+                    <div className="text-2xl font-black text-red-600">${financials.saldoPendiente.toFixed(2)}</div>
+                </div>
+            </div>
+
+            <div className="p-6 space-y-5 bg-white">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Monto a Cobrar</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-2.5 font-bold text-slate-400">$</span>
+                            <input type="number" step="0.01" min="0.01" max={financials.saldoPendiente.toFixed(2)} className="w-full pl-7 pr-3 py-2 border border-green-300 rounded-md focus:ring-2 focus:ring-green-500 outline-none font-bold text-green-700 bg-green-50 text-lg" value={abonoFormData.monto} onChange={e => setAbonoFormData({...abonoFormData, monto: e.target.value})} placeholder="0.00" />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3"/> Fecha</label>
+                        <input type="date" className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium" value={abonoFormData.fecha} onChange={e => setAbonoFormData({...abonoFormData, fecha: e.target.value})} />
+                    </div>
+                </div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><CreditCard className="h-3 w-3"/> Método de Pago</label>
+                    <select className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white font-medium" value={abonoFormData.metodoPago} onChange={e => setAbonoFormData({...abonoFormData, metodoPago: e.target.value})}>
+                        {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                </div>
+
+                {requiresComprobante(abonoFormData.metodoPago) && (
+                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                        <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
+                        <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={abonoFormData.referencia} onChange={e => setAbonoFormData({...abonoFormData, referencia: e.target.value})} placeholder="Opcional..." />
+                    </div>
+                )}
+
+                {requiresComprobante(abonoFormData.metodoPago) && (
+                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                        <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1">
+                            <ImageIcon className="h-3 w-3"/> Comprobante (Opcional)
+                        </label>
+                        <div className="border border-slate-300 p-2 rounded-md bg-slate-50 flex flex-wrap gap-2 items-center">
+                            {abonoComprobantes.map((img, i) => (
+                                <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm">
+                                    <img src={img.url} className="w-full h-full object-cover" alt="Comprobante" />
+                                    <button type="button" onClick={() => setAbonoComprobantes(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </div>
+                            ))}
+                            {isProcessingAbonoImages && <Loader2 className="w-4 h-4 animate-spin text-blue-500 mx-2" />}
+                            {!isProcessingAbonoImages && (
+                                <div {...getRootPropsAbono()} className="cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded px-2 flex items-center justify-center gap-1 text-[10px] font-bold border border-emerald-200 transition-colors h-12 shadow-sm">
+                                    <input {...getInputPropsAbono()} />
+                                    <Plus className="h-3 w-3" /> {abonoComprobantes.length === 0 ? 'Adjuntar' : 'Añadir'}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><FileText className="h-3 w-3"/> Nota / Observación</label>
+                    <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={abonoFormData.nota} onChange={e => setAbonoFormData({...abonoFormData, nota: e.target.value})} placeholder="Ej: Pago parcial..." />
+                </div>
+
+                <div className="pt-4 border-t border-slate-200 flex justify-end gap-3">
+                    <Button type="button" variant="outline" onClick={() => setIsAbonoModalOpen(false)}>Cancelar</Button>
+                    <Button type="button" onClick={handleSaveLocalAbono} disabled={!abonoFormData.monto} className="bg-green-600 hover:bg-green-700 text-white font-bold gap-2">
+                        <Save className="h-4 w-4"/> Guardar Abono
+                    </Button>
+                </div>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}
       {isCatalogOpen && (
@@ -1123,7 +1505,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       )}
 
-      {/* 🔥 MODAL PARA PEDIR MOTIVO DE ANULACIÓN 🔥 */}
       <AlertDialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
