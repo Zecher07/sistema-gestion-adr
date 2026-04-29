@@ -29,6 +29,12 @@ const ProformaDetailsModal = ({
   };
 
   const fin = proforma.financials || {};
+  
+  // 🔥 SOLUCIÓN AL ERROR DE PORCENTAJE 100% / 0% 🔥
+  // Validamos de forma estricta para que el 0% no sea reemplazado por 50%
+  const anticipoPorcVal = (fin.anticipoPorc !== undefined && fin.anticipoPorc !== null && fin.anticipoPorc !== '') ? Number(fin.anticipoPorc) : 50;
+  const saldoPorcVal = (fin.saldoPorc !== undefined && fin.saldoPorc !== null && fin.saldoPorc !== '') ? Number(fin.saldoPorc) : (100 - anticipoPorcVal);
+
   const data = {
     numero: proforma.proformaNumber || proforma.numero || proforma.id,
     cliente: proforma.cliente_nombre || 'Cliente General',
@@ -48,9 +54,9 @@ const ProformaDetailsModal = ({
         iva: Number(proforma.iva || fin.iva || 0),
         total: Number(proforma.total || fin.total || 0),
         ivaPercentage: Number(proforma.iva_percentage || fin.ivaPercentage || 15),
-        anticipoPorc: Number(fin.anticipoPorc || 50),
+        anticipoPorc: anticipoPorcVal,
         anticipoValor: Number(fin.anticipoValor || 0),
-        saldoPorc: Number(fin.saldoPorc || 50),
+        saldoPorc: saldoPorcVal,
         saldoValor: Number(fin.saldoValor || 0),
         diasEntrega: Number(fin.diasEntrega || proforma.dias_entrega || 0)
     },
@@ -163,7 +169,7 @@ const ProformaDetailsModal = ({
                       )}
                       
                       <div className="bg-slate-50 border border-slate-200 p-4 rounded-lg text-sm text-slate-700">
-                          <span className="font-bold block mb-2 uppercase text-xs text-slate-500 tracking-wider">Forma de Payment</span>
+                          <span className="font-bold block mb-2 uppercase text-xs text-slate-500 tracking-wider">Forma de Pago</span>
                           <div className="flex justify-between items-center font-bold mb-1">
                               <span>Anticipo {data.financials.anticipoPorc}%:</span>
                               <span>{formatCurrency(data.financials.anticipoValor)}</span>
@@ -221,12 +227,12 @@ const ProformaDetailsModal = ({
       </div>
 
       {/* ======================================================== */}
-      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI) ACTUALIZADA         */}
+      {/* 2. VISTA DE IMPRESIÓN (PROFORMA SRI)                     */}
       {/* ======================================================== */}
-      <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh' }}>
+      <div className="hidden print:block absolute top-0 left-0 w-full bg-white z-[9999]" style={{ minHeight: '100vh', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
           <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
                 
-                {/* 🔥 1. HEADER REESTRUCTURADO 🔥 */}
+                {/* HEADER */}
                 <div className="grid grid-cols-[1fr_2fr] gap-6 mb-4 w-full items-center">
                     {/* IZQUIERDA: Solo Logo */}
                     <div className="w-full flex items-center justify-center p-2">
@@ -263,7 +269,6 @@ const ProformaDetailsModal = ({
                         <div className="space-y-1">
                             <div><span className="font-bold">Guía Remisión:</span></div>
                             <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{data.titulo}</span></div>
-                            {/* 🔥 VENDEDOR JUSTO DEBAJO DE REF/PROYECTO 🔥 */}
                             <div><span className="font-bold">Vendedor:</span> <span className="uppercase">{data.autor}</span></div>
                         </div>
                     </div>
@@ -287,7 +292,6 @@ const ProformaDetailsModal = ({
                                 <tr key={idx} className="border-b border-black">
                                     <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
                                     <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
-                                    {/* 🔥 AQUÍ EL CLIENTE SÓLO VE EL NOMBRE LIMPIO 🔥 */}
                                     <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">{getPrintDesc(prod)}</td>
                                     <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precioUnitario)}</td>
                                     <td className="border-r border-black p-1.5 text-right">$0.00</td>
@@ -298,7 +302,7 @@ const ProformaDetailsModal = ({
                     </table>
                 </div>
 
-                {/* 🔥 IMÁGENES DE REFERENCIA EN MEDIO (SI HAY) 🔥 */}
+                {/* IMÁGENES DE REFERENCIA EN MEDIO (SI HAY) */}
                 {proforma.imagenes && proforma.imagenes.length > 0 && (
                     <div className="mb-4 pt-2" style={{ pageBreakInside: 'avoid' }}>
                         <div className="font-bold text-[11px] mb-2 uppercase border-b border-black inline-block pb-0.5">Artes / Referencias Adjuntas:</div>
@@ -314,6 +318,14 @@ const ProformaDetailsModal = ({
                 <div className="grid grid-cols-2 gap-4 w-full items-start" style={{ pageBreakInside: 'avoid' }}>
                     <div className="w-full">
                         
+                        {/* 🔥 NOTAS AÑADIDAS ENCIMA DE LA TABLA (Sin cuadro adicional) 🔥 */}
+                        {data.descripcion && (
+                            <div className="mb-3 text-[11px] text-slate-800">
+                                <span className="font-bold block mb-0.5">Notas / Condiciones Adicionales:</span>
+                                <span className="whitespace-pre-line block">{data.descripcion}</span>
+                            </div>
+                        )}
+
                         <div className="border border-black rounded-xl overflow-hidden w-full">
                             <table className="w-full text-left border-collapse">
                                 <thead>
@@ -335,7 +347,6 @@ const ProformaDetailsModal = ({
                             </table>
                         </div>
                         
-                        {/* 🔥 TIEMPO DE ENTREGA (Texto libre en cursiva) 🔥 */}
                         <div className="mt-3 px-1">
                             <p className="italic text-[12px] font-medium text-slate-800">
                                 Tiempo de entrega estimado: {data.financials.diasEntrega > 0 ? `${data.financials.diasEntrega} días laborables` : 'Por Definir'}.
