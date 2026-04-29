@@ -269,37 +269,33 @@ const OrdersPanel = ({
     return orders.find(o => o.id === deleteConfirm);
   };
 
+  // 🔥 AQUÍ RESTAURAMOS LA VARIABLE PARA QUE EL MODAL NO FALLE 🔥
   const deleteOrderData = getOrderToDelete();
-  const isPermanentDelete = deleteOrderData?.status === 'ANULADA';
+  const isPermanentDelete = false; 
 
   const handleConfirmDelete = async () => {
-    if (isPermanentDelete) {
-        onDeleteOrder(deleteConfirm);
+    if (!cancelReason.trim()) {
+        toast({ title: "Atención", description: "Debe ingresar el motivo de la anulación.", variant: "destructive" });
+        return;
+    }
+    setIsCancelling(true);
+    try {
+        const { error } = await supabase.from('ordenes').update({
+            status: 'ANULADA',
+            motivoAnulacion: cancelReason,
+            updated_at: new Date().toISOString()
+        }).eq('id', deleteConfirm);
+        
+        if (error) throw error;
+        toast({ title: "Orden Anulada", description: "La orden ha sido cancelada correctamente." });
+        onUpdateStatus(deleteConfirm, 'ANULADA'); 
+    } catch (e) {
+        console.error(e);
+        toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
+    } finally {
+        setIsCancelling(false);
         setDeleteConfirm(null);
-    } else {
-        if (!cancelReason.trim()) {
-            toast({ title: "Atención", description: "Debe ingresar el motivo de la anulación.", variant: "destructive" });
-            return;
-        }
-        setIsCancelling(true);
-        try {
-            const { error } = await supabase.from('ordenes').update({
-                status: 'ANULADA',
-                motivoAnulacion: cancelReason,
-                updated_at: new Date().toISOString()
-            }).eq('id', deleteConfirm);
-            
-            if (error) throw error;
-            toast({ title: "Orden Anulada", description: "La orden ha sido cancelada correctamente." });
-            onUpdateStatus(deleteConfirm, 'ANULADA'); 
-        } catch (e) {
-            console.error(e);
-            toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
-        } finally {
-            setIsCancelling(false);
-            setDeleteConfirm(null);
-            setCancelReason('');
-        }
+        setCancelReason('');
     }
   };
 
@@ -543,41 +539,47 @@ const OrdersPanel = ({
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
                           )}
-                          {actionConfig.showEdit && canEdit(order.status) && (
-                            <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-7 w-7 text-amber-600 hover:bg-amber-50" title="Editar orden">
-                              <Edit className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {actionConfig.showClone && (
-                            <Button variant="ghost" size="icon" onClick={() => onCloneOrder(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
-                              <Copy className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {saldoReal > 0 && onAbonoOrder && (
-                            <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50">
-                                <Coins className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          
-                          <Button 
-                            variant="ghost" 
-                            size="icon" 
-                            onClick={() => { setDeleteConfirm(order.id); setCancelReason(''); }} 
-                            className="h-7 w-7 text-red-600 hover:bg-red-100 bg-red-50/50" 
-                            title={isAnulada ? "Eliminar permanentemente" : "Anular orden"}
-                          >
-                            <Trash2 className="h-3.5 w-3.5" />
-                          </Button>
 
-                          {actionConfig.showArchive && canArchive(order.status) && (
-                            <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Archivar orden">
-                              <Archive className="h-3.5 w-3.5" />
-                            </Button>
-                          )}
-                          {actionConfig.showUnarchive && canUnarchive(order.status) && (
-                            <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
-                              <RotateCw className="h-3.5 w-3.5" />
-                            </Button>
+                          {/* 🔥 OCULTAMOS ACCIONES SI LA ORDEN ESTÁ ANULADA 🔥 */}
+                          {!isAnulada && (
+                              <>
+                                {actionConfig.showEdit && canEdit(order.status) && (
+                                  <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-7 w-7 text-amber-600 hover:bg-amber-50" title="Editar orden">
+                                    <Edit className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {actionConfig.showClone && (
+                                  <Button variant="ghost" size="icon" onClick={() => onCloneOrder(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
+                                    <Copy className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {saldoReal > 0 && onAbonoOrder && (
+                                  <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50">
+                                      <Coins className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                
+                                <Button 
+                                  variant="ghost" 
+                                  size="icon" 
+                                  onClick={() => { setDeleteConfirm(order.id); setCancelReason(''); }} 
+                                  className="h-7 w-7 text-red-600 hover:bg-red-100 bg-red-50/50" 
+                                  title="Anular orden"
+                                >
+                                  <Trash2 className="h-3.5 w-3.5" />
+                                </Button>
+
+                                {actionConfig.showArchive && canArchive(order.status) && (
+                                  <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Archivar orden">
+                                    <Archive className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                                {actionConfig.showUnarchive && canUnarchive(order.status) && (
+                                  <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
+                                    <RotateCw className="h-3.5 w-3.5" />
+                                  </Button>
+                                )}
+                              </>
                           )}
                         </div>
                       </td>
@@ -625,38 +627,33 @@ const OrdersPanel = ({
       <AlertDialog open={!!deleteConfirm} onOpenChange={(open) => !open && setDeleteConfirm(null)}>
         <AlertDialogContent>
           <AlertDialogHeader>
-            <AlertDialogTitle className={isPermanentDelete ? 'text-slate-800' : 'text-red-600'}>
-              {isPermanentDelete ? 'Eliminar Orden Anulada' : `Anular Orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}`}
+            <AlertDialogTitle className="text-red-600">
+              {`Anular Orden #${deleteOrderData ? formatOrderId(deleteOrderData) : ''}`}
             </AlertDialogTitle>
             <AlertDialogDescription>
-              {isPermanentDelete 
-                ? `¿Está seguro de que desea eliminar permanentemente la orden? Esta acción no se puede deshacer.`
-                : `¿Está seguro de que desea anular esta orden? Se cambiará el estado a ANULADA.`
-              }
+              ¿Está seguro de que desea anular esta orden? Se cambiará el estado a ANULADA y no se podrá volver a editar.
             </AlertDialogDescription>
           </AlertDialogHeader>
           
-          {!isPermanentDelete && (
-              <div className="my-4">
-                 <label className="text-sm font-bold text-slate-700 mb-2 block">Motivo de la anulación *</label>
-                 <textarea 
-                    className="w-full border border-slate-300 rounded-md p-3 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none resize-none"
-                    rows="3"
-                    placeholder="Ej: El cliente canceló el proyecto..."
-                    value={cancelReason}
-                    onChange={(e) => setCancelReason(e.target.value)}
-                 />
-              </div>
-          )}
+          <div className="my-4">
+             <label className="text-sm font-bold text-slate-700 mb-2 block">Motivo de la anulación *</label>
+             <textarea 
+                className="w-full border border-slate-300 rounded-md p-3 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none resize-none"
+                rows="3"
+                placeholder="Ej: El cliente canceló el proyecto..."
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+             />
+          </div>
 
           <AlertDialogFooter>
             <AlertDialogCancel onClick={() => setCancelReason('')}>Cancelar</AlertDialogCancel>
             <AlertDialogAction 
               onClick={handleConfirmDelete}
-              disabled={isCancelling || (!isPermanentDelete && !cancelReason.trim())}
+              disabled={isCancelling || !cancelReason.trim()}
               className="bg-red-600 hover:bg-red-700 disabled:opacity-50 text-white"
             >
-              {isCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : (isPermanentDelete ? 'Eliminar' : 'Confirmar Anulación')}
+              {isCancelling ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar Anulación'}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>

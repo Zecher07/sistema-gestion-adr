@@ -98,7 +98,7 @@ function App() {
 
       const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, abonos, motivoAnulacion';
       
-      // 🔥 AHORA TODOS DESCARGAN TODAS LAS ÓRDENES PARA PODER VERLAS 🔥
+      // 🔥 AHORA TODOS DESCARGAN TODAS LAS ÓRDENES PARA PODER VERLAS EN LA TABLA 🔥
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
       const { data: ordenesData } = await ordersQuery;
       
@@ -161,9 +161,6 @@ function App() {
       .on('postgres_changes', { event: '*', schema: 'public', table: 'ordenes' }, (payload) => {
         
         const { eventType, new: newRecord, old: oldRecord } = payload;
-        
-        // 🔥 AHORA TODOS RECIBEN ACTUALIZACIONES EN TIEMPO REAL PARA VER LA LISTA ACTUALIZADA 🔥
-        const seeAll = true; 
 
         if (eventType === 'UPDATE') {
             const numOrden = newRecord.order_number || newRecord.id;
@@ -291,21 +288,68 @@ function App() {
   
   const handleViewChange = (v) => { if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } else setCurrentView(v); };
   const handleArchiveNotification = (id) => { setArchivedNotifications(prev => [...prev, id]); };
+  
+  // Visualizar ordenes NUNCA bloquea a nadie (es tu requerimiento)
   const handleViewOrder = (o, src) => { setViewOrder(o); setViewOrderSource(src); };
-  const handleProductToggle = async (order, idx, newState) => {
-      if (user.role !== 'Producción' && user.role !== 'Administrador') return;
-      const currentProducts = order.productos || order.products || [];
-      const updatedProducts = [...currentProducts];
-      updatedProducts[idx] = { ...updatedProducts[idx], estado_prod: newState };
-      if (viewOrder && viewOrder.id === order.id) { setViewOrder({ ...viewOrder, productos: updatedProducts }); }
 
-      try {
-          const { error } = await supabase.from('ordenes').update({ productos: updatedProducts }).eq('id', order.id);
-          if (error) throw error;
-      } catch (error) { toast({ title: "Error", description: "No se guardó el estado de producción", variant: "destructive" }); }
+  // =======================================================================
+  // 🔥 ESCUDOS DE PROTECCIÓN PARA ACCIONES (EDITAR, ABONAR, ANULAR, ELIMINAR)
+  // =======================================================================
+
+  const handleEditOrderRequest = (o) => {
+      if (user.role !== 'Administrador' && !o.vendedor?.includes(user.name)) {
+          toast({ title: "Acceso Denegado", description: "Solo puedes editar las órdenes donde estés asignado.", variant: "destructive" });
+          return;
+      }
+      setEditingOrder(o);
+  };
+
+  const handleAbonoOrderRequest = (o) => {
+      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !o.vendedor?.includes(user.name)) {
+          toast({ title: "Acceso Denegado", description: "Solo puedes registrar abonos en tus propias órdenes.", variant: "destructive" });
+          return;
+      }
+      setAbonoOrder(o);
+  };
+
+  const handlePaymentOrderRequest = (o) => {
+      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !o.vendedor?.includes(user.name)) {
+          toast({ title: "Acceso Denegado", description: "No tienes permisos para cobrar en esta orden.", variant: "destructive" });
+          return;
+      }
+      setPaymentOrder(o);
+  };
+
+  const handleDeleteOrderRequest = async (id) => {
+      const orderToDelete = orders.find(o => o.id === id);
+      if (user.role !== 'Administrador' && !orderToDelete?.vendedor?.includes(user.name)) {
+          toast({ title: "Acceso Denegado", description: "No puedes eliminar órdenes de otros vendedores.", variant: "destructive" });
+          return;
+      }
+      await supabase.from('ordenes').delete().eq('id', id);
+  };
+
+  const handleAnulateOrderRequest = async (orderId) => { 
+      const orderToAnulate = orders.find(o => o.id === orderId) || viewOrder;
+      if (user.role !== 'Administrador' && !orderToAnulate?.vendedor?.includes(user.name)) {
+          toast({ title: "Acceso Denegado", description: "No puedes anular órdenes de otros vendedores.", variant: "destructive" });
+          return;
+      }
+      try { 
+          const { error } = await supabase.from('ordenes').update({ status: 'ANULADA' }).eq('id', orderId); 
+          if (error) throw error; 
+          toast({ title: "Orden Anulada" }); 
+          setViewOrder(null); 
+      } catch (error) { 
+          toast({ variant: "destructive", title: "Error" }); 
+      } 
   };
 
   const handleAdvanceWorkflow = async (order) => {
+    if (user.role !== 'Administrador' && user.role !== 'Producción' && user.role !== 'Contabilidad' && !order.vendedor?.includes(user.name)) {
+        toast({ title: "Acceso Denegado", description: "No tienes permisos para avanzar esta orden.", variant: "destructive" });
+        return;
+    }
     const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
     const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
 
@@ -324,6 +368,10 @@ function App() {
   };
 
   const handleRegressWorkflow = async (order) => {
+    if (user.role !== 'Administrador') {
+        toast({ title: "Acceso Denegado", description: "Solo el Administrador puede revertir estados.", variant: "destructive" });
+        return;
+    }
     const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
     const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
 
@@ -341,8 +389,22 @@ function App() {
     }
   };
 
+  const handleProductToggle = async (order, idx, newState) => {
+      if (user.role !== 'Producción' && user.role !== 'Administrador') return;
+      const currentProducts = order.productos || order.products || [];
+      const updatedProducts = [...currentProducts];
+      updatedProducts[idx] = { ...updatedProducts[idx], estado_prod: newState };
+      if (viewOrder && viewOrder.id === order.id) { setViewOrder({ ...viewOrder, productos: updatedProducts }); }
+
+      try {
+          const { error } = await supabase.from('ordenes').update({ productos: updatedProducts }).eq('id', order.id);
+          if (error) throw error;
+      } catch (error) { toast({ title: "Error", description: "No se guardó el estado de producción", variant: "destructive" }); }
+  };
+
   const handleArchiveOrder = async (order) => { await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id); setViewOrder(null); toast({ title: "Orden Archivada" }); };
-  const handleAnulateOrder = async (orderId) => { try { const { error } = await supabase.from('ordenes').update({ status: 'ANULADA' }).eq('id', orderId); if (error) throw error; toast({ title: "Orden Anulada" }); setViewOrder(null); } catch (error) { toast({ variant: "destructive", title: "Error" }); } };
+
+  // =======================================================================
 
   if (!user) return <><Login onLogin={handleLogin} /><Toaster /></>;
 
@@ -384,38 +446,24 @@ function App() {
                 orders={filtered} 
                 user={user} 
                 onUpdateStatus={() => {}} 
-                onDeleteOrder={async (id) => { 
-                    const orderToDelete = orders.find(o => o.id === id);
-                    if (user.role !== 'Administrador' && !orderToDelete?.vendedor?.includes(user.name)) {
-                        toast({ title: "Acceso Denegado", description: "No puedes eliminar esta orden.", variant: "destructive" });
-                        return;
-                    }
-                    await supabase.from('ordenes').delete().eq('id', id); 
-                }} 
-                onEditOrder={(o) => {
-                    // 🔥 VALIDACIÓN DE EDICIÓN: SOLO ADMIN O VENDEDORES ASIGNADOS 🔥
-                    if (user.role !== 'Administrador' && !o.vendedor?.includes(user.name)) {
-                        toast({ title: "Acceso Denegado", description: "Solo el Administrador o los vendedores asignados pueden editar esta orden.", variant: "destructive" });
-                        return;
-                    }
-                    setEditingOrder(o);
-                }} 
+                onDeleteOrder={handleDeleteOrderRequest} 
+                onEditOrder={handleEditOrderRequest} 
                 onCloneOrder={setCloningOrder} 
-                onPaymentOrder={setPaymentOrder} 
+                onPaymentOrder={handlePaymentOrderRequest} 
                 onCreateOrder={() => setShowForm(true)} 
                 onViewOrder={(o) => handleViewOrder(o, null)} 
                 currentView={currentView} 
-                onAbonoOrder={setAbonoOrder} 
+                onAbonoOrder={handleAbonoOrderRequest} 
             />
           </div>
        );
     }
 
     switch (currentView) {
-      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} user={user} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div></div> );
+      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} user={user} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={handleAbonoOrderRequest} /></div></div> );
       case 'clientes-nuevo': return <ClientForm user={user} onSuccess={handleClientSuccess} onCancel={() => setCurrentView('clientes-lista')}/>;
-      case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={setAbonoOrder} /></div>;
-      case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' onAbonoOrder={setAbonoOrder} /></div>;
+      case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={handleAbonoOrderRequest} /></div>;
+      case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' onAbonoOrder={handleAbonoOrderRequest} /></div>;
       case 'trabajo-disponibilidad': return <div className="h-[calc(100vh-140px)]"><WorkAreaCalendar orders={orders} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /></div>;
       case 'inventario-ver': return <InventoryPanel user={user} mode="view" />;
       case 'inventario-gestionar': return <InventoryPanel user={user} mode="manage" />; 
@@ -466,14 +514,14 @@ function App() {
         onAdvanceWorkflow={handleAdvanceWorkflow} 
         onRegressWorkflow={handleRegressWorkflow}
         onArchiveOrder={handleArchiveOrder} 
-        onUpdateOrder={() => { setEditingOrder(viewOrder); setViewOrder(null); }} 
-        onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
-        onAnulateOrder={handleAnulateOrder} 
         
-        // 🔥 VALIDACIÓN DE BOTONES DENTRO DEL MODAL (ADMIN O DUEÑO) 🔥
+        // 🔥 VALIDACIONES DE SEGURIDAD PASADAS AL MODAL 🔥
+        onUpdateOrder={() => { handleEditOrderRequest(viewOrder); setViewOrder(null); }} 
+        onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
+        onAnulateOrder={handleAnulateOrderRequest} 
         canAnulate={user.role === 'Administrador' || (canUserAnulate && viewOrder?.vendedor?.includes(user.name))} 
         canEdit={user.role === 'Administrador' || (canUserEdit && viewOrder?.vendedor?.includes(user.name))} 
-        onAbonoOrder={setAbonoOrder} 
+        onAbonoOrder={handleAbonoOrderRequest} 
       />
 
       <div className="relative z-[9999]">
