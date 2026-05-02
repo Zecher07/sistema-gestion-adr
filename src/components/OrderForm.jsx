@@ -96,9 +96,9 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
 });
 
 // 🔥 COMPONENTE PARA GESTIONAR FOTOS DE PAGOS INDIVIDUALES 🔥
-const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing }) => {
+const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false }) => {
     const onDrop = useCallback(files => onAdd(files, type, abonoIndex), [onAdd, type, abonoIndex]);
-    const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing });
+    const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || disabled });
 
     return (
         <div className="mt-2 pt-2 border-t border-dashed border-slate-300 w-full animate-in fade-in zoom-in-95">
@@ -107,17 +107,21 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
                 {items.map((img, i) => (
                     <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => window.open(img.url, '_blank')}>
                         <img src={img.url} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="Comprobante" />
-                        <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(type, abonoIndex, i); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <X className="h-3 w-3" />
-                        </button>
+                        {!disabled && (
+                            <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(type, abonoIndex, i); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                <X className="h-3 w-3" />
+                            </button>
+                        )}
                     </div>
                 ))}
                 {isProcessing && <div className="w-12 h-12 flex items-center justify-center border border-dashed border-blue-300 bg-blue-50 rounded"><Loader2 className="w-4 h-4 animate-spin text-blue-500" /></div>}
                 
-                <div {...getRootProps()} className="cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded px-2 flex items-center gap-1 text-[10px] font-bold border border-emerald-200 transition-colors h-12 shadow-sm">
-                    <input {...getInputProps()} />
-                    <Plus className="w-3 h-3" /> {items.length === 0 ? 'Adjuntar' : 'Añadir'}
-                </div>
+                {!disabled && (
+                    <div {...getRootProps()} className={`cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded px-2 flex items-center gap-1 text-[10px] font-bold border border-emerald-200 transition-colors h-12 shadow-sm ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                        <input {...getInputProps()} />
+                        <Plus className="w-3 h-3" /> {items.length === 0 ? 'Adjuntar' : 'Añadir'}
+                    </div>
+                )}
             </div>
         </div>
     );
@@ -151,8 +155,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [isSellerDropdownOpen, setIsSellerDropdownOpen] = useState(false);
 
   const [abonos, setAbonos] = useState([]);
+  const hasAbonosExtras = abonos && abonos.length > 0; 
   
-  // 🔥 ESTADO ESTRUCTURADO PARA COMPROBANTES DE PAGO 🔥
   const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
   const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
   
@@ -303,7 +307,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
       setAbonos(initialData.abonos || []);
       
-      // 🔥 LA MAGIA: Rescatar comprobantes e imágenes perdidas de la base de datos 🔥
       if (initialData.id) {
           const fetchMissingData = async () => {
               try {
@@ -413,7 +416,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   };
 
   const handleCatalogSelect = (item) => {
-    const minQty = item.venta_minima || 1;
+    // Si no tiene venta mínima configurada, asumimos 1 por defecto. Pero si es 0, lo respetamos.
+    const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
+    
     const computedPrice = getPriceForQty(minQty, {
         precioBaseOriginal: Number(item.precio) || 0,
         precios_escalonados: item.precios_escalonados || []
@@ -435,15 +440,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
             es_por_metro: item.es_por_metro || false,
-            total: (item.es_por_metro || false) ? computedPrice : computedPrice * minQty
+            total: computedPrice * minQty
         };
 
         if (emptyIndex !== -1) {
             newProducts[emptyIndex] = newProduct;
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
         } else {
             newProducts.push(newProduct);
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
         }
         return { ...prev, productos: newProducts };
     });
@@ -473,7 +478,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   };
 
   const handleSelectProductSuggestion = (index, product) => {
-      const minQty = product.venta_minima || 1;
+      const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
+      
       const computedPrice = getPriceForQty(minQty, {
           precioBaseOriginal: Number(product.precio) || 0,
           precios_escalonados: product.precios_escalonados || []
@@ -494,9 +500,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               venta_minima: minQty,
               cantidad: minQty,
               es_por_metro: product.es_por_metro || false,
-              total: (product.es_por_metro || false) ? computedPrice : minQty * computedPrice
+              total: minQty * computedPrice
           };
-          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
@@ -509,18 +515,20 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         let item = { ...newProducts[index], [field]: value };
         
         if (field === 'cantidad') {
-            const qty = Number(value) || 0;
+            let qty = parseInt(value, 10);
+            if (isNaN(qty)) qty = 0;
+            item.cantidad = qty;
             item.precioUnitario = getPriceForQty(qty, item);
         }
 
         if (field === 'cantidad' || field === 'precioUnitario') {
-            const qty = Number(item.cantidad) || 0;
+            const qty = item.cantidad !== undefined ? parseInt(item.cantidad, 10) : 0;
             const price = Number(item.precioUnitario) || 0;
-            item.total = item.es_por_metro ? price : qty * price;
+            item.total = qty * price;
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
         }
 
         newProducts[index] = item;
@@ -528,15 +536,26 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     });
   };
 
+  // 🔥 CANTIDADES SIEMPRE ENTERAS Y ACEPTAN CERO PERFECTAMENTE 🔥
   const handleQuantityBlur = (index, value) => {
       const item = formData.productos[index];
       if (!item.descripcion) return;
-      const min = item.venta_minima || 1;
-      const qty = Number(value);
+      
+      const min = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
+      let qty = parseInt(value, 10);
+      if (isNaN(qty)) qty = 0;
 
-      if (qty > 0 && qty < min) {
+      // Si el número es 0 y la venta mínima es 0, está todo perfecto.
+      // Solo lanzamos advertencia si pone un número menor al mínimo permitido (ej: mínimo 5 y pone 2).
+      // PERO si pone 0 y la venta mínima es mayor a 0, aquí sí hay un conflicto lógico. 
+      // Por defecto, asumiré que si pones 0, quieres dejarlo en 0 independientemente de la venta mínima.
+      
+      if (qty > 0 && min > 0 && qty < min) {
           toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
           updateProduct(index, 'cantidad', min);
+      } else {
+          // Aseguramos que se guarde como entero y permitimos el 0
+          updateProduct(index, 'cantidad', qty);
       }
   };
 
@@ -551,7 +570,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const addProduct = () => {
     setFormData(prev => ({
         ...prev,
-        productos: [...prev.productos, { descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, total: 0, venta_minima: 1, es_por_metro: false }]
+        productos: [...prev.productos, { descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false }]
     }));
   };
 
@@ -613,7 +632,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) }));
   };
 
-  // 🔥 MANEJO DE COMPROBANTES EN EL FORMULARIO 🔥
   const requiresComprobante = (method) => {
       if (!method) return false;
       const m = method.toLowerCase();
@@ -657,7 +675,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       });
   };
 
-  // 🔥 LÓGICA DEL MODAL INTERNO DE ABONOS 🔥
   const onDropAbono = useCallback(async (acceptedFiles) => {
       setIsProcessingAbonoImages(true);
       const newImages = [];
@@ -811,7 +828,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     let finalPaymentString = formData.formaPagoAnticipo;
-    if (formData.formaPagoAnticipo !== 'Efectivo' && formData.formaPagoAnticipo !== 'Crédito' && formData.formaPagoAnticipo !== 'No aplica' && formData.referenciaPago) {
+    if (requiresComprobante(formData.formaPagoAnticipo) && formData.referenciaPago) {
         finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
     }
 
@@ -1088,20 +1105,21 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              </td>
                              
                              <td className="py-2 px-2 relative align-top pt-4">
+                                 {/* 🔥 AHORA SOLO ENTEROS, BLOQUEA PUNTOS/COMAS Y ACEPTA 0 🔥 */}
                                  <input 
                                     type="number" 
-                                    step={row.es_por_metro ? "0.01" : "1"} 
-                                    min={row.venta_minima || 1}
+                                    step="1" 
+                                    min="0"
                                     className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold h-9" 
-                                    value={row.cantidad || ''} 
+                                    value={row.cantidad !== undefined ? row.cantidad : ''} 
                                     onChange={e => updateProduct(idx, 'cantidad', e.target.value)} 
                                     onKeyDown={e => {
-                                        if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
+                                        if (e.key === '.' || e.key === ',') e.preventDefault();
                                     }}
                                     onBlur={e => handleQuantityBlur(idx, e.target.value)}
                                     readOnly={isReadOnly}
                                  />
-                                 {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                                 {Math.floor(Number(row.venta_minima || 0)) > 0 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {Math.floor(Number(row.venta_minima))}</span>}
                              </td>
 
                              <td className="py-2 px-2 align-top pt-4">
@@ -1179,14 +1197,18 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
           <div className="space-y-4 pt-2">
              <div className="flex justify-between items-center border-b border-slate-200 pb-1">
-                <div className="text-xs text-slate-500 italic">Info contable</div>
-                <div className="flex bg-slate-100 rounded-md p-1 gap-1">
-                    <button type="button" onClick={() => setPaymentMode('full')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'full' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'}`}>Pago Completo</button>
-                    <button type="button" onClick={() => setPaymentMode('partial')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'partial' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'}`}>Anticipo</button>
+                <div className="flex items-center gap-2">
+                    <span className="text-xs text-slate-500 italic">Info contable</span>
+                    {hasAbonosExtras && <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider font-bold shadow-sm">Anticipo Bloqueado por Abonos</span>}
+                </div>
+                <div className="flex bg-slate-100 rounded-md p-1 gap-1 relative">
+                    {hasAbonosExtras && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad si ya hay abonos registrados"></div>}
+                    <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('full')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'full' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Pago Completo</button>
+                    <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('partial')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'partial' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Anticipo</button>
                 </div>
              </div>
              
-             <div className={`border rounded p-4 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 transition-colors ${paymentMode === 'full' ? 'bg-green-50/50 border-green-200' : 'bg-orange-50/50 border-orange-200'}`}>
+             <div className={`border rounded p-4 grid grid-cols-1 md:grid-cols-2 gap-x-8 gap-y-4 transition-colors ${paymentMode === 'full' ? 'bg-green-50/50 border-green-200' : 'bg-orange-50/50 border-orange-200'} ${hasAbonosExtras ? 'opacity-80' : ''}`}>
                 <div className="space-y-3">
                    <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">{paymentMode === 'full' ? 'Pago Total Inmediato' : 'Pago del Anticipo'}</h4>
                    
@@ -1194,14 +1216,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1">
                           <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
-                          <input type="number" step="0.01" className={`w-full pl-6 pr-12 py-1 border rounded text-sm font-bold ${paymentMode === 'full' ? 'bg-slate-100 text-green-700' : 'bg-white border-slate-300'}`} value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} readOnly={paymentMode === 'full' || mode==='read_only'} placeholder="0.00" />
+                          <input type="number" step="0.01" className={`w-full pl-6 pr-12 py-1 border rounded text-sm font-bold ${paymentMode === 'full' ? 'bg-slate-100 text-green-700' : 'bg-white border-slate-300'} ${hasAbonosExtras ? 'bg-slate-100 cursor-not-allowed' : ''}`} value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} readOnly={paymentMode === 'full' || mode==='read_only' || hasAbonosExtras} placeholder="0.00" />
                           <span className="absolute right-2 top-1.5 text-[10px] text-slate-400 font-bold bg-slate-100 px-1 rounded">{porcentajeAnticipoUI}%</span>
                       </div>
                    </div>
                    
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
-                      <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only'}>
+                      <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only' || hasAbonosExtras}>
                           {PAYMENT_METHODS.map(m => (
                                <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
                                    {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
@@ -1213,7 +1235,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
-                           <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." />
+                           <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm disabled:opacity-50 disabled:cursor-not-allowed" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." disabled={hasAbonosExtras} />
                        </div>
                    )}
                    
@@ -1225,25 +1247,26 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            onAdd={handleAddComprobantes} 
                            onRemove={handleRemoveComprobante} 
                            isProcessing={isProcessingComprobantes} 
+                           disabled={hasAbonosExtras}
                        />
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                           <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
+                           <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} disabled={hasAbonosExtras} />
                        </div>
                    )}
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
-                      <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
+                      <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} disabled={hasAbonosExtras} />
                    </div>
 
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
-                        <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} />
-                        <label htmlFor="chk-ret" className="text-xs cursor-pointer select-none">¿Aplica Retención?</label>
-                        {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs text-slate-500">%</span><input type="number" step="0.01" className="w-12 text-center text-xs border-b border-slate-400 bg-transparent focus:outline-none" value={formData.retentionPercent} onChange={e => setFormData({...formData, retentionPercent: parseFloat(e.target.value) || 0})} readOnly={mode === 'read_only'} title="Porcentaje de Retención" /><span className="text-xs font-bold text-red-600">- $ {formData.retencion.toFixed(2)}</span></div>)}
+                        <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={hasAbonosExtras} />
+                        <label htmlFor="chk-ret" className={`text-xs select-none ${hasAbonosExtras ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>¿Aplica Retención?</label>
+                        {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs text-slate-500">%</span><input type="number" step="0.01" className={`w-12 text-center text-xs border-b border-slate-400 bg-transparent focus:outline-none ${hasAbonosExtras ? 'opacity-50 cursor-not-allowed' : ''}`} value={formData.retentionPercent} onChange={e => setFormData({...formData, retentionPercent: parseFloat(e.target.value) || 0})} readOnly={mode === 'read_only' || hasAbonosExtras} title="Porcentaje de Retención" /><span className="text-xs font-bold text-red-600">- $ {formData.retencion.toFixed(2)}</span></div>)}
                    </div>
                 </div>
 

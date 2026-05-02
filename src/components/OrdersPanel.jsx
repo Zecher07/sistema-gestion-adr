@@ -91,16 +91,59 @@ const OrdersPanel = ({
 
   const isAdmin = user.role === 'Administrador';
 
+  // 🔥 CONFIGURACIÓN DE VISIBILIDAD DE BOTONES 🔥
   const actionConfig = useMemo(() => {
     return {
       showView: true,
       showEdit: true,
-      showClone: isAdmin,
+      showClone: true, // ✔️ Ahora TODOS pueden clonar
       showPayment: isAdmin,
       showArchive: isAdmin,
       showUnarchive: isAdmin
     };
   }, [isAdmin]);
+
+  // 🔥 FUNCIÓN PARA VERIFICAR SI EL USUARIO ES DUEÑO DE LA ORDEN 🔥
+  const canModify = (order) => {
+      if (isAdmin) return true;
+      return (order.vendedor || '').includes(user?.name);
+  };
+
+  // 🔥 FUNCIÓN PARA CLONAR LIMPIANDO LA INFORMACIÓN FINANCIERA 🔥
+  const handleCloneClick = (order) => {
+      const clonedOrder = {
+          ...order,
+          id: null,
+          orderNumber: null,
+          order_number: null,
+          created_at: null,
+          createdAt: null,
+          status: 'BORRADOR', // Se trata como orden nueva
+          anticipo: 0,
+          retencion: 0,
+          abonos: [],
+          comprobantes: { anticipo: [], saldo: [], abonos: {} }, // Limpiamos fotos de pago
+          formaPagoAnticipo: 'Efectivo',
+          forma_pago_anticipo: 'Efectivo',
+          formaPagoSaldo: 'No aplica',
+          referenciaPago: '',
+          notaAnticipo: '',
+          nota_anticipo: '',
+          creditoVenceAnticipo: '',
+          creditoVenceSaldo: '',
+          notaSaldo: '',
+          descuentoMonto: 0,
+          financials: {
+              ...(order.financials || {}),
+              saldo: order.financials?.total || 0, // El saldo vuelve a ser el total
+              anticipo: 0,
+              retencion: 0,
+              descuentoVal: 0,
+              descuentoMonto: 0
+          }
+      };
+      onCloneOrder(clonedOrder);
+  };
 
   const roleFilteredOrders = useMemo(() => {
     return orders.filter(order => {
@@ -166,7 +209,6 @@ const OrdersPanel = ({
     }, { abono: 0, saldo: 0, total: 0 });
   }, [filteredOrders]);
 
-  // 🔥 LÓGICA DE ORDENAMIENTO 🔥
   const requestSort = (key) => {
     let direction = 'asc';
     if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -269,7 +311,6 @@ const OrdersPanel = ({
     return orders.find(o => o.id === deleteConfirm);
   };
 
-  // 🔥 AQUÍ RESTAURAMOS LA VARIABLE PARA QUE EL MODAL NO FALLE 🔥
   const deleteOrderData = getOrderToDelete();
   const isPermanentDelete = false; 
 
@@ -308,7 +349,6 @@ const OrdersPanel = ({
   const canArchive = (status) => isAdmin && status === 'FINALIZADA';
   const canUnarchive = (status) => isAdmin && status === 'ARCHIVADA';
 
-  // 🔥 COMPONENTE DE CABECERA ORDENABLE Y OPTIMIZADA 🔥
   const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
       <th 
           className={`px-2 py-3 font-bold cursor-pointer hover:bg-slate-200 transition-colors select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`} 
@@ -543,31 +583,36 @@ const OrdersPanel = ({
                           {/* 🔥 OCULTAMOS ACCIONES SI LA ORDEN ESTÁ ANULADA 🔥 */}
                           {!isAnulada && (
                               <>
-                                {actionConfig.showEdit && canEdit(order.status) && (
+                                {/* 🔥 VALIDAMOS QUE SOLO EL DUEÑO O ADMIN PUEDA EDITAR/ABONAR/ANULAR 🔥 */}
+                                {actionConfig.showEdit && canEdit(order.status) && canModify(order) && (
                                   <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-7 w-7 text-amber-600 hover:bg-amber-50" title="Editar orden">
                                     <Edit className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
+                                
                                 {actionConfig.showClone && (
-                                  <Button variant="ghost" size="icon" onClick={() => onCloneOrder(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
+                                  <Button variant="ghost" size="icon" onClick={() => handleCloneClick(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
                                     <Copy className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
-                                {saldoReal > 0 && onAbonoOrder && (
+                                
+                                {saldoReal > 0 && onAbonoOrder && (isAdmin || user.role === 'Contabilidad' || canModify(order)) && (
                                   <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50">
                                       <Coins className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
                                 
-                                <Button 
-                                  variant="ghost" 
-                                  size="icon" 
-                                  onClick={() => { setDeleteConfirm(order.id); setCancelReason(''); }} 
-                                  className="h-7 w-7 text-red-600 hover:bg-red-100 bg-red-50/50" 
-                                  title="Anular orden"
-                                >
-                                  <Trash2 className="h-3.5 w-3.5" />
-                                </Button>
+                                {canModify(order) && (
+                                    <Button 
+                                      variant="ghost" 
+                                      size="icon" 
+                                      onClick={() => { setDeleteConfirm(order.id); setCancelReason(''); }} 
+                                      className="h-7 w-7 text-red-600 hover:bg-red-100 bg-red-50/50" 
+                                      title="Anular orden"
+                                    >
+                                      <Trash2 className="h-3.5 w-3.5" />
+                                    </Button>
+                                )}
 
                                 {actionConfig.showArchive && canArchive(order.status) && (
                                   <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Archivar orden">
