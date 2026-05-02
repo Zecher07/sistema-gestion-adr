@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
-import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Upload, FileText, DollarSign, ShieldAlert, Filter, ArrowUpDown } from 'lucide-react';
+import { BookOpen, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Upload, Download, FileText, DollarSign, ShieldAlert, Filter, ArrowUpDown, CheckCircle2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text';
 import { Switch } from '@/components/ui/switch';
@@ -19,7 +19,6 @@ const CatalogPanel = ({ user }) => {
   
   const [selectedCategories, setSelectedCategories] = useState([]);
 
-  // 🔥 ESTADO DE ORDENAMIENTO (NUEVO) 🔥
   const [sortConfig, setSortConfig] = useState({ key: 'nombre', direction: 'asc' });
 
   const canEditCatalog = user?.role === 'Administrador' || user?.role === 'Producción';
@@ -30,8 +29,10 @@ const CatalogPanel = ({ user }) => {
   
   const [formData, setFormData] = useState({ 
       codigo: '', categoria: '', nombre: '', descripcion: '', observaciones: '', 
-      precio: '', venta_minima: '', precios_escalonados: [],
-      tienePrecioDistribuidor: false, precioDistribuidorBase: '', precios_distribuidor: [],
+      venta_minima: '0', 
+      precios_escalonados: [{ cantidad: '0', precio: '', es_base: true }],
+      tienePrecioDistribuidor: false, 
+      precios_distribuidor: [],
       es_por_metro: false 
   });
   
@@ -44,7 +45,7 @@ const CatalogPanel = ({ user }) => {
     try {
       let query = supabase.from('catalogo_productos').select('*');
       if (searchTerm) query = query.or(`nombre.ilike.%${searchTerm}%,codigo.ilike.%${searchTerm}%`);
-      query = query.limit(1000); // Quitamos el order() de la base de datos para hacerlo en React
+      query = query.limit(1000); 
 
       const { data, error } = await query;
       if (error) throw error;
@@ -67,7 +68,6 @@ const CatalogPanel = ({ user }) => {
       );
   };
 
-  // 🔥 FUNCIÓN PARA CAMBIAR EL ORDEN 🔥
   const requestSort = (key) => {
       let direction = 'asc';
       if (sortConfig.key === key && sortConfig.direction === 'asc') {
@@ -76,15 +76,12 @@ const CatalogPanel = ({ user }) => {
       setSortConfig({ key, direction });
   };
 
-  // 🔥 FILTRADO Y ORDENAMIENTO COMBINADOS 🔥
   const processedItems = React.useMemo(() => {
-      // 1. Filtrar por categoría
       let filtered = items.filter(item => {
           if (selectedCategories.length === 0) return true;
           return selectedCategories.includes(item.categoria);
       });
 
-      // 2. Ordenar alfabéticamente o numéricamente
       filtered.sort((a, b) => {
           const aVal = a[sortConfig.key];
           const bVal = b[sortConfig.key];
@@ -109,7 +106,6 @@ const CatalogPanel = ({ user }) => {
       return filtered;
   }, [items, selectedCategories, sortConfig]);
 
-  // 🔥 COMPONENTE DE CABECERA ORDENABLE 🔥
   const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
       <th 
           className={`px-4 py-3 font-semibold cursor-pointer hover:bg-slate-700 transition-colors select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`} 
@@ -126,61 +122,133 @@ const CatalogPanel = ({ user }) => {
     if (isReadOnly) return;
     if (item) {
         setEditingItem(item);
-        const hasDistribuidorConfig = Number(item.precio_distribuidor) > 0 || (item.precios_distribuidor && item.precios_distribuidor.length > 0);
+        
+        let loadedTiers = item.precios_escalonados || [];
+        if (!loadedTiers.some(t => Number(t.precio) === Number(item.precio))) {
+             loadedTiers = [{ cantidad: item.venta_minima || 0, precio: item.precio || 0, es_base: true }, ...loadedTiers];
+        } else {
+             let foundBase = false;
+             loadedTiers = loadedTiers.map(t => {
+                 if (!foundBase && Number(t.precio) === Number(item.precio)) {
+                     foundBase = true;
+                     return { ...t, es_base: true };
+                 }
+                 return { ...t, es_base: false };
+             });
+        }
+        if (loadedTiers.length > 0 && !loadedTiers.some(t => t.es_base)) loadedTiers[0].es_base = true;
+
+        let loadedDistTiers = item.precios_distribuidor || [];
+        const hasDistribuidorConfig = Number(item.precio_distribuidor) > 0 || loadedDistTiers.length > 0;
+        
+        if (hasDistribuidorConfig) {
+             if (!loadedDistTiers.some(t => Number(t.precio) === Number(item.precio_distribuidor))) {
+                  loadedDistTiers = [{ cantidad: item.venta_minima || 0, precio: item.precio_distribuidor || 0, es_base: true }, ...loadedDistTiers];
+             } else {
+                  let foundDistBase = false;
+                  loadedDistTiers = loadedDistTiers.map(t => {
+                      if (!foundDistBase && Number(t.precio) === Number(item.precio_distribuidor)) {
+                          foundDistBase = true;
+                          return { ...t, es_base: true };
+                      }
+                      return { ...t, es_base: false };
+                  });
+             }
+             if (loadedDistTiers.length > 0 && !loadedDistTiers.some(t => t.es_base)) loadedDistTiers[0].es_base = true;
+        }
+
         setFormData({ 
             codigo: item.codigo || '', categoria: item.categoria || '', nombre: item.nombre, 
             descripcion: item.descripcion || '', observaciones: item.observaciones || '',
-            precio: item.precio || '', venta_minima: item.venta_minima || '',
-            precios_escalonados: item.precios_escalonados || [],
+            venta_minima: item.venta_minima !== null && item.venta_minima !== undefined ? Math.floor(item.venta_minima) : 0, 
+            precios_escalonados: loadedTiers,
             tienePrecioDistribuidor: hasDistribuidorConfig,
-            precioDistribuidorBase: item.precio_distribuidor || '',
-            precios_distribuidor: item.precios_distribuidor || [],
+            precios_distribuidor: loadedDistTiers,
             es_por_metro: item.es_por_metro || false
         });
     } else {
         setEditingItem(null);
         setFormData({ 
             codigo: '', categoria: '', nombre: '', descripcion: '', observaciones: '', 
-            precio: '', venta_minima: '', precios_escalonados: [],
-            tienePrecioDistribuidor: false, precioDistribuidorBase: '', precios_distribuidor: [],
+            venta_minima: '0', 
+            precios_escalonados: [{ cantidad: '0', precio: '', es_base: true }],
+            tienePrecioDistribuidor: false, 
+            precios_distribuidor: [],
             es_por_metro: false 
         });
     }
     setIsModalOpen(true);
   };
 
-  const addTier = () => { setFormData(prev => ({ ...prev, precios_escalonados: [...prev.precios_escalonados, { cantidad: '', precio: '' }] })); };
+  const addTier = () => { 
+      setFormData(prev => ({ 
+          ...prev, 
+          precios_escalonados: [...prev.precios_escalonados, { cantidad: '', precio: '', es_base: prev.precios_escalonados.length === 0 }] 
+      })); 
+  };
   const updateTier = (index, field, value) => {
       const newTiers = [...formData.precios_escalonados];
       newTiers[index][field] = value; 
       setFormData({ ...formData, precios_escalonados: newTiers });
   };
-  const removeTier = (index) => { setFormData({ ...formData, precios_escalonados: formData.precios_escalonados.filter((_, i) => i !== index) }); };
+  const removeTier = (index) => { 
+      setFormData({ ...formData, precios_escalonados: formData.precios_escalonados.filter((_, i) => i !== index) }); 
+  };
+  const setBasePublico = (index) => {
+      setFormData(prev => ({
+          ...prev,
+          precios_escalonados: prev.precios_escalonados.map((t, i) => ({ ...t, es_base: i === index }))
+      }));
+  };
 
-  const addDistTier = () => { setFormData(prev => ({ ...prev, precios_distribuidor: [...prev.precios_distribuidor, { cantidad: '', precio: '' }] })); };
+  const addDistTier = () => { 
+      setFormData(prev => ({ 
+          ...prev, 
+          precios_distribuidor: [...prev.precios_distribuidor, { cantidad: '', precio: '', es_base: prev.precios_distribuidor.length === 0 }] 
+      })); 
+  };
   const updateDistTier = (index, field, value) => {
       const newTiers = [...formData.precios_distribuidor];
       newTiers[index][field] = value;
       setFormData({ ...formData, precios_distribuidor: newTiers });
   };
-  const removeDistTier = (index) => { setFormData({ ...formData, precios_distribuidor: formData.precios_distribuidor.filter((_, i) => i !== index) }); };
+  const removeDistTier = (index) => { 
+      setFormData({ ...formData, precios_distribuidor: formData.precios_distribuidor.filter((_, i) => i !== index) }); 
+  };
+  const setBaseDist = (index) => {
+      setFormData(prev => ({
+          ...prev,
+          precios_distribuidor: prev.precios_distribuidor.map((t, i) => ({ ...t, es_base: i === index }))
+      }));
+  };
 
   const handleSave = async () => {
       if (!formData.nombre) return toast({ title: "Atención", description: "El nombre es obligatorio", variant: "destructive" });
-      if (Number(formData.precio) <= 0) return toast({ title: "Atención", description: "El Precio Público debe ser mayor a cero", variant: "destructive" });
+      
+      const cleanedTiers = formData.precios_escalonados
+          .map(t => ({ cantidad: parseInt(t.cantidad, 10), precio: Number(t.precio), es_base: t.es_base }))
+          .filter(t => !isNaN(t.cantidad) && t.cantidad >= 0 && !isNaN(t.precio) && t.precio >= 0);
+          
+      if (cleanedTiers.length === 0) return toast({ title: "Atención", description: "Debe añadir al menos un precio público válido.", variant: "destructive" });
+
+      const baseTier = cleanedTiers.find(t => t.es_base) || cleanedTiers[0];
+      
+      const cleanedDistTiers = formData.precios_distribuidor
+          .map(t => ({ cantidad: parseInt(t.cantidad, 10), precio: Number(t.precio), es_base: t.es_base }))
+          .filter(t => !isNaN(t.cantidad) && t.cantidad >= 0 && !isNaN(t.precio) && t.precio >= 0);
+          
+      const baseDistTier = cleanedDistTiers.find(t => t.es_base) || cleanedDistTiers[0];
 
       setSaving(true);
       try {
-          const cleanedTiers = formData.precios_escalonados.map(t => ({ cantidad: Number(t.cantidad), precio: Number(t.precio) })).filter(t => t.cantidad > 0 && t.precio > 0);
-          const cleanedDistTiers = formData.precios_distribuidor.map(t => ({ cantidad: Number(t.cantidad), precio: Number(t.precio) })).filter(t => t.cantidad > 0 && t.precio > 0);
-          
           const finalData = { 
               codigo: formData.codigo, categoria: formData.categoria, nombre: formData.nombre, 
               descripcion: formData.descripcion, observaciones: formData.observaciones,
-              precio: Number(formData.precio) || 0, venta_minima: Number(formData.venta_minima) || 1,
-              precios_escalonados: cleanedTiers,
-              precio_distribuidor: formData.tienePrecioDistribuidor ? (Number(formData.precioDistribuidorBase) || 0) : 0,
-              precios_distribuidor: formData.tienePrecioDistribuidor ? cleanedDistTiers : [],
+              precio: baseTier.precio,
+              venta_minima: formData.venta_minima !== '' ? parseInt(formData.venta_minima, 10) : 0, 
+              precios_escalonados: cleanedTiers.map(t => ({cantidad: t.cantidad, precio: t.precio})),
+              precio_distribuidor: formData.tienePrecioDistribuidor && baseDistTier ? baseDistTier.precio : 0,
+              precios_distribuidor: formData.tienePrecioDistribuidor ? cleanedDistTiers.map(t => ({cantidad: t.cantidad, precio: t.precio})) : [],
               es_por_metro: formData.es_por_metro 
           };
 
@@ -209,6 +277,83 @@ const CatalogPanel = ({ user }) => {
       } catch (error) { toast({ title: "Error", variant: "destructive" }); }
   };
 
+  // 🔥 FUNCIÓN PARA EXPORTAR EL CSV (PLANTILLA INTELIGENTE) 🔥
+  const handleExportCSV = () => {
+      let csvContent = "\uFEFF"; 
+      
+      const grouped = items.reduce((acc, item) => {
+          const cat = item.categoria || 'General';
+          if (!acc[cat]) acc[cat] = [];
+          acc[cat].push(item);
+          return acc;
+      }, {});
+
+      let maxTiers = 1;
+      let maxDistTiers = 1;
+      items.forEach(item => {
+          if (item.precios_escalonados && item.precios_escalonados.length > maxTiers) maxTiers = item.precios_escalonados.length;
+          if (item.precios_distribuidor && item.precios_distribuidor.length > maxDistTiers) maxDistTiers = item.precios_distribuidor.length;
+      });
+
+      for (const [cat, catItems] of Object.entries(grouped)) {
+          csvContent += `"CATEGORÍA: ${cat}"\n`;
+          
+          let headers = ['ID', 'CÓDIGO PRODUCTO', 'NOMBRE DE PRODUCTO', 'DESCRIPCIÓN', 'OBSERVACIONES'];
+          for (let i = 0; i < maxTiers; i++) {
+              headers.push('CANT');
+              headers.push('PRECIO PÚBLICO');
+          }
+          for (let i = 0; i < maxDistTiers; i++) {
+              headers.push('CANT DIST');
+              headers.push('PRECIO MAYORISTA');
+          }
+          csvContent += headers.map(h => `"${h}"`).join(';') + '\n';
+
+          catItems.forEach(item => {
+              let row = [
+                  item.id || '',
+                  item.codigo || '',
+                  item.nombre || '',
+                  item.descripcion || '',
+                  item.observaciones || ''
+              ];
+              
+              const tiers = item.precios_escalonados || [];
+              for (let i = 0; i < maxTiers; i++) {
+                  if (i < tiers.length) {
+                      row.push(tiers[i].cantidad !== undefined ? tiers[i].cantidad : '');
+                      row.push(tiers[i].precio !== undefined ? tiers[i].precio : '');
+                  } else {
+                      row.push(''); row.push('');
+                  }
+              }
+
+              const distTiers = item.precios_distribuidor || [];
+              for (let i = 0; i < maxDistTiers; i++) {
+                  if (i < distTiers.length) {
+                      row.push(distTiers[i].cantidad !== undefined ? distTiers[i].cantidad : '');
+                      row.push(distTiers[i].precio !== undefined ? distTiers[i].precio : '');
+                  } else {
+                      row.push(''); row.push('');
+                  }
+              }
+              
+              csvContent += row.map(c => `"${String(c).replace(/"/g, '""')}"`).join(';') + '\n';
+          });
+          csvContent += '\n';
+      }
+
+      const blob = new Blob([csvContent], { type: 'text/csv;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const link = document.createElement("a");
+      link.setAttribute("href", url);
+      link.setAttribute("download", `Plantilla_Catalogo_${new Date().toISOString().split('T')[0]}.csv`);
+      document.body.appendChild(link);
+      link.click();
+      document.body.removeChild(link);
+  };
+
+  // 🔥 FUNCIÓN PARA IMPORTAR EL CSV CON SOPORTE PARA "UPSERT" 🔥
   const handleCSVUpload = async (e) => {
       const file = e.target.files[0];
       if (!file) return;
@@ -232,7 +377,7 @@ const CatalogPanel = ({ user }) => {
               if (currentRow.length > 0 || currentVal !== '') { currentRow.push(currentVal.trim()); lines.push(currentRow); }
 
               let currentCategory = 'General';
-              let idxNombre = -1, idxCodigo = -1, idxDesc = -1, idxObs = -1;
+              let idxId = -1, idxNombre = -1, idxCodigo = -1, idxDesc = -1, idxObs = -1;
               let cantIndexes = []; let cantDistIndexes = [];
               const productsToInsert = [];
 
@@ -244,6 +389,7 @@ const CatalogPanel = ({ user }) => {
                   if (possibleCategory) { currentCategory = possibleCategory.replace(/CATEGORÍA:/gi, '').replace(/CATEGORIA:/gi, '').replace(/"/g, '').trim(); continue; }
 
                   if (row.some(cell => cell && cell.toUpperCase().includes('NOMBRE DE PRODUCTO'))) {
+                      idxId = row.findIndex(c => c && c.toUpperCase() === 'ID');
                       idxNombre = row.findIndex(c => c && c.toUpperCase().includes('NOMBRE DE PRODUCTO'));
                       idxCodigo = row.findIndex(c => c && c.toUpperCase().includes('PRODUCTO') && !c.toUpperCase().includes('NOMBRE'));
                       idxDesc = row.findIndex(c => c && c.toUpperCase().includes('DESCRIPCI'));
@@ -266,39 +412,43 @@ const CatalogPanel = ({ user }) => {
                       let precios_escalonados = [];
                       cantIndexes.forEach(cantIdx => {
                           let cantStr = row[cantIdx] ? String(row[cantIdx]).trim() : '';
-                          let cantVal = parseFloat(cantStr.replace(/,/g, '.').replace(/[^0-9.]/g, ''));
-                          if (isNaN(cantVal) || cantVal <= 0) cantVal = 1;
+                          let cantVal = parseInt(cantStr.replace(/,/g, '').replace(/[^0-9]/g, ''), 10);
+                          if (isNaN(cantVal) || cantVal < 0) cantVal = 0; 
                           
                           const rawPrecio = row[cantIdx + 1] ? String(row[cantIdx + 1]) : '';
                           const precioLimpio = rawPrecio.replace(/\$/g, '').replace(/\s/g, '').replace(/,/g, '.').trim();
                           const precioVal = Number(precioLimpio);
 
-                          if (precioVal > 0 && !precios_escalonados.some(p => p.cantidad === cantVal)) {
-                              precios_escalonados.push({ cantidad: cantVal, precio: precioVal });
+                          if (precioVal >= 0 && !precios_escalonados.some(p => p.cantidad === cantVal)) {
+                              precios_escalonados.push({ cantidad: cantVal, precio: precioVal, es_base: false });
                           }
                       });
                       precios_escalonados.sort((a,b) => a.cantidad - b.cantidad);
+                      if (precios_escalonados.length > 0) precios_escalonados[0].es_base = true;
+                      
                       const basePrecio = precios_escalonados.length > 0 ? precios_escalonados[0].precio : 0;
-                      const baseMinima = precios_escalonados.length > 0 ? precios_escalonados[0].cantidad : 1;
+                      const baseMinima = precios_escalonados.length > 0 ? precios_escalonados[0].cantidad : 0;
 
                       let precios_distribuidor = [];
                       cantDistIndexes.forEach(cantIdx => {
                           let cantStr = row[cantIdx] ? String(row[cantIdx]).trim() : '';
-                          let cantVal = parseFloat(cantStr.replace(/,/g, '.').replace(/[^0-9.]/g, ''));
-                          if (isNaN(cantVal) || cantVal <= 0) cantVal = 1;
+                          let cantVal = parseInt(cantStr.replace(/,/g, '').replace(/[^0-9]/g, ''), 10);
+                          if (isNaN(cantVal) || cantVal < 0) cantVal = 0; 
                           
                           const rawPrecio = row[cantIdx + 1] ? String(row[cantIdx + 1]) : '';
                           const precioLimpio = rawPrecio.replace(/\$/g, '').replace(/\s/g, '').replace(/,/g, '.').trim();
                           const precioVal = Number(precioLimpio);
 
-                          if (precioVal > 0 && !precios_distribuidor.some(p => p.cantidad === cantVal)) {
-                              precios_distribuidor.push({ cantidad: cantVal, precio: precioVal });
+                          if (precioVal >= 0 && !precios_distribuidor.some(p => p.cantidad === cantVal)) {
+                              precios_distribuidor.push({ cantidad: cantVal, precio: precioVal, es_base: false });
                           }
                       });
                       precios_distribuidor.sort((a,b) => a.cantidad - b.cantidad);
+                      if (precios_distribuidor.length > 0) precios_distribuidor[0].es_base = true;
+                      
                       const basePrecioDist = precios_distribuidor.length > 0 ? precios_distribuidor[0].precio : 0;
 
-                      productsToInsert.push({
+                      let productData = {
                           codigo: idxCodigo !== -1 ? row[idxCodigo] : null,
                           categoria: currentCategory,
                           nombre,
@@ -306,11 +456,17 @@ const CatalogPanel = ({ user }) => {
                           observaciones: idxObs !== -1 ? row[idxObs] : null,
                           precio: basePrecio,
                           venta_minima: baseMinima,
-                          precios_escalonados,
+                          precios_escalonados: precios_escalonados.map(t => ({cantidad: t.cantidad, precio: t.precio})),
                           precio_distribuidor: basePrecioDist,
-                          precios_distribuidor: precios_distribuidor,
+                          precios_distribuidor: precios_distribuidor.map(t => ({cantidad: t.cantidad, precio: t.precio})),
                           es_por_metro: false
-                      });
+                      };
+
+                      if (idxId !== -1 && row[idxId] && row[idxId].trim() !== '') {
+                          productData.id = row[idxId].trim();
+                      }
+
+                      productsToInsert.push(productData);
                   }
               }
 
@@ -318,10 +474,10 @@ const CatalogPanel = ({ user }) => {
                   const chunkSize = 50;
                   for (let i = 0; i < productsToInsert.length; i += chunkSize) {
                       const chunk = productsToInsert.slice(i, i + chunkSize);
-                      const { error } = await supabase.from('catalogo_productos').insert(chunk);
+                      const { error } = await supabase.from('catalogo_productos').upsert(chunk, { onConflict: 'id' });
                       if (error) throw error;
                   }
-                  toast({ title: "✅ Importación Exitosa", description: `Se importaron ${productsToInsert.length} productos sin errores.` });
+                  toast({ title: "✅ Sincronización Exitosa", description: `Se guardaron o actualizaron ${productsToInsert.length} productos sin errores.` });
                   fetchCatalog(activeSearchTerm);
               } else {
                   toast({ title: "Atención", description: "No se encontraron productos para importar. Verifica el formato.", variant: "destructive" });
@@ -341,11 +497,14 @@ const CatalogPanel = ({ user }) => {
             </div>
             {!isReadOnly && (
                 <div className="flex flex-wrap gap-2 w-full md:w-auto">
+                    <Button variant="outline" onClick={handleExportCSV} className="border-green-200 text-green-700 hover:bg-green-50 shadow-sm">
+                        <Download className="h-4 w-4 mr-2" /> Descargar CSV
+                    </Button>
                     <input type="file" accept=".csv" ref={fileInputRef} className="hidden" onChange={handleCSVUpload} />
-                    <Button variant="outline" onClick={() => fileInputRef.current.click()} disabled={uploadingCSV} className="border-purple-200 text-purple-700 hover:bg-purple-50">
+                    <Button variant="outline" onClick={() => fileInputRef.current.click()} disabled={uploadingCSV} className="border-purple-200 text-purple-700 hover:bg-purple-50 shadow-sm">
                         {uploadingCSV ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Upload className="h-4 w-4 mr-2" />} Cargar CSV Múltiple
                     </Button>
-                    <Button onClick={() => handleOpenModal()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2 px-6">
+                    <Button onClick={() => handleOpenModal()} className="bg-purple-600 hover:bg-purple-700 text-white gap-2 px-6 shadow-sm">
                         <Plus className="h-4 w-4" /> Nuevo Producto
                     </Button>
                 </div>
@@ -417,7 +576,7 @@ const CatalogPanel = ({ user }) => {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 align-top text-center">
-                                            <span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100">{item.venta_minima || 1}</span>
+                                            <span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100">{item.venta_minima !== null && item.venta_minima !== undefined ? Math.floor(item.venta_minima) : 0}</span>
                                         </td>
                                         
                                         <td className="px-4 py-3 text-right align-top bg-slate-50/50">
@@ -499,21 +658,6 @@ const CatalogPanel = ({ user }) => {
                                 <h4 className="font-bold text-slate-700 flex items-center gap-2">Configuración de Precios</h4>
                                 
                                 <div className="flex flex-wrap items-center gap-4">
-                                    <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-md border border-red-100">
-                                        <label className="text-xs font-bold text-red-700 flex items-center gap-1"><ShieldAlert className="h-3 w-3"/> Venta Mínima:</label>
-                                        <Input 
-                                           type="number" 
-                                           step={formData.es_por_metro ? "0.01" : "1"} 
-                                           min={formData.es_por_metro ? "0.01" : "1"} 
-                                           value={formData.venta_minima} 
-                                           onChange={e => setFormData({...formData, venta_minima: e.target.value})} 
-                                           onKeyDown={e => {
-                                               if (!formData.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
-                                           }}
-                                           className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" 
-                                        />
-                                    </div>
-                                    
                                     <div className="flex items-center gap-2 bg-purple-50 px-3 py-1.5 rounded-md border border-purple-200">
                                         <label htmlFor="metro-switch" className="text-xs font-bold text-purple-800 cursor-pointer select-none">Se cobra por Metro</label>
                                         <Switch id="metro-switch" checked={formData.es_por_metro} onCheckedChange={(c) => setFormData({...formData, es_por_metro: c})} />
@@ -528,83 +672,70 @@ const CatalogPanel = ({ user }) => {
 
                             <div className={`grid grid-cols-1 ${formData.tienePrecioDistribuidor ? 'md:grid-cols-2' : ''} gap-6 items-start`}>
                                 
+                                {/* 🔥 AHORA LOS PRECIOS SE ARMAN EN LISTA LIBRE Y TÚ ESCOGES EL BASE 🔥 */}
                                 <div className="bg-slate-50 p-4 rounded-lg border border-slate-200">
-                                    <div className="flex items-center gap-2 mb-4 bg-green-50 p-3 rounded-md border border-green-200">
-                                        <div className="flex-1">
-                                            <label className="text-xs font-bold text-green-800 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Base Público (1 Und) *</label>
-                                            <p className="text-[10px] text-green-600">Precio normal de venta</p>
-                                        </div>
-                                        <Input type="number" step="0.01" min="0.01" value={formData.precio} onChange={e => setFormData({...formData, precio: e.target.value})} className="border-green-400 font-bold bg-white w-28 text-right text-green-700 text-lg" />
+                                    <div className="flex items-center gap-2 mb-3">
+                                        <DollarSign className="h-4 w-4 text-green-700"/>
+                                        <span className="text-xs font-bold text-green-800 uppercase">Lista de Precios (Público) *</span>
                                     </div>
                                     
-                                    <div className="border-t border-slate-200 pt-3">
-                                        <span className="text-xs font-bold text-slate-700 mb-2 block">Ofertas por Volumen (Público)</span>
-                                        {formData.precios_escalonados.length > 0 && (
-                                            <div className="space-y-2 mb-3">
-                                                {formData.precios_escalonados.map((tier, index) => (
-                                                    <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-slate-200">
-                                                        <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                        <Input 
-                                                           type="number" 
-                                                           step={formData.es_por_metro ? "0.01" : "1"} 
-                                                           min={formData.es_por_metro ? "0.01" : "1"} 
-                                                           value={tier.cantidad} 
-                                                           onChange={e => updateTier(index, 'cantidad', e.target.value)} 
-                                                           onKeyDown={e => {
-                                                               if (!formData.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
-                                                           }}
-                                                           className="h-8 text-xs font-bold w-20 text-center bg-slate-50"
-                                                        />
-                                                        <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
-                                                        <span className="text-[10px] text-green-700 font-bold ml-auto mr-1">Baja a: $</span>
-                                                        <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateTier(index, 'precio', e.target.value)} className="h-8 text-xs border-green-300 bg-green-50 font-bold text-green-700 w-24 text-right"/>
-                                                        <Button variant="ghost" size="icon" onClick={() => removeTier(index)} className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50 ml-1"><Trash2 className="h-4 w-4"/></Button>
-                                                    </div>
-                                                ))}
+                                    <div className="space-y-2 mb-3">
+                                        {formData.precios_escalonados.map((tier, index) => (
+                                            <div key={index} className={`flex items-center gap-2 p-2 rounded shadow-sm border ${tier.es_base ? 'bg-green-50 border-green-400' : 'bg-white border-slate-200'}`}>
+                                                <label className="flex flex-col items-center justify-center cursor-pointer mr-1 px-1" title="Marcar como Precio Base">
+                                                    <input type="radio" name="base_publico" checked={tier.es_base || false} onChange={() => setBasePublico(index)} className="w-4 h-4 text-green-600 focus:ring-green-500 cursor-pointer" />
+                                                    <span className={`text-[8px] font-bold mt-1 ${tier.es_base ? 'text-green-700' : 'text-slate-400'}`}>BASE</span>
+                                                </label>
+
+                                                <span className="text-[10px] text-slate-500 font-bold w-9">Cant:</span>
+                                                <Input 
+                                                   type="number" step="1" min="0" value={tier.cantidad} 
+                                                   onChange={e => updateTier(index, 'cantidad', e.target.value)} 
+                                                   onKeyDown={e => { if (e.key === '.' || e.key === ',') e.preventDefault(); }}
+                                                   className="h-9 text-sm font-bold w-16 text-center bg-white border-slate-300"
+                                                />
+                                                <span className="text-[10px] text-slate-500 font-bold">unds</span>
+                                                
+                                                <span className="text-[10px] text-green-700 font-bold ml-auto mr-1">Precio: $</span>
+                                                <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateTier(index, 'precio', e.target.value)} className="h-9 text-sm border-green-300 bg-white font-bold text-green-700 w-20 text-right"/>
+                                                <Button variant="ghost" size="icon" onClick={() => removeTier(index)} className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50 ml-1"><Trash2 className="h-4 w-4"/></Button>
                                             </div>
-                                        )}
-                                        <Button type="button" variant="outline" size="sm" onClick={addTier} className="w-full border-dashed border-slate-300 text-slate-600 bg-white hover:bg-slate-100 hover:text-slate-800"><Plus className="h-4 w-4 mr-2" /> Añadir escala de descuento</Button>
+                                        ))}
                                     </div>
+                                    <Button type="button" variant="outline" size="sm" onClick={addTier} className="w-full border-dashed border-slate-300 text-slate-600 bg-white hover:bg-slate-100 hover:text-slate-800"><Plus className="h-4 w-4 mr-2" /> Añadir precio / escala</Button>
                                 </div>
 
                                 {formData.tienePrecioDistribuidor && (
                                     <div className="bg-blue-50/50 p-4 rounded-lg border border-blue-200 animate-in fade-in slide-in-from-right-4">
-                                        <div className="flex items-center gap-2 mb-4 bg-blue-100 p-3 rounded-md border border-blue-300">
-                                            <div className="flex-1">
-                                                <label className="text-xs font-bold text-blue-900 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Base Mayorista (1 Und)</label>
-                                                <p className="text-[10px] text-blue-700">Precio especial distribuidores</p>
-                                            </div>
-                                            <Input type="number" step="0.01" min="0" value={formData.precioDistribuidorBase} onChange={e => setFormData({...formData, precioDistribuidorBase: e.target.value})} className="border-blue-400 font-bold bg-white w-28 text-right text-blue-800 text-lg" />
+                                        <div className="flex items-center gap-2 mb-3">
+                                            <DollarSign className="h-4 w-4 text-blue-700"/>
+                                            <span className="text-xs font-bold text-blue-800 uppercase">Lista de Precios (Mayorista)</span>
                                         </div>
                                         
-                                        <div className="border-t border-blue-200 pt-3">
-                                            <span className="text-xs font-bold text-blue-800 mb-2 block">Ofertas por Volumen (Distribuidor)</span>
-                                            {formData.precios_distribuidor.length > 0 && (
-                                                <div className="space-y-2 mb-3">
-                                                    {formData.precios_distribuidor.map((tier, index) => (
-                                                        <div key={index} className="flex items-center gap-2 bg-white p-2 rounded shadow-sm border border-blue-200">
-                                                            <span className="text-[10px] text-slate-500 font-bold w-12">Desde:</span>
-                                                            <Input 
-                                                               type="number" 
-                                                               step={formData.es_por_metro ? "0.01" : "1"} 
-                                                               min={formData.es_por_metro ? "0.01" : "1"} 
-                                                               value={tier.cantidad} 
-                                                               onChange={e => updateDistTier(index, 'cantidad', e.target.value)} 
-                                                               onKeyDown={e => {
-                                                                   if (!formData.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
-                                                               }}
-                                                               className="h-8 text-xs font-bold w-20 text-center bg-slate-50"
-                                                            />
-                                                            <span className="text-[10px] text-slate-500 font-bold mx-1">und</span>
-                                                            <span className="text-[10px] text-blue-700 font-bold ml-auto mr-1">Baja a: $</span>
-                                                            <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateDistTier(index, 'precio', e.target.value)} className="h-8 text-xs border-blue-300 bg-blue-50 font-bold text-blue-800 w-24 text-right"/>
-                                                            <Button variant="ghost" size="icon" onClick={() => removeDistTier(index)} className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50 ml-1"><Trash2 className="h-4 w-4"/></Button>
-                                                        </div>
-                                                    ))}
+                                        <div className="space-y-2 mb-3">
+                                            {formData.precios_distribuidor.map((tier, index) => (
+                                                <div key={index} className={`flex items-center gap-2 p-2 rounded shadow-sm border ${tier.es_base ? 'bg-blue-50 border-blue-400' : 'bg-white border-slate-200'}`}>
+                                                    <label className="flex flex-col items-center justify-center cursor-pointer mr-1 px-1" title="Marcar como Precio Base">
+                                                        <input type="radio" name="base_dist" checked={tier.es_base || false} onChange={() => setBaseDist(index)} className="w-4 h-4 text-blue-600 focus:ring-blue-500 cursor-pointer" />
+                                                        <span className={`text-[8px] font-bold mt-1 ${tier.es_base ? 'text-blue-700' : 'text-slate-400'}`}>BASE</span>
+                                                    </label>
+
+                                                    <span className="text-[10px] text-slate-500 font-bold w-9">Cant:</span>
+                                                    <Input 
+                                                       type="number" step="1" min="0" value={tier.cantidad} 
+                                                       onChange={e => updateDistTier(index, 'cantidad', e.target.value)} 
+                                                       onKeyDown={e => { if (e.key === '.' || e.key === ',') e.preventDefault(); }}
+                                                       className="h-9 text-sm font-bold w-16 text-center bg-white border-slate-300"
+                                                    />
+                                                    <span className="text-[10px] text-slate-500 font-bold">unds</span>
+                                                    
+                                                    <span className="text-[10px] text-blue-700 font-bold ml-auto mr-1">Precio: $</span>
+                                                    <Input type="number" step="0.01" min="0" value={tier.precio} onChange={e => updateDistTier(index, 'precio', e.target.value)} className="h-9 text-sm border-blue-300 bg-white font-bold text-blue-800 w-20 text-right"/>
+                                                    <Button variant="ghost" size="icon" onClick={() => removeDistTier(index)} className="h-8 w-8 text-red-400 hover:text-red-600 hover:bg-red-50 ml-1"><Trash2 className="h-4 w-4"/></Button>
                                                 </div>
-                                            )}
-                                            <Button type="button" variant="outline" size="sm" onClick={addDistTier} className="w-full border-dashed border-blue-300 text-blue-700 bg-white hover:bg-blue-100 hover:border-blue-400"><Plus className="h-4 w-4 mr-2" /> Añadir escala mayorista</Button>
+                                            ))}
                                         </div>
+                                        <Button type="button" variant="outline" size="sm" onClick={addDistTier} className="w-full border-dashed border-blue-300 text-blue-700 bg-white hover:bg-blue-100 hover:border-blue-400"><Plus className="h-4 w-4 mr-2" /> Añadir precio / escala</Button>
                                     </div>
                                 )}
                             </div>
@@ -614,7 +745,7 @@ const CatalogPanel = ({ user }) => {
                     
                     <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
                         <Button variant="outline" onClick={() => setIsModalOpen(false)} className="bg-white">Cancelar</Button>
-                        <Button onClick={handleSave} disabled={saving} className="bg-purple-600 hover:bg-purple-700 text-white min-w-[160px] shadow-md text-base">{saving ? <Loader2 className="h-5 w-5 animate-spin mr-2"/> : <Save className="h-5 w-5 mr-2"/>} {saving ? 'Guardando...' : 'Guardar Producto'}</Button>
+                        <Button onClick={handleSave} disabled={saving} className="bg-purple-600 hover:bg-purple-700 text-white min-w-[160px] shadow-md text-base">{saving ? <Loader2 className="h-5 w-5 animate-spin mr-2"/> : <Save className="h-5 w-5 mr-2"/>} {editingItem ? 'Actualizar' : 'Guardar Producto'}</Button>
                     </div>
                 </div>
             </div>

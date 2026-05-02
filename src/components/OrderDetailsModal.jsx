@@ -19,22 +19,6 @@ const getPrintDesc = (prod) => {
     return text.trim();
 };
 
-// --- 🔥 FUNCIÓN PARA EXTRAER TODAS LAS FOTOS DE COMPROBANTES 🔥 ---
-const extractImages = (comprobantesObj) => {
-    if (!comprobantesObj) return [];
-    if (Array.isArray(comprobantesObj)) return comprobantesObj;
-    
-    let allImages = [];
-    if (Array.isArray(comprobantesObj.anticipo)) allImages = [...allImages, ...comprobantesObj.anticipo];
-    if (Array.isArray(comprobantesObj.saldo)) allImages = [...allImages, ...comprobantesObj.saldo];
-    if (comprobantesObj.abonos) {
-        Object.values(comprobantesObj.abonos).forEach(arr => {
-            if (Array.isArray(arr)) allImages = [...allImages, ...arr];
-        });
-    }
-    return allImages;
-};
-
 const compressImage = async (file) => {
     return new Promise((resolve) => {
         const reader = new FileReader();
@@ -57,6 +41,20 @@ const compressImage = async (file) => {
             };
         };
     });
+};
+
+// 🔥 COMPONENTE VISUAL PARA MOSTRAR LA FOTO AL LADO (SIN EDICIÓN) 🔥
+const InlineComprobante = ({ items = [], onClickImage }) => {
+    if (!items || items.length === 0) return null;
+    return (
+        <div className="shrink-0 flex flex-wrap gap-2 border-l border-slate-200 pl-4 ml-2 items-center">
+            {items.map((img, i) => (
+                <div key={i} className="w-12 h-12 border border-slate-300 bg-slate-50 rounded-md overflow-hidden shadow-sm cursor-pointer hover:shadow-md transition-all" onClick={() => onClickImage && onClickImage(img.url)} title="Ver comprobante original">
+                    <img src={img.url} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="Comprobante" />
+                </div>
+            ))}
+        </div>
+    );
 };
 
 const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) => {
@@ -240,44 +238,30 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
 };
 
 const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductToggle, isTaskView, onAdvanceWorkflow, onRegressWorkflow, onArchiveOrder, onUpdateOrder, onGenerateInvoice, canEdit, onAbonoOrder }) => {
-  const [localOrder, setLocalOrder] = useState(order); 
   const [previewImage, setPreviewImage] = useState(null);
   const [printType, setPrintType] = useState('sri'); 
   const { toast } = useToast();
-  
   const [localProducts, setLocalProducts] = useState([]);
   const [localVendedor, setLocalVendedor] = useState('');
+  
   const [localImages, setLocalImages] = useState([]); 
   const [loadingImages, setLoadingImages] = useState(false); 
   const [isAdvancing, setIsAdvancing] = useState(false);
 
-  const [localComprobantes, setLocalComprobantes] = useState([]);
+  // 🔥 ESTADO DE COMPROBANTES DE LA ORDEN 🔥
+  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
   const [loadingComprobantes, setLoadingComprobantes] = useState(false);
-  const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
   
   const showFinancials = user?.role !== 'Producción'; 
   const isAdmin = user?.role === 'Administrador';
 
   useEffect(() => {
     if (order) {
-      setLocalOrder(order);
       setLocalProducts(order.productos || []);
       setLocalVendedor(order.vendedor || '');
       setIsAdvancing(false); 
       setPreviewImage(null);
       document.body.style.overflow = 'hidden';
-
-      const channel = supabase.channel(`modal_orden_${order.id}`)
-        .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'ordenes', filter: `id=eq.${order.id}` }, (payload) => {
-            setLocalOrder(prev => ({ ...prev, ...payload.new }));
-            if (payload.new.productos) setLocalProducts(payload.new.productos);
-            if (payload.new.vendedor) setLocalVendedor(payload.new.vendedor);
-            
-            if (payload.new.comprobantes !== undefined) {
-                setLocalComprobantes(extractImages(payload.new.comprobantes));
-            }
-        })
-        .subscribe();
 
       const fetchImages = async () => {
           setLoadingImages(true);
@@ -294,52 +278,30 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
           setLoadingComprobantes(true);
           try {
               const { data } = await supabase.from('ordenes').select('comprobantes').eq('id', order.id).single();
-              setLocalComprobantes(extractImages(data?.comprobantes));
-          } catch (err) { setLocalComprobantes([]); } 
+              if (data && data.comprobantes) {
+                  // Mapeo seguro del objeto estructurado de comprobantes
+                  if (Array.isArray(data.comprobantes)) {
+                      setComprobantesData({ anticipo: data.comprobantes, saldo: [], abonos: {} });
+                  } else {
+                      setComprobantesData({
+                          anticipo: data.comprobantes.anticipo || [],
+                          saldo: data.comprobantes.saldo || [],
+                          abonos: data.comprobantes.abonos || {}
+                      });
+                  }
+              } else {
+                  setComprobantesData({ anticipo: [], saldo: [], abonos: {} });
+              }
+          } catch (err) { setComprobantesData({ anticipo: [], saldo: [], abonos: {} }); } 
           finally { setLoadingComprobantes(false); }
       };
 
       fetchImages(); 
       fetchComprobantes();
-      
-      return () => { 
-          supabase.removeChannel(channel);
-          document.body.style.overflow = 'unset'; 
-      };
     }
-  }, [order?.id, showFinancials]);
-
-  const handleAddComprobantes = async (files) => {
-      setIsProcessingComprobantes(true);
-      const newImages = [];
-      for (const file of files) {
-          if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
-          try {
-              const compressed = await compressImage(file);
-              newImages.push(compressed);
-          } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
-      }
-      const updatedComprobantes = [...localComprobantes, ...newImages];
-      setLocalComprobantes(updatedComprobantes);
-      
-      try {
-          await supabase.from('ordenes').update({ comprobantes: updatedComprobantes }).eq('id', order.id);
-          toast({title: "Comprobante de pago guardado"});
-      } catch(e) { toast({title: "Error al guardar en base de datos", variant: "destructive"}); }
-      setIsProcessingComprobantes(false);
-  };
-
-  const removeComprobante = async (index) => {
-      if (!isAdmin && user.role !== 'Contabilidad') return;
-      const updated = localComprobantes.filter((_, i) => i !== index);
-      setLocalComprobantes(updated);
-      try {
-          await supabase.from('ordenes').update({ comprobantes: updated }).eq('id', order.id);
-      } catch(e) {}
-  };
-
-  const onDropComprobantes = useCallback(acceptedFiles => { handleAddComprobantes(acceptedFiles); }, [localComprobantes]);
-  const { getRootProps: getRootPropsComp, getInputProps: getInputPropsComp } = useDropzone({ onDrop: onDropComprobantes, accept: {'image/*': []}, disabled: isProcessingComprobantes || (!isAdmin && user.role !== 'Contabilidad' && user.role !== 'Vendedor') });
+    
+    return () => { document.body.style.overflow = 'unset'; };
+  }, [order, showFinancials]);
 
   const validSellers = useMemo(() => removeDuplicateUsers(getValidSellers(staffUsers)), [staffUsers]);
   const allProductsFinished = useMemo(() => {
@@ -576,70 +538,64 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             <h3 className="font-bold text-slate-700">Pagos y Comprobantes</h3>
                         </div>
 
-                        <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm">
-                                <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Anticipo Original</span><span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span></div>
-                                <div className="space-y-1 text-xs text-slate-600">
-                                     <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
-                                     {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
-                                     {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
+                        <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                            
+                            {/* 🔥 TARJETA DE ANTICIPO 🔥 */}
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
+                                <div className="flex-1 w-full">
+                                    <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
+                                        <span className="text-blue-800 font-bold text-sm">Anticipo Original</span>
+                                        <span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span>
+                                    </div>
+                                    <div className="space-y-1 text-xs text-slate-600">
+                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
+                                         {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
+                                         {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
+                                    </div>
                                 </div>
+                                <InlineComprobante items={comprobantesData.anticipo || []} onClickImage={setPreviewImage} />
                             </div>
-                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col justify-center items-center">
-                                <span className="text-blue-800 font-bold text-sm mb-1">Retención</span><span className="text-2xl font-bold text-slate-800">{Number(order.retencion || 0).toFixed(2)}</span>
-                            </div>
-                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex flex-col relative pb-12">
-                                <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2"><span className="text-blue-800 font-bold text-sm">Saldo Pendiente (Real)</span><span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span></div>
-                                <div className="space-y-1 text-xs text-slate-600 mb-2">
-                                     <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
-                                     {isCredito && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>)}
-                                     {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
+                            
+                            {/* 🔥 TARJETA DE SALDO 🔥 */}
+                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
+                                <div className="flex-1 w-full">
+                                    <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
+                                        <span className="text-blue-800 font-bold text-sm">Saldo Pendiente (Real)</span>
+                                        <span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span>
+                                    </div>
+                                    <div className="space-y-1 text-xs text-slate-600 mb-2">
+                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
+                                         {isCredito && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>)}
+                                         {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
+                                    </div>
                                 </div>
+                                <InlineComprobante items={comprobantesData.saldo || []} onClickImage={setPreviewImage} />
                             </div>
                         </div>
 
+                        {/* 🔥 TARJETAS DE ABONOS EXTRAS 🔥 */}
                         {order.abonos && order.abonos.length > 0 && (
-                            <div className="mt-4 col-span-1 md:col-span-3">
-                                <h4 className="font-bold text-red-700 text-xs mb-2 uppercase border-b border-red-200 pb-1">Abonos Extras Registrados</h4>
-                                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-4 gap-3">
+                            <div className="mt-6 border-t border-slate-300 pt-4 animate-in fade-in slide-in-from-top-4 duration-500">
+                                <h4 className="font-bold text-red-700 text-xs mb-3 uppercase border-b border-red-200 pb-1">Abonos Extras Registrados</h4>
+                                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                                     {order.abonos.map((a, i) => (
-                                        <div key={i} className="bg-red-50 border border-red-200 rounded p-2 flex justify-between items-center shadow-sm">
-                                            <div>
-                                                <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
-                                                <div className="text-xs font-bold text-red-700 uppercase">{a.metodoPago || a.metodo_pago}</div>
+                                        <div key={i} className="bg-red-50/50 border border-red-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
+                                            <div className="flex-1 w-full">
+                                                <div className="flex justify-between items-start mb-1">
+                                                    <div>
+                                                        <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
+                                                        <div className="text-xs font-bold text-red-700 uppercase">{a.metodoPago || a.metodo_pago}</div>
+                                                    </div>
+                                                    <div className="font-black text-red-600 text-lg">+{formatCurrency(a.monto)}</div>
+                                                </div>
+                                                {a.nota && <div className="text-[10px] text-slate-600 italic bg-white/50 p-1 rounded inline-block">{a.nota}</div>}
                                             </div>
-                                            <div className="font-black text-red-600 text-sm">
-                                                +{formatCurrency(a.monto)}
-                                            </div>
+                                            <InlineComprobante items={(comprobantesData.abonos || {})[i] || []} onClickImage={setPreviewImage} />
                                         </div>
                                     ))}
                                 </div>
                             </div>
                         )}
-
-                        {/* 🔥 SECCIÓN DE FOTOS DE TRANSFERENCIAS (100% VISUAL) 🔥 */}
-                        <div className="mt-6 border-t border-slate-200 pt-4">
-                            <h4 className="font-bold text-slate-700 mb-3 flex items-center gap-2">Comprobantes de Transferencia / Depósito</h4>
-                            <div className="border border-slate-300 p-4 rounded-md bg-white flex flex-col md:flex-row gap-4 items-start">
-                                <div className="min-h-[80px] flex-1 flex flex-wrap gap-4">
-                                   {localComprobantes.map((img, i) => (
-                                      <div key={i} className="relative group w-20 h-20 border border-slate-300 bg-slate-50 rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => setPreviewImage(img.url)}>
-                                         <img src={img.url} alt={img.name || 'Comprobante'} className="w-full h-full object-cover" />
-                                      </div>
-                                   ))}
-                                   {loadingComprobantes || isProcessingComprobantes ? (
-                                       <div className="w-20 h-20 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
-                                           <Loader2 className="h-5 w-5 text-blue-500 animate-spin"/>
-                                       </div>
-                                   ) : localComprobantes.length === 0 && (
-                                       <div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-2">
-                                          <FileText className="h-6 w-6 mb-1 opacity-50" />
-                                          <span>Sin comprobantes adjuntos</span>
-                                       </div>
-                                   )}
-                                </div>
-                            </div>
-                        </div>
                     </div>
                 )}
 
@@ -657,7 +613,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                            {localImages.length > 0 ? (
                                localImages.map((img, index) => (
                                    <div key={index} className="relative group cursor-pointer" onClick={() => setPreviewImage(img.url)}>
-                                       <img src={img.url} alt={img.name || `Arte ${index + 1}`} className="h-40 w-40 object-cover shadow-md rounded border border-slate-300 transition-transform hover:scale-105" />
+                                       <img src={img.url} alt={`Arte ${index + 1}`} className="h-40 w-40 object-cover shadow-md rounded border border-slate-300 transition-transform hover:scale-105" />
                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center"><Search className="text-white h-6 w-6" /></div>
                                    </div>
                                ))
@@ -679,8 +635,8 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                    onClick={async () => { 
                                        setIsAdvancing(true); 
                                        try { 
-                                           await onRegressWorkflow(order); 
                                            onClose(); 
+                                           await onRegressWorkflow(order); 
                                        } catch(e) {
                                            setIsAdvancing(false);
                                        } 
@@ -706,15 +662,30 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                            size="lg" disabled={isAdvancing}
                                            className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3 disabled:opacity-75 disabled:hover:scale-100 disabled:cursor-wait"
                                            onClick={async () => { 
-                                               setIsAdvancing(true); 
-                                               try { 
-                                                   await onAdvanceWorkflow(order); 
-                                                   onClose(); 
-                                               } catch (error) { setIsAdvancing(false); } 
+                                               if (workflowConfig.nextStatus === 'FINALIZADA') {
+                                                   const pAnticipo = (order.formaPagoAnticipo || order.forma_pago_anticipo || '').toLowerCase();
+                                                   const pSaldo = (order.formaPagoSaldo || fin.formaPagoSaldo || '').toLowerCase();
+                                                   
+                                                   const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque');
+                                                   
+                                                   let isTransfer = checkTransfer(pAnticipo) || checkTransfer(pSaldo);
+                                                   if (!isTransfer && order.abonos) {
+                                                       isTransfer = order.abonos.some(a => checkTransfer(a.metodoPago || a.metodo_pago));
+                                                   }
+                                                                      
+                                                   if (isTransfer && (!comprobantesData.anticipo || comprobantesData.anticipo.length === 0) && (!comprobantesData.saldo || comprobantesData.saldo.length === 0) && Object.keys(comprobantesData.abonos || {}).length === 0) {
+                                                       toast({title: "Comprobante Requerido", description: "Faltan subir fotos de transferencias, depósitos o cheques. Haga clic en Editar Orden para adjuntarlos.", variant: "destructive"});
+                                                       setIsAdvancing(false);
+                                                       return; 
+                                                   }
+                                               }
+
+                                               onClose(); 
+                                               await onAdvanceWorkflow(order); 
                                            }}
                                          >
-                                           {isAdvancing ? 'Pasando orden...' : workflowConfig.text}
-                                           {isAdvancing ? <Loader2 className="h-6 w-6 animate-spin" /> : <ArrowRightCircle className="h-6 w-6" />}
+                                           {workflowConfig.text}
+                                           <ArrowRightCircle className="h-6 w-6" />
                                          </Button>
                                     )}
                                     <span className="text-xs text-slate-500 font-medium px-2">
@@ -728,7 +699,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 
                 {canArchive && (
                    <div className="mt-8 pt-6 border-t border-slate-200 sticky bottom-0 bg-white/95 backdrop-blur py-4 -mx-6 px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] flex justify-end">
-                      <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3" onClick={() => { onArchiveOrder(order); onClose(); }}>ARCHIVAR Orden<Archive className="h-6 w-6" /></Button>
+                      <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3" onClick={() => { onClose(); onArchiveOrder(order); }}>ARCHIVAR Orden<Archive className="h-6 w-6" /></Button>
                    </div>
                 )}
             </div>
@@ -810,7 +781,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                   </tr>
                               </thead>
                               <tbody>
-                                  {localProducts.map((prod, idx) => (
+                                  {(order.productos || []).map((prod, idx) => (
                                       <tr key={idx} className="border-b border-black">
                                           <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
                                           <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
@@ -949,7 +920,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 </tr>
                             </thead>
                             <tbody>
-                                {localProducts.map((prod, idx) => (
+                                {(order.productos || []).map((prod, idx) => (
                                     <tr key={idx} className="border-b border-black">
                                         <td className="border-r-2 border-black p-2 text-center font-bold text-base align-middle">{prod.cantidad}</td>
                                         <td className="border-r-2 border-black p-2 uppercase font-medium whitespace-pre-wrap text-xs align-top">
