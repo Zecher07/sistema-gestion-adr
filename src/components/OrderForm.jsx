@@ -95,7 +95,6 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
-// 🔥 COMPONENTE PARA GESTIONAR FOTOS DE PAGOS INDIVIDUALES 🔥
 const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false }) => {
     const onDrop = useCallback(files => onAdd(files, type, abonoIndex), [onAdd, type, abonoIndex]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || disabled });
@@ -416,10 +415,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   };
 
   const handleCatalogSelect = (item) => {
-    // Si no tiene venta mínima configurada, asumimos 1 por defecto. Pero si es 0, lo respetamos.
     const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
     
-    const computedPrice = getPriceForQty(minQty, {
+    // 🔥 SI ES POR METRO SE DEJA VACÍO EL PRECIO 🔥
+    const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, {
         precioBaseOriginal: Number(item.precio) || 0,
         precios_escalonados: item.precios_escalonados || []
     });
@@ -440,7 +439,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
             es_por_metro: item.es_por_metro || false,
-            total: computedPrice * minQty
+            total: item.es_por_metro ? 0 : computedPrice * minQty
         };
 
         if (emptyIndex !== -1) {
@@ -480,7 +479,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
       
-      const computedPrice = getPriceForQty(minQty, {
+      // 🔥 SI ES POR METRO SE DEJA VACÍO EL PRECIO 🔥
+      const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, {
           precioBaseOriginal: Number(product.precio) || 0,
           precios_escalonados: product.precios_escalonados || []
       });
@@ -500,7 +500,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               venta_minima: minQty,
               cantidad: minQty,
               es_por_metro: product.es_por_metro || false,
-              total: minQty * computedPrice
+              total: product.es_por_metro ? 0 : minQty * computedPrice
           };
           if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
           return { ...prev, productos: newProducts };
@@ -518,13 +518,19 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             let qty = parseInt(value, 10);
             if (isNaN(qty)) qty = 0;
             item.cantidad = qty;
-            item.precioUnitario = getPriceForQty(qty, item);
+            // Solo se autoactualiza el precio si NO es por metro
+            if (!item.es_por_metro) {
+                item.precioUnitario = getPriceForQty(qty, item);
+            }
         }
 
         if (field === 'cantidad' || field === 'precioUnitario') {
             const qty = item.cantidad !== undefined ? parseInt(item.cantidad, 10) : 0;
             const price = Number(item.precioUnitario) || 0;
-            item.total = qty * price;
+            
+            // 🔥 SI ES POR METRO Y CANTIDAD ES 0, SE COBRA EL PRECIO TAL CUAL 🔥
+            const multiplier = (item.es_por_metro && qty === 0) ? 1 : qty;
+            item.total = multiplier * price;
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
@@ -536,7 +542,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     });
   };
 
-  // 🔥 CANTIDADES SIEMPRE ENTERAS Y ACEPTAN CERO PERFECTAMENTE 🔥
   const handleQuantityBlur = (index, value) => {
       const item = formData.productos[index];
       if (!item.descripcion) return;
@@ -544,17 +549,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       const min = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
       let qty = parseInt(value, 10);
       if (isNaN(qty)) qty = 0;
-
-      // Si el número es 0 y la venta mínima es 0, está todo perfecto.
-      // Solo lanzamos advertencia si pone un número menor al mínimo permitido (ej: mínimo 5 y pone 2).
-      // PERO si pone 0 y la venta mínima es mayor a 0, aquí sí hay un conflicto lógico. 
-      // Por defecto, asumiré que si pones 0, quieres dejarlo en 0 independientemente de la venta mínima.
       
       if (qty > 0 && min > 0 && qty < min) {
           toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
           updateProduct(index, 'cantidad', min);
       } else {
-          // Aseguramos que se guarde como entero y permitimos el 0
           updateProduct(index, 'cantidad', qty);
       }
   };
@@ -792,6 +791,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setLoading(false); return;
     }
 
+    // 🔥 VALIDACIÓN: SI ES POR METRO, DEBE TENER UN PRECIO MAYOR A 0 🔥
+    const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.precioUnitario === '' || Number(p.precioUnitario) <= 0));
+    if (invalidMetroProducts.length > 0) {
+      toast({ title: "Precio Requerido", description: "Debe colocar un precio manual para los productos que son por metro.", variant: "destructive" });
+      setLoading(false); return;
+    }
+
     if (financials.saldoPendiente < -0.02) {
         toast({ title: "Error en montos", description: "La suma de anticipos y abonos supera el total.", variant: "destructive" });
         setLoading(false); return;
@@ -909,7 +915,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     return 'Automático'; 
   };
 
-  const canCancelOrder = initialData && initialData.id && initialData.status !== 'ANULADA';
+  const canCancelOrder = useMemo(() => {
+      if (!initialData || !initialData.id || initialData.status === 'ANULADA') return false;
+      if (isAdmin) return true;
+      if (currentUser?.role === 'Vendedor') {
+          return (initialData.vendedor || '').includes(currentUser?.name) && initialData.status === 'VENTAS';
+      }
+      return false;
+  }, [initialData, isAdmin, currentUser]);
 
   return (
     <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-white shadow-xl rounded-lg flex flex-col h-full border border-slate-300 relative">
@@ -1105,7 +1118,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              </td>
                              
                              <td className="py-2 px-2 relative align-top pt-4">
-                                 {/* 🔥 AHORA SOLO ENTEROS, BLOQUEA PUNTOS/COMAS Y ACEPTA 0 🔥 */}
                                  <input 
                                     type="number" 
                                     step="1" 
@@ -1134,7 +1146,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              
                              <td className="py-2 px-2 text-right font-bold text-slate-800 align-top pt-5 bg-slate-50/50">
                                  $ {Number(row.total || 0).toFixed(2)}
-                                 {row.es_por_metro && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio fijo por rango">(Fijo)</div>}
+                                 {(row.es_por_metro && row.cantidad === 0) && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio base por cantidad 0">(Precio Base)</div>}
                              </td>
                              <td className="py-2 px-1 text-center align-top pt-4">{!isReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
                           </tr>
@@ -1239,7 +1251,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                        </div>
                    )}
                    
-                   {/* 🔥 COMPROBANTE ANTICIPO 🔥 */}
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <InlineComprobanteEdit 
                            type="anticipo" 
@@ -1284,7 +1295,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         </div>
                         
                         <div className="flex items-center gap-2">
-                           <label className="text-xs font-bold w-20">Forma Saldo:</label>
+                           <label className="text-xs font-bold w-20">Condición Saldo:</label>
                            <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})} disabled={mode==='read_only'}>
                                {PAYMENT_METHODS.map(m => (
                                     <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
@@ -1293,17 +1304,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                ))}
                            </select>
                         </div>
-
-                        {/* 🔥 COMPROBANTE SALDO 🔥 */}
-                        {requiresComprobante(formData.formaPagoSaldo) && (
-                           <InlineComprobanteEdit 
-                               type="saldo" 
-                               items={comprobantesData.saldo || []} 
-                               onAdd={handleAddComprobantes} 
-                               onRemove={handleRemoveComprobante} 
-                               isProcessing={isProcessingComprobantes} 
-                           />
-                        )}
                         
                         {formData.formaPagoSaldo === 'Crédito' && (
                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
@@ -1313,11 +1313,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         )}
 
                         <div className="flex items-center gap-2"><label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label><input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} /></div>
+                        
+                        <div className="bg-orange-50 border border-orange-200 rounded p-2 mt-2 animate-in fade-in">
+                           <p className="text-[10px] text-orange-800 font-medium leading-snug">ℹ️ Si el cliente va a cancelar este saldo <b>ahora mismo</b>, por favor utiliza la opción de <b>"Añadir Abono"</b> en la sección de abajo.</p>
+                        </div>
                     </div>
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
              </div>
 
-             {/* 🔥 SECCIÓN DE ABONOS EXTRAS EN EL FORMULARIO 🔥 */}
              <div className="mt-4 border-t border-slate-200 pt-4">
                  <div className="flex justify-between items-center mb-3">
                      <h4 className="text-xs font-bold uppercase text-slate-500 tracking-wider">Abonos Extras Registrados</h4>
@@ -1341,7 +1344,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                      </div>
                                  </div>
                                  
-                                 {/* 🔥 COMPROBANTE ABONOS 🔥 */}
                                  {requiresComprobante(abono.metodoPago || abono.metodo_pago) && (
                                      <InlineComprobanteEdit 
                                          type="abono" 
@@ -1391,7 +1393,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
       </div>
 
-      {/* 🔥 MODAL INTERNO PARA AÑADIR ABONO 🔥 */}
       {isAbonoModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
@@ -1482,7 +1483,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       )}
 
-      {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}
       {isCatalogOpen && (
         <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
             <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">

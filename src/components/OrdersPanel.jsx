@@ -1,3 +1,4 @@
+// src/components/OrdersPanel.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Eye, Edit, Trash2, CreditCard, 
@@ -48,7 +49,6 @@ const OrdersPanel = ({
   const [startDate, setStartDate] = useState('');
   const [endDate, setEndDate] = useState('');
   
-  // 🔥 ESTADO DE ORDENAMIENTO 🔥
   const [sortConfig, setSortConfig] = useState({ key: 'createdAt', direction: 'desc' });
 
   const [currentPage, setCurrentPage] = useState(1);
@@ -91,25 +91,30 @@ const OrdersPanel = ({
 
   const isAdmin = user.role === 'Administrador';
 
-  // 🔥 CONFIGURACIÓN DE VISIBILIDAD DE BOTONES 🔥
   const actionConfig = useMemo(() => {
     return {
       showView: true,
       showEdit: true,
-      showClone: true, // ✔️ Ahora TODOS pueden clonar
+      showClone: true, 
       showPayment: isAdmin,
       showArchive: isAdmin,
       showUnarchive: isAdmin
     };
   }, [isAdmin]);
 
-  // 🔥 FUNCIÓN PARA VERIFICAR SI EL USUARIO ES DUEÑO DE LA ORDEN 🔥
   const canModify = (order) => {
       if (isAdmin) return true;
       return (order.vendedor || '').includes(user?.name);
   };
 
-  // 🔥 FUNCIÓN PARA CLONAR LIMPIANDO LA INFORMACIÓN FINANCIERA 🔥
+  const canCancel = (order) => {
+      if (isAdmin) return true;
+      if (user?.role === 'Vendedor') {
+          return (order.vendedor || '').includes(user?.name) && order.status === 'VENTAS';
+      }
+      return false;
+  };
+
   const handleCloneClick = (order) => {
       const clonedOrder = {
           ...order,
@@ -118,11 +123,11 @@ const OrdersPanel = ({
           order_number: null,
           created_at: null,
           createdAt: null,
-          status: 'BORRADOR', // Se trata como orden nueva
+          status: 'BORRADOR', 
           anticipo: 0,
           retencion: 0,
           abonos: [],
-          comprobantes: { anticipo: [], saldo: [], abonos: {} }, // Limpiamos fotos de pago
+          comprobantes: { anticipo: [], saldo: [], abonos: {} }, 
           formaPagoAnticipo: 'Efectivo',
           forma_pago_anticipo: 'Efectivo',
           formaPagoSaldo: 'No aplica',
@@ -135,7 +140,7 @@ const OrdersPanel = ({
           descuentoMonto: 0,
           financials: {
               ...(order.financials || {}),
-              saldo: order.financials?.total || 0, // El saldo vuelve a ser el total
+              saldo: order.financials?.total || 0, 
               anticipo: 0,
               retencion: 0,
               descuentoVal: 0,
@@ -312,7 +317,6 @@ const OrdersPanel = ({
   };
 
   const deleteOrderData = getOrderToDelete();
-  const isPermanentDelete = false; 
 
   const handleConfirmDelete = async () => {
     if (!cancelReason.trim()) {
@@ -580,10 +584,8 @@ const OrdersPanel = ({
                             </Button>
                           )}
 
-                          {/* 🔥 OCULTAMOS ACCIONES SI LA ORDEN ESTÁ ANULADA 🔥 */}
                           {!isAnulada && (
                               <>
-                                {/* 🔥 VALIDAMOS QUE SOLO EL DUEÑO O ADMIN PUEDA EDITAR/ABONAR/ANULAR 🔥 */}
                                 {actionConfig.showEdit && canEdit(order.status) && canModify(order) && (
                                   <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-7 w-7 text-amber-600 hover:bg-amber-50" title="Editar orden">
                                     <Edit className="h-3.5 w-3.5" />
@@ -602,7 +604,8 @@ const OrdersPanel = ({
                                   </Button>
                                 )}
                                 
-                                {canModify(order) && (
+                                {/* 🔥 AHORA SOLO ANULA SI ESTÁ EN VENTAS 🔥 */}
+                                {canCancel(order) && (
                                     <Button 
                                       variant="ghost" 
                                       size="icon" 
