@@ -388,7 +388,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const isArchivada = order.status === 'ARCHIVADA';
   const isFinalizada = order.status === 'FINALIZADA';
   const canArchive = isAdmin && isFinalizada;
-  const canInvoice = !isAnulada && (user.role === 'Vendedor' || user.role === 'Contabilidad' || user.role === 'Administrador') && ['VENTAS', 'PRODUCCION', 'CONTABILIDAD', 'FINALIZADA'].includes(order.status);
   
   const getWorkflowButtonConfig = () => {
      const isVC = order.tipoOrden && order.tipoOrden.includes('(VC)');
@@ -439,10 +438,15 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     <span className="cursor-not-allowed opacity-50 flex items-center gap-1 font-mono text-sm">0000000 {' - >'}</span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
+                    
+                    {/* 🔥 BOTÓN FACTURA OCULTADO PARA FUTURO USO 🔥 
                     {canInvoice && onGenerateInvoice && <Button size="sm" onClick={() => onGenerateInvoice(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2"><FileText className="h-4 w-4" /> Generar Factura</Button>}
+                    */}
+                    
                     {canEdit && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2" onClick={() => onUpdateOrder && onUpdateOrder()}><Edit2 className="h-4 w-4" /> Editar Orden</Button>}
                     
                     <div className="flex bg-slate-100 rounded-md p-1 border border-slate-200">
+                        {/* 🔥 BOTÓN SRI OCULTADO PARA FUTURO USO 🔥
                         {showFinancials && (
                             <>
                                 <Button size="sm" variant="ghost" className="text-blue-700 hover:bg-blue-200 hover:text-blue-800 gap-2 font-bold" onClick={() => handlePrint('sri')}>
@@ -451,6 +455,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 <div className="w-px bg-slate-300 mx-1"></div>
                             </>
                         )}
+                        */}
                         <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-200 hover:text-amber-800 gap-2 font-bold" onClick={() => handlePrint('produccion')}>
                             <Printer className="h-4 w-4" /> Prod
                         </Button>
@@ -540,7 +545,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             
-                            {/* 🔥 TARJETA DE ANTICIPO 🔥 */}
                             <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
                                 <div className="flex-1 w-full">
                                     <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
@@ -548,7 +552,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                         <span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span>
                                     </div>
                                     <div className="space-y-1 text-xs text-slate-600">
-                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
+                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
                                          {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
                                          {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
                                     </div>
@@ -556,7 +560,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 <InlineComprobante items={comprobantesData.anticipo || []} onClickImage={setPreviewImage} />
                             </div>
                             
-                            {/* 🔥 TARJETA DE SALDO 🔥 */}
                             <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
                                 <div className="flex-1 w-full">
                                     <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
@@ -569,11 +572,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                          {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
                                     </div>
                                 </div>
-                                <InlineComprobante items={comprobantesData.saldo || []} onClickImage={setPreviewImage} />
                             </div>
                         </div>
 
-                        {/* 🔥 TARJETAS DE ABONOS EXTRAS 🔥 */}
                         {order.abonos && order.abonos.length > 0 && (
                             <div className="mt-6 border-t border-slate-300 pt-4 animate-in fade-in slide-in-from-top-4 duration-500">
                                 <h4 className="font-bold text-red-700 text-xs mb-3 uppercase border-b border-red-200 pb-1">Abonos Extras Registrados</h4>
@@ -613,7 +614,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                            {localImages.length > 0 ? (
                                localImages.map((img, index) => (
                                    <div key={index} className="relative group cursor-pointer" onClick={() => setPreviewImage(img.url)}>
-                                       <img src={img.url} alt={`Arte ${index + 1}`} className="h-40 w-40 object-cover shadow-md rounded border border-slate-300 transition-transform hover:scale-105" />
+                                       <img src={img.url} alt={img.name || `Arte ${index + 1}`} className="h-40 w-40 object-cover shadow-md rounded border border-slate-300 transition-transform hover:scale-105" />
                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center"><Search className="text-white h-6 w-6" /></div>
                                    </div>
                                ))
@@ -622,7 +623,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     )}
                 </div>
 
-                {/* 🔥 BOTONES DE ACCIÓN: AVANZAR Y REVERTIR 🔥 */}
                 {showWorkflowButton && (
                     <div className="mt-8 pt-6 border-t border-slate-200 sticky bottom-0 bg-white/95 backdrop-blur py-4 -mx-6 px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] flex justify-between items-center">
                          
@@ -699,7 +699,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 
                 {canArchive && (
                    <div className="mt-8 pt-6 border-t border-slate-200 sticky bottom-0 bg-white/95 backdrop-blur py-4 -mx-6 px-6 shadow-[0_-4px_6px_-1px_rgba(0,0,0,0.1)] flex justify-end">
-                      <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3" onClick={() => { onClose(); onArchiveOrder(order); }}>ARCHIVAR Orden<Archive className="h-6 w-6" /></Button>
+                      <Button size="lg" className="bg-blue-600 hover:bg-blue-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3" onClick={() => { onArchiveOrder(order); onClose(); }}>ARCHIVAR Orden<Archive className="h-6 w-6" /></Button>
                    </div>
                 )}
             </div>
@@ -727,7 +727,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 }
             `}</style>
 
-            {/* ---------------- VISTA SRI (FACTURA) ---------------- */}
             {printType === 'sri' && (
                 <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
                       <div className="grid grid-cols-2 gap-4 mb-4 w-full">
@@ -802,7 +801,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                   <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
                                       <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
                                       <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
-                                      <span className="font-bold">Vendedor:</span> <span className="uppercase">{localVendedor || 'Sistema'}</span>
+                                      <span className="font-bold">Vendedor:</span> <span className="uppercase">{order.vendedor || 'Sistema'}</span>
                                       <span className="font-bold">F. Entrega:</span> <span>{order.fechaEntrega || order.fecha_entrega ? (order.fechaEntrega || order.fecha_entrega).split('T')[0] : 'Por Definir'}</span>
                                       <span className="font-bold">N° Proforma:</span> <span>{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span>
                                       <span className="font-bold">N° Factura:</span> <span>{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span>
@@ -879,7 +878,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 </div>
             )}
 
-            {/* ---------------- VISTA PRODUCCIÓN ---------------- */}
             {printType === 'produccion' && (
                 <div className="w-full max-w-[850px] mx-auto p-4 md:p-6 font-sans text-black">
                     <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-4">
@@ -899,7 +897,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                              <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
                              
                              <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                             <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{localVendedor || 'SISTEMA'}</span></div>
+                             <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
                              
                              <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
                              <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
@@ -940,7 +938,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
                     <div className="flex border-2 border-black text-xs bg-white mb-8" style={{ pageBreakInside: 'avoid' }}>
                         
-                        {/* ABONOS Y SALDOS DETALLADOS */}
                         <div className="flex-1 border-r-2 border-black p-4 flex flex-col justify-center gap-3">
                             <div className="flex justify-between items-center border-b border-dashed border-gray-400 pb-1">
                                 <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
@@ -960,7 +957,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             </div>
                         </div>
 
-                        {/* DESGLOSE FINANCIERO */}
                         <div className="w-[40%] flex flex-col">
                             <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
                                 <span className="font-bold">SUBTOTAL</span>
