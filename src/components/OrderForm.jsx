@@ -3,7 +3,7 @@ import { motion } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Calendar as CalendarIcon, User, Search, Calculator, 
-  FileText, Loader2, UserPlus, FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart, DollarSign, Image as ImageIcon
+  FileText, Loader2, UserPlus, FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart, DollarSign, Image as ImageIcon, AlertOctagon
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -128,9 +128,11 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
 
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
   const { toast } = useToast();
-  const isReadOnly = mode === 'payment_only';
   const isAdmin = currentUser?.role === 'Administrador';
   
+  const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
+  const isEffectivelyReadOnly = mode === 'payment_only' || mode === 'read_only' || isPastPaso1;
+
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
 
@@ -417,8 +419,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
     
-    // 🔥 SI ES POR METRO SE DEJA VACÍO EL PRECIO 🔥
-    const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, {
+    const computedPrice = getPriceForQty(minQty, {
         precioBaseOriginal: Number(item.precio) || 0,
         precios_escalonados: item.precios_escalonados || []
     });
@@ -439,7 +440,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
             es_por_metro: item.es_por_metro || false,
-            total: item.es_por_metro ? 0 : computedPrice * minQty
+            total: computedPrice * (item.es_por_metro && minQty === 0 ? 1 : minQty)
         };
 
         if (emptyIndex !== -1) {
@@ -479,8 +480,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
       
-      // 🔥 SI ES POR METRO SE DEJA VACÍO EL PRECIO 🔥
-      const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, {
+      const computedPrice = getPriceForQty(minQty, {
           precioBaseOriginal: Number(product.precio) || 0,
           precios_escalonados: product.precios_escalonados || []
       });
@@ -500,7 +500,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               venta_minima: minQty,
               cantidad: minQty,
               es_por_metro: product.es_por_metro || false,
-              total: product.es_por_metro ? 0 : minQty * computedPrice
+              total: computedPrice * (product.es_por_metro && minQty === 0 ? 1 : minQty)
           };
           if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
           return { ...prev, productos: newProducts };
@@ -518,17 +518,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             let qty = parseInt(value, 10);
             if (isNaN(qty)) qty = 0;
             item.cantidad = qty;
-            // Solo se autoactualiza el precio si NO es por metro
-            if (!item.es_por_metro) {
-                item.precioUnitario = getPriceForQty(qty, item);
-            }
+            item.precioUnitario = getPriceForQty(qty, item);
         }
 
         if (field === 'cantidad' || field === 'precioUnitario') {
             const qty = item.cantidad !== undefined ? parseInt(item.cantidad, 10) : 0;
             const price = Number(item.precioUnitario) || 0;
-            
-            // 🔥 SI ES POR METRO Y CANTIDAD ES 0, SE COBRA EL PRECIO TAL CUAL 🔥
             const multiplier = (item.es_por_metro && qty === 0) ? 1 : qty;
             item.total = multiplier * price;
         }
@@ -791,13 +786,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setLoading(false); return;
     }
 
-    // 🔥 VALIDACIÓN: SI ES POR METRO, DEBE TENER UN PRECIO MAYOR A 0 🔥
-    const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.precioUnitario === '' || Number(p.precioUnitario) <= 0));
-    if (invalidMetroProducts.length > 0) {
-      toast({ title: "Precio Requerido", description: "Debe colocar un precio manual para los productos que son por metro.", variant: "destructive" });
-      setLoading(false); return;
-    }
-
     if (financials.saldoPendiente < -0.02) {
         toast({ title: "Error en montos", description: "La suma de anticipos y abonos supera el total.", variant: "destructive" });
         setLoading(false); return;
@@ -935,13 +923,28 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       </div>
 
+      {isPastPaso1 && (
+        <div className="bg-amber-50 border-b border-amber-200 p-3 px-6 shadow-sm">
+            <div className="flex items-start gap-3">
+                <AlertOctagon className="h-5 w-5 text-amber-600 mt-0.5" />
+                <div>
+                    <h4 className="text-sm font-bold text-amber-800">Orden en etapa: {initialData.status}</h4>
+                    <p className="text-xs text-amber-700 mt-1">
+                        Esta orden ya salió de VENTAS. Los datos del pedido están bloqueados por seguridad. 
+                        <b> Solo puedes registrar nuevos Abonos.</b>
+                    </p>
+                </div>
+            </div>
+        </div>
+      )}
+
       <div className="p-6 overflow-y-auto flex-1 bg-white">
         <form id="orderForm" onSubmit={handleSubmit} className="space-y-6">
           <div className="space-y-3 pb-6 border-b border-slate-200">
              <div className="grid grid-cols-12 gap-4 items-center">
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Titulo / Referencia:</label>
                 <div className="col-span-12 md:col-span-10 flex items-center gap-3">
-                   <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isReadOnly} />
+                   <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isEffectivelyReadOnly} />
                    
                    {formData.origenProformaInfo && (
                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
@@ -952,14 +955,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tipo de Orden:</label>
                 <div className="col-span-12 md:col-span-4">
-                   <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white font-semibold text-purple-900 border-purple-200 bg-purple-50 focus:ring-purple-500 transition-colors" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isReadOnly}>
+                   <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white font-semibold text-purple-900 border-purple-200 bg-purple-50 focus:ring-purple-500 transition-colors" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isEffectivelyReadOnly}>
                      {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                    </select>
                 </div>
 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Responsable(s):</label>
                 <div className="col-span-12 md:col-span-4 relative">
-                   {isAdmin ? (
+                   {isAdmin && !isEffectivelyReadOnly ? (
                        <div className="relative">
                            <div 
                                className="flex items-center justify-between cursor-pointer w-full border border-blue-300 bg-blue-50 rounded px-2 py-1.5 text-sm font-semibold text-blue-800 focus:outline-none appearance-none"
@@ -1005,11 +1008,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    <div className="flex flex-col gap-2 w-full md:w-1/2">
                        <div className="flex items-center gap-2 w-full">
                            <div className="relative w-full">
-                               <input type="text" className={`w-full border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none pl-8 ${formData.clienteId ? 'bg-green-50 border-green-400' : ''}`} placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearching(true); if(e.target.value==='') setFormData(p=>({...p, clienteId:''})); }} onFocus={() => setIsSearching(true)} readOnly={isReadOnly} />
+                               <input type="text" className={`w-full border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none pl-8 ${formData.clienteId ? 'bg-green-50 border-green-400' : ''}`} placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearching(true); if(e.target.value==='') setFormData(p=>({...p, clienteId:''})); }} onFocus={() => setIsSearching(true)} readOnly={isEffectivelyReadOnly} />
                                <Search className="absolute left-2 top-1.5 h-4 w-4 text-slate-400" />
                                {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
                            </div>
-                           {!isReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
+                           {!isEffectivelyReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
                        </div>
 
                        {formData.clienteId && (
@@ -1044,8 +1047,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 </div>
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Fecha entrega:</label>
                 <div className="col-span-12 md:col-span-4 flex items-center gap-2">
-                   <input type="date" className="border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 flex-1" value={currentDatePart} onChange={e => handleDateTimeChange(e.target.value, currentTimePart)} required readOnly={isReadOnly} />
-                   <select className="border border-slate-300 rounded px-2 py-1 text-sm bg-white w-24" value={currentTimePart} onChange={e => handleDateTimeChange(currentDatePart, e.target.value)} disabled={isReadOnly}>
+                   <input type="date" className="border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 flex-1" value={currentDatePart} onChange={e => handleDateTimeChange(e.target.value, currentTimePart)} required readOnly={isEffectivelyReadOnly} />
+                   <select className="border border-slate-300 rounded px-2 py-1 text-sm bg-white w-24" value={currentTimePart} onChange={e => handleDateTimeChange(currentDatePart, e.target.value)} disabled={isEffectivelyReadOnly}>
                      {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                    </select>
                 </div>
@@ -1055,14 +1058,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           <div className="space-y-2">
              <div className="flex justify-between items-center mb-1">
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
-                 <div className="flex gap-2">
-                     <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
-                         <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
-                     </Button>
-                     <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs px-3">
-                         <Plus className="h-3 w-3 mr-1" /> Item Manual
-                     </Button>
-                 </div>
+                 {!isEffectivelyReadOnly && (
+                     <div className="flex gap-2">
+                         <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
+                             <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
+                         </Button>
+                         <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs px-3">
+                             <Plus className="h-3 w-3 mr-1" /> Item Manual
+                         </Button>
+                     </div>
+                 )}
              </div>
              
              <div className="border border-slate-300 rounded-sm overflow-hidden">
@@ -1091,14 +1096,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
                                     onFocus={() => { if((row.descripcion||row.nombre)?.length >= 2) handleProductSearchRequest(idx, row.descripcion||row.nombre); }}
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
-                                    readOnly={isReadOnly}
+                                    readOnly={isEffectivelyReadOnly}
                                 />
                                 {row.observaciones && (
                                     <div className="text-[10px] text-slate-500 italic mt-1 leading-tight">
                                         {row.observaciones}
                                     </div>
                                 )}
-                                {activeProductSearchRow === idx && productSuggestions.length > 0 && !isReadOnly && (
+                                {!isEffectivelyReadOnly && activeProductSearchRow === idx && productSuggestions.length > 0 && (
                                     <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-xl max-h-60 overflow-y-auto left-0">
                                         {productSuggestions.map(prod => (
                                             <div 
@@ -1129,7 +1134,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                         if (e.key === '.' || e.key === ',') e.preventDefault();
                                     }}
                                     onBlur={e => handleQuantityBlur(idx, e.target.value)}
-                                    readOnly={isReadOnly}
+                                    readOnly={isEffectivelyReadOnly}
                                  />
                                  {Math.floor(Number(row.venta_minima || 0)) > 0 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {Math.floor(Number(row.venta_minima))}</span>}
                              </td>
@@ -1140,15 +1145,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                      className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0 text-green-700 font-bold h-9" 
                                      value={row.precioUnitario || row.precio || ''} 
                                      onChange={e => updateProduct(idx, 'precioUnitario', e.target.value)} 
-                                     readOnly={isReadOnly}
+                                     readOnly={isEffectivelyReadOnly}
                                  />
                              </td>
                              
                              <td className="py-2 px-2 text-right font-bold text-slate-800 align-top pt-5 bg-slate-50/50">
                                  $ {Number(row.total || 0).toFixed(2)}
-                                 {(row.es_por_metro && row.cantidad === 0) && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio base por cantidad 0">(Precio Base)</div>}
+                                 {(row.es_por_metro && row.cantidad === 0) && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio base por cantidad 0">(PRECIO POR M2)</div>}
                              </td>
-                             <td className="py-2 px-1 text-center align-top pt-4">{!isReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
+                             <td className="py-2 px-1 text-center align-top pt-4">{!isEffectivelyReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
                           </tr>
                         );
                       })}
@@ -1158,44 +1163,48 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span className="text-slate-500 font-bold" title="Este valor se restará directamente del Total Final">Ajuste al Total ($)</span>
-                            <input 
-                                name="discountValInput" 
-                                type="number" step="0.01" 
-                                className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white font-bold text-red-600" 
-                                placeholder="0.00" 
-                                value={localDiscountVal} 
-                                onChange={e => {
-                                    setLocalDiscountVal(e.target.value);
-                                    setFormData(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
-                                }} 
-                                readOnly={isReadOnly} 
-                            />
-                            <span className="text-slate-500">(%)</span>
-                            <input 
-                                name="discountPercentInput" 
-                                type="number" step="0.01" 
-                                className="w-12 text-right border border-slate-300 rounded px-1 text-xs bg-white" 
-                                placeholder="0" 
-                                value={localDiscountPercent} 
-                                onChange={e => {
-                                    setLocalDiscountPercent(e.target.value);
-                                    const perc = parseFloat(e.target.value) || 0;
-                                    const subtotal = financials.subtotal || 0;
-                                    const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
-                                    const baseDesc = subtotal * (perc / 100);
-                                    const finalDesc = formData.aplicarIva ? baseDesc * (1 + tasaIva) : baseDesc;
-                                    setLocalDiscountVal(finalDesc > 0 ? finalDesc.toFixed(2) : '');
-                                    setFormData(prev => ({...prev, descuentoMonto: finalDesc}));
-                                }} 
-                                readOnly={isReadOnly} 
-                            />
+                            {isEffectivelyReadOnly ? (
+                                <span className="font-bold text-red-600 ml-2">${Number(localDiscountVal || 0).toFixed(2)} ({Number(localDiscountPercent || 0).toFixed(2)}%)</span>
+                            ) : (
+                                <>
+                                    <input 
+                                        name="discountValInput" 
+                                        type="number" step="0.01" 
+                                        className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white font-bold text-red-600" 
+                                        placeholder="0.00" 
+                                        value={localDiscountVal} 
+                                        onChange={e => {
+                                            setLocalDiscountVal(e.target.value);
+                                            setFormData(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
+                                        }} 
+                                    />
+                                    <span className="text-slate-500">(%)</span>
+                                    <input 
+                                        name="discountPercentInput" 
+                                        type="number" step="0.01" 
+                                        className="w-12 text-right border border-slate-300 rounded px-1 text-xs bg-white" 
+                                        placeholder="0" 
+                                        value={localDiscountPercent} 
+                                        onChange={e => {
+                                            setLocalDiscountPercent(e.target.value);
+                                            const perc = parseFloat(e.target.value) || 0;
+                                            const subtotal = financials.subtotal || 0;
+                                            const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
+                                            const baseDesc = subtotal * (perc / 100);
+                                            const finalDesc = formData.aplicarIva ? baseDesc * (1 + tasaIva) : baseDesc;
+                                            setLocalDiscountVal(finalDesc > 0 ? finalDesc.toFixed(2) : '');
+                                            setFormData(prev => ({...prev, descuentoMonto: finalDesc}));
+                                        }} 
+                                    />
+                                </>
+                            )}
                          </td>
                          <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuentoVal.toFixed(2)}</td><td></td>
                       </tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isReadOnly && mode !== 'payment_only'}/>
-                            <label htmlFor="iva-check" className="cursor-pointer flex items-center gap-1">IVA {isAdmin ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
+                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isEffectivelyReadOnly}/>
+                            <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${isEffectivelyReadOnly ? 'opacity-50' : ''}`}>IVA {isAdmin && !isEffectivelyReadOnly ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
@@ -1214,7 +1223,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                     {hasAbonosExtras && <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider font-bold shadow-sm">Anticipo Bloqueado por Abonos</span>}
                 </div>
                 <div className="flex bg-slate-100 rounded-md p-1 gap-1 relative">
-                    {hasAbonosExtras && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad si ya hay abonos registrados"></div>}
+                    {(hasAbonosExtras || isEffectivelyReadOnly) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('full')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'full' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Pago Completo</button>
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('partial')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'partial' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Anticipo</button>
                 </div>
@@ -1228,26 +1237,38 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1">
                           <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
-                          <input type="number" step="0.01" className={`w-full pl-6 pr-12 py-1 border rounded text-sm font-bold ${paymentMode === 'full' ? 'bg-slate-100 text-green-700' : 'bg-white border-slate-300'} ${hasAbonosExtras ? 'bg-slate-100 cursor-not-allowed' : ''}`} value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} readOnly={paymentMode === 'full' || mode==='read_only' || hasAbonosExtras} placeholder="0.00" />
+                          {isEffectivelyReadOnly || hasAbonosExtras || paymentMode === 'full' ? (
+                              <div className="w-full pl-6 pr-12 py-1 border border-slate-200 rounded text-sm font-bold bg-slate-100 text-slate-600 uppercase">{Number(localAnticipo || 0).toFixed(2)}</div>
+                          ) : (
+                              <input type="number" step="0.01" className="w-full pl-6 pr-12 py-1 border rounded text-sm font-bold bg-white border-slate-300" value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} placeholder="0.00" />
+                          )}
                           <span className="absolute right-2 top-1.5 text-[10px] text-slate-400 font-bold bg-slate-100 px-1 rounded">{porcentajeAnticipoUI}%</span>
                       </div>
                    </div>
                    
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
-                      <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})} disabled={mode==='read_only' || hasAbonosExtras}>
-                          {PAYMENT_METHODS.map(m => (
-                               <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
-                                   {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
-                               </option>
-                          ))}
-                      </select>
+                      {isEffectivelyReadOnly || hasAbonosExtras ? (
+                          <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoAnticipo || 'Efectivo'}</div>
+                      ) : (
+                          <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})}>
+                              {PAYMENT_METHODS.map(m => (
+                                   <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
+                                       {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
+                                   </option>
+                              ))}
+                          </select>
+                      )}
                    </div>
 
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
-                           <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm disabled:opacity-50 disabled:cursor-not-allowed" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." disabled={hasAbonosExtras} />
+                           {isEffectivelyReadOnly || hasAbonosExtras ? (
+                               <div className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.referenciaPago || '-'}</div>
+                           ) : (
+                               <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." />
+                           )}
                        </div>
                    )}
                    
@@ -1258,26 +1279,44 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            onAdd={handleAddComprobantes} 
                            onRemove={handleRemoveComprobante} 
                            isProcessing={isProcessingComprobantes} 
-                           disabled={hasAbonosExtras}
+                           disabled={isEffectivelyReadOnly || hasAbonosExtras}
                        />
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                           <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none disabled:opacity-50 disabled:cursor-not-allowed" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} disabled={hasAbonosExtras} />
+                           {isEffectivelyReadOnly || hasAbonosExtras ? (
+                               <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceAnticipo || '-'}</div>
+                           ) : (
+                               <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
+                           )}
                        </div>
                    )}
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
-                      <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50 disabled:opacity-50 disabled:cursor-not-allowed" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} disabled={hasAbonosExtras} />
+                      {isEffectivelyReadOnly || hasAbonosExtras ? (
+                          <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaAnticipo || '-'}</div>
+                      ) : (
+                          <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
+                      )}
                    </div>
 
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
-                        <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={hasAbonosExtras} />
-                        <label htmlFor="chk-ret" className={`text-xs select-none ${hasAbonosExtras ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}>¿Aplica Retención?</label>
-                        {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs text-slate-500">%</span><input type="number" step="0.01" className={`w-12 text-center text-xs border-b border-slate-400 bg-transparent focus:outline-none ${hasAbonosExtras ? 'opacity-50 cursor-not-allowed' : ''}`} value={formData.retentionPercent} onChange={e => setFormData({...formData, retentionPercent: parseFloat(e.target.value) || 0})} readOnly={mode === 'read_only' || hasAbonosExtras} title="Porcentaje de Retención" /><span className="text-xs font-bold text-red-600">- $ {formData.retencion.toFixed(2)}</span></div>)}
+                        {isEffectivelyReadOnly || hasAbonosExtras ? (
+                            <>
+                                <Checkbox id="chk-ret" checked={applyRetention} disabled />
+                                <label htmlFor="chk-ret" className="text-xs select-none opacity-50 cursor-not-allowed">¿Aplica Retención?</label>
+                                {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">RET: {formData.retentionPercent}% (- $ {formData.retencion.toFixed(2)})</span></div>)}
+                            </>
+                        ) : (
+                            <>
+                                <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} />
+                                <label htmlFor="chk-ret" className="text-xs select-none cursor-pointer">¿Aplica Retención?</label>
+                                {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs text-slate-500">%</span><input type="number" step="0.01" className="w-12 text-center text-xs border-b border-slate-400 bg-transparent focus:outline-none" value={formData.retentionPercent} onChange={e => setFormData({...formData, retentionPercent: parseFloat(e.target.value) || 0})} title="Porcentaje de Retención" /><span className="text-xs font-bold text-red-600">- $ {formData.retencion.toFixed(2)}</span></div>)}
+                            </>
+                        )}
                    </div>
                 </div>
 
@@ -1289,34 +1328,51 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                             <label className="text-xs font-bold w-20">Saldo Restante:</label>
                             <div className="relative flex-1">
                                 <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
-                                <input type="number" className="w-full pl-6 pr-12 py-1 border border-slate-300 rounded text-sm bg-red-50 font-bold text-red-700" value={financials.saldoPendiente.toFixed(2)} readOnly/>
+                                <div className="w-full pl-6 pr-12 py-1 border border-slate-300 rounded text-sm bg-red-50 font-bold text-red-700">{financials.saldoPendiente.toFixed(2)}</div>
                                 <span className="absolute right-2 top-1.5 text-[10px] text-red-400 font-bold bg-red-100 px-1 rounded">{porcentajeSaldoUI}%</span>
                             </div>
                         </div>
                         
                         <div className="flex items-center gap-2">
                            <label className="text-xs font-bold w-20">Condición Saldo:</label>
-                           <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})} disabled={mode==='read_only'}>
-                               {PAYMENT_METHODS.map(m => (
-                                    <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
-                                        {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
-                                    </option>
-                               ))}
-                           </select>
+                           {isEffectivelyReadOnly ? (
+                               <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoSaldo || 'No aplica'}</div>
+                           ) : (
+                               <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})}>
+                                   {PAYMENT_METHODS.map(m => (
+                                        <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
+                                            {m === 'Crédito' && !selectedClientData?.permiteCredito ? 'Crédito (No Autorizado)' : m}
+                                        </option>
+                                   ))}
+                               </select>
+                           )}
                         </div>
-                        
+
                         {formData.formaPagoSaldo === 'Crédito' && (
                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                                <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                               <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceSaldo} onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} />
+                               {isEffectivelyReadOnly ? (
+                                   <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceSaldo || '-'}</div>
+                               ) : (
+                                   <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceSaldo} onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} />
+                               )}
                            </div>
                         )}
 
-                        <div className="flex items-center gap-2"><label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label><input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} /></div>
-                        
-                        <div className="bg-orange-50 border border-orange-200 rounded p-2 mt-2 animate-in fade-in">
-                           <p className="text-[10px] text-orange-800 font-medium leading-snug">ℹ️ Si el cliente va a cancelar este saldo <b>ahora mismo</b>, por favor utiliza la opción de <b>"Añadir Abono"</b> en la sección de abajo.</p>
+                        <div className="flex items-center gap-2">
+                            <label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label>
+                            {isEffectivelyReadOnly ? (
+                                <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaSaldo || '-'}</div>
+                            ) : (
+                                <input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} />
+                            )}
                         </div>
+                        
+                        {!isEffectivelyReadOnly && (
+                            <div className="bg-orange-50 border border-orange-200 rounded p-2 mt-2 animate-in fade-in">
+                               <p className="text-[10px] text-orange-800 font-medium leading-snug">ℹ️ Si el cliente va a cancelar este saldo <b>ahora mismo</b>, por favor utiliza la opción de <b>"Añadir Abono"</b> en la sección de abajo.</p>
+                            </div>
+                        )}
                     </div>
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
              </div>
@@ -1367,12 +1423,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              <div className="text-xs text-slate-500 italic">Arte/Diseño</div>
              <ImageGallery 
                 images={formData.imagenes} 
-                isReadOnly={isReadOnly} 
+                isReadOnly={isEffectivelyReadOnly} 
                 onRemove={removeImage} 
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
              />
-             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isReadOnly} /></div>
+             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isEffectivelyReadOnly} /></div>
           </div>
         </form>
       </div>
@@ -1387,6 +1443,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
          <div className="flex gap-3">
              <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
+             
              <Button type="submit" form="orderForm" disabled={loading} className="bg-[#004080] hover:bg-blue-900 text-white px-8 shadow-md">
                 {loading ? 'Guardando...' : (mode === 'create' ? 'Guardar Orden' : 'Actualizar Orden')}
              </Button>
