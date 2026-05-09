@@ -48,7 +48,7 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
     // Start from previous month to fill week
     const start = getStartOfWeek(firstDay);
     // End to complete week
-    const end = addDays(getStartOfWeek(lastDay), 6); // Simple approximation, usually safe for grid
+    const end = addDays(getStartOfWeek(lastDay), 6); 
     
     const days = [];
     let day = start;
@@ -76,24 +76,25 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
     setCurrentDate(newDate);
   };
 
+  // 🔥 Filtramos para que SOLO salgan las de VENTAS y PRODUCCIÓN
   const getOrdersForDay = (date) => {
     return orders.filter(o => {
-      if (!o.fechaEntrega) return false;
-      const d = new Date(o.fechaEntrega);
+      if (o.status !== 'VENTAS' && o.status !== 'PRODUCCION') return false;
+      const fechaBase = o.fechaEntrega || o.fecha_entrega;
+      if (!fechaBase) return false;
+      
+      // Parseamos la fecha asegurando que se compare el día exacto localmente
+      const [year, month, day] = fechaBase.split('T')[0].split('-');
+      const d = new Date(year, month - 1, day);
+      
       return isSameDay(d, date);
     });
   };
 
-  // Color mapping based on status? Or just red as in screenshot
   const getEventStyle = (order) => {
-     // Screenshot uses red for almost everything, blue/orange occasionally
-     // Let's use status mapping
-     switch(order.status) {
-       case 'FINALIZADA': return 'bg-green-500 text-white';
-       case 'VENTAS': return 'bg-blue-500 text-white';
-       case 'PRODUCCION': return 'bg-red-500 text-white';
-       default: return 'bg-slate-500 text-white';
-     }
+     if (order.status === 'VENTAS') return 'bg-blue-100 text-blue-800 border border-blue-300';
+     if (order.status === 'PRODUCCION') return 'bg-orange-100 text-orange-800 border border-orange-300';
+     return 'bg-slate-100 text-slate-800';
   };
 
   const renderEvent = (order) => (
@@ -101,12 +102,12 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
        key={order.id}
        onClick={() => onViewOrder(order)}
        className={cn(
-         "text-[10px] px-1 py-0.5 rounded mb-1 truncate cursor-pointer hover:opacity-80 shadow-sm",
+         "text-[10px] px-1.5 py-0.5 rounded mb-1 truncate cursor-pointer hover:opacity-80 shadow-sm font-bold",
          getEventStyle(order)
        )}
-       title={`${order.tipoLetrero} - ${order.cliente}`}
+       title={`${order.tipoLetrero || order.tipo_trabajo} - ${order.cliente || order.cliente_nombre}`}
     >
-       {order.tipoLetrero}
+       {order.tipoLetrero || order.tipo_trabajo}
     </div>
   );
 
@@ -115,34 +116,36 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
        {/* Header */}
        <div className="flex justify-between items-center mb-6">
           <div className="flex items-center gap-4">
-             <h2 className="text-xl font-semibold text-slate-800">Calendario</h2>
-             <div className="flex bg-slate-100 rounded-lg p-1">
-                <button onClick={() => setView('month')} className={cn("px-3 py-1 text-xs font-medium rounded-md transition-colors", view === 'month' ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-900")}>Mes</button>
-                <button onClick={() => setView('week')} className={cn("px-3 py-1 text-xs font-medium rounded-md transition-colors", view === 'week' ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-900")}>Semana</button>
-                <button onClick={() => setView('day')} className={cn("px-3 py-1 text-xs font-medium rounded-md transition-colors", view === 'day' ? "bg-white shadow text-slate-900" : "text-slate-500 hover:text-slate-900")}>Día</button>
+             <h2 className="text-xl font-semibold text-slate-800 flex items-center gap-2">
+                 <CalIcon className="h-6 w-6 text-blue-600" /> Calendario
+             </h2>
+             <div className="flex bg-slate-100 rounded-lg p-1 border border-slate-200">
+                <button onClick={() => setView('month')} className={cn("px-3 py-1 text-xs font-bold rounded-md transition-colors", view === 'month' ? "bg-white shadow text-blue-600" : "text-slate-500 hover:text-slate-900")}>Mes</button>
+                <button onClick={() => setView('week')} className={cn("px-3 py-1 text-xs font-bold rounded-md transition-colors", view === 'week' ? "bg-white shadow text-blue-600" : "text-slate-500 hover:text-slate-900")}>Semana</button>
+                <button onClick={() => setView('day')} className={cn("px-3 py-1 text-xs font-bold rounded-md transition-colors", view === 'day' ? "bg-white shadow text-blue-600" : "text-slate-500 hover:text-slate-900")}>Día</button>
              </div>
           </div>
 
           <div className="flex items-center gap-4">
-             <span className="text-lg font-medium text-slate-700">
+             <span className="text-lg font-bold text-slate-700 capitalize">
                 {view === 'week' && `${getStartOfWeek(currentDate).getDate()} – ${addDays(getStartOfWeek(currentDate), 6).getDate()} de `}
-                {MONTHS[currentDate.getMonth()]} de {currentDate.getFullYear()}
+                {MONTHS[currentDate.getMonth()]} {currentDate.getFullYear()}
              </span>
              <div className="flex gap-1">
-                <Button variant="outline" size="icon" onClick={handlePrev}><ChevronLeft className="h-4 w-4" /></Button>
-                <Button variant="outline" size="icon" onClick={() => setCurrentDate(new Date())}>Hoy</Button>
-                <Button variant="outline" size="icon" onClick={handleNext}><ChevronRight className="h-4 w-4" /></Button>
+                <Button variant="outline" size="icon" onClick={handlePrev} className="hover:bg-slate-100"><ChevronLeft className="h-4 w-4" /></Button>
+                <Button variant="outline" size="icon" onClick={() => setCurrentDate(new Date())} className="w-auto px-3 font-bold hover:bg-slate-100">Hoy</Button>
+                <Button variant="outline" size="icon" onClick={handleNext} className="hover:bg-slate-100"><ChevronRight className="h-4 w-4" /></Button>
              </div>
           </div>
        </div>
 
        {/* Calendar Body */}
-       <div className="flex-1 overflow-auto border border-slate-200 rounded-lg">
+       <div className="flex-1 overflow-auto border border-slate-200 rounded-lg bg-slate-50/50">
           {view === 'month' && (
              <div className="grid grid-cols-7 h-full min-h-[600px]">
                 {/* Headers */}
                 {DAYS.map(day => (
-                   <div key={day} className="p-2 border-b border-r border-slate-100 bg-slate-50 text-center font-semibold text-slate-600 uppercase text-xs">
+                   <div key={day} className="p-2 border-b border-r border-slate-200 bg-slate-100 text-center font-bold text-slate-600 uppercase text-xs">
                       {day}
                    </div>
                 ))}
@@ -153,11 +156,11 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
                    const dayOrders = getOrdersForDay(date);
 
                    return (
-                      <div key={i} className={cn("min-h-[100px] border-b border-r border-slate-100 p-1 flex flex-col", !isCurrentMonth && "bg-slate-50/50")}>
-                         <div className={cn("text-xs font-medium mb-1 ml-1 w-6 h-6 flex items-center justify-center rounded-full", isToday ? "bg-blue-600 text-white" : "text-slate-700")}>
+                      <div key={i} className={cn("min-h-[100px] border-b border-r border-slate-200 p-1 flex flex-col transition-colors", !isCurrentMonth ? "bg-slate-100/50" : "bg-white hover:bg-slate-50")}>
+                         <div className={cn("text-xs font-bold mb-1 ml-1 w-6 h-6 flex items-center justify-center rounded-full shadow-sm", isToday ? "bg-blue-600 text-white" : "text-slate-600 bg-slate-100")}>
                             {date.getDate()}
                          </div>
-                         <div className="flex-1 overflow-y-auto">
+                         <div className="flex-1 overflow-y-auto pr-1">
                             {dayOrders.map(renderEvent)}
                          </div>
                       </div>
@@ -172,34 +175,34 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
                    const isToday = isSameDay(date, new Date());
                    const dayOrders = getOrdersForDay(date);
                    // Ordenar por hora si existe
-                   dayOrders.sort((a, b) => new Date(a.fechaEntrega) - new Date(b.fechaEntrega));
+                   dayOrders.sort((a, b) => new Date(a.fechaEntrega || a.fecha_entrega) - new Date(b.fechaEntrega || b.fecha_entrega));
 
                    return (
-                      <div key={i} className="flex-1 border-r border-slate-200 last:border-r-0 flex flex-col min-w-[120px]">
-                         <div className={cn("p-2 text-center border-b border-slate-200", isToday ? "bg-blue-50" : "bg-slate-50")}>
-                            <div className={cn("text-xs uppercase font-semibold", isToday ? "text-blue-600" : "text-slate-500")}>{DAYS[date.getDay()]}</div>
-                            <div className={cn("text-lg font-bold", isToday ? "text-blue-700" : "text-slate-800")}>{date.getDate()}</div>
+                      <div key={i} className="flex-1 border-r border-slate-200 last:border-r-0 flex flex-col min-w-[140px] bg-white hover:bg-slate-50 transition-colors">
+                         <div className={cn("p-2 text-center border-b border-slate-200", isToday ? "bg-blue-50" : "bg-slate-100")}>
+                            <div className={cn("text-xs uppercase font-bold", isToday ? "text-blue-600" : "text-slate-500")}>{DAYS[date.getDay()]}</div>
+                            <div className={cn("text-lg font-black", isToday ? "text-blue-700" : "text-slate-800")}>{date.getDate()}</div>
                          </div>
                          
-                         {/* Hour Grid Simulation (simplified to stack items, since we support time now) */}
-                         <div className="flex-1 p-1 space-y-1 bg-slate-50/10 overflow-y-auto">
+                         <div className="flex-1 p-2 space-y-2 overflow-y-auto">
                             {dayOrders.length > 0 ? dayOrders.map((order, idx) => {
-                               const d = new Date(order.fechaEntrega);
-                               const timeStr = d.getHours() + ':' + d.getMinutes().toString().padStart(2, '0');
+                               const fechaObj = order.fechaEntrega || order.fecha_entrega;
+                               const timeStr = fechaObj && fechaObj.includes('T') ? fechaObj.split('T')[1].slice(0,5) : '';
+                               
                                return (
                                  <div 
                                     key={idx}
                                     onClick={() => onViewOrder(order)}
-                                    className={cn("p-2 rounded text-xs cursor-pointer shadow-sm hover:ring-2 ring-offset-1 transition-all", getEventStyle(order))}
+                                    className={cn("p-2 rounded text-xs cursor-pointer hover:shadow-md transition-all", getEventStyle(order))}
                                  >
-                                    <div className="font-bold opacity-75 mb-0.5">{timeStr}</div>
-                                    <div className="font-semibold truncate">{order.tipoLetrero}</div>
-                                    <div className="truncate opacity-90">{order.cliente}</div>
+                                    <div className="font-black opacity-80 mb-0.5">{timeStr}</div>
+                                    <div className="font-bold truncate text-[11px] leading-tight uppercase">{order.tipoLetrero || order.tipo_trabajo}</div>
+                                    <div className="truncate opacity-90 text-[10px] mt-1">{order.cliente || order.cliente_nombre}</div>
                                  </div>
                                );
                             }) : (
                                <div className="h-full flex items-center justify-center">
-                                  <span className="text-slate-300 text-xs">-</span>
+                                  <span className="text-slate-300 text-xs italic">-</span>
                                </div>
                             )}
                          </div>
@@ -210,33 +213,54 @@ const WorkAreaCalendar = ({ orders = [], onViewOrder }) => {
           )}
 
           {view === 'day' && (
-             <div className="h-full p-4">
-                 <div className="max-w-3xl mx-auto">
-                    <h3 className="text-xl font-bold text-slate-800 mb-4 text-center border-b pb-4">
-                       Agenda para {currentDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
+             <div className="h-full p-4 bg-slate-50">
+                 <div className="max-w-4xl mx-auto">
+                    <h3 className="text-xl font-bold text-slate-800 mb-6 text-center border-b border-slate-300 pb-4 capitalize">
+                       Agenda para el {currentDate.toLocaleDateString('es-ES', { weekday: 'long', day: 'numeric', month: 'long' })}
                     </h3>
-                    <div className="space-y-2">
-                       {getOrdersForDay(currentDate).length > 0 ? getOrdersForDay(currentDate).map(order => (
-                          <div key={order.id} className="flex items-center gap-4 p-4 bg-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => onViewOrder(order)}>
-                             <div className="text-xl font-bold text-slate-400 w-20 text-center">
-                                {new Date(order.fechaEntrega).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}
-                             </div>
-                             <div className="w-1 bg-blue-500 h-10 rounded-full"></div>
-                             <div className="flex-1">
-                                <h4 className="font-bold text-slate-800">{order.tipoLetrero}</h4>
-                                <p className="text-sm text-slate-600">{order.cliente}</p>
-                             </div>
-                             <StatusBadge status={order.status} />
-                          </div>
-                       )) : (
-                          <div className="text-center py-12 text-slate-400">
-                             No hay entregas programadas para este día.
+                    <div className="space-y-3">
+                       {getOrdersForDay(currentDate).length > 0 ? getOrdersForDay(currentDate).map(order => {
+                          const fechaObj = order.fechaEntrega || order.fecha_entrega;
+                          const timeStr = fechaObj && fechaObj.includes('T') ? fechaObj.split('T')[1].slice(0,5) : '';
+                          const isVentas = order.status === 'VENTAS';
+
+                          return (
+                              <div key={order.id} className="flex items-center gap-4 p-4 bg-white border border-slate-200 rounded-lg shadow-sm hover:shadow-md transition-all cursor-pointer hover:border-blue-300" onClick={() => onViewOrder(order)}>
+                                 <div className="text-2xl font-black text-slate-700 w-24 text-center">
+                                    {timeStr || '--:--'}
+                                 </div>
+                                 <div className={cn("w-1.5 h-12 rounded-full", isVentas ? "bg-blue-500" : "bg-orange-500")}></div>
+                                 <div className="flex-1 ml-2">
+                                    <h4 className="font-black text-slate-800 text-lg uppercase">{order.tipoLetrero || order.tipo_trabajo}</h4>
+                                    <p className="text-sm font-medium text-slate-600 mt-1">{order.cliente || order.cliente_nombre}</p>
+                                 </div>
+                                 <div className="hidden md:block">
+                                    <StatusBadge status={order.status} />
+                                 </div>
+                              </div>
+                          );
+                       }) : (
+                          <div className="text-center py-20 text-slate-400 bg-white border border-dashed border-slate-300 rounded-lg">
+                             <CalIcon className="h-10 w-10 mx-auto mb-2 opacity-30" />
+                             <span className="font-medium text-lg">No hay entregas programadas para este día.</span>
                           </div>
                        )}
                     </div>
                  </div>
              </div>
           )}
+       </div>
+
+       {/* 🔥 LEYENDA DEL CALENDARIO 🔥 */}
+       <div className="pt-4 mt-2 border-t border-slate-200 flex gap-6 text-xs font-bold text-slate-600 justify-center">
+           <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-blue-100 border border-blue-300 shadow-sm"></div>
+              Paso 1: Ventas / Diseño
+           </div>
+           <div className="flex items-center gap-2">
+              <div className="w-4 h-4 rounded bg-orange-100 border border-orange-300 shadow-sm"></div>
+              Paso 2: Producción
+           </div>
        </div>
     </div>
   );
