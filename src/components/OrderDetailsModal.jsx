@@ -10,7 +10,6 @@ import { useDropzone } from 'react-dropzone';
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
 
-// --- 🔥 FUNCIÓN PARA LIMPIAR NOTAS DEL PDF 🔥 ---
 const getPrintDesc = (prod) => {
     const text = prod.descripcion || prod.nombre || '';
     if (text.includes('[Nota:')) {
@@ -43,7 +42,6 @@ const compressImage = async (file) => {
     });
 };
 
-// 🔥 COMPONENTE VISUAL PARA MOSTRAR LA FOTO AL LADO (SIN EDICIÓN) 🔥
 const InlineComprobante = ({ items = [], onClickImage }) => {
     if (!items || items.length === 0) return null;
     return (
@@ -121,14 +119,55 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
         
         try {
             if (!noMaterials && usedMaterials.length > 0) {
+                
+                // 🔥 FASE 1: LECTURA DE SEGURIDAD 🔥
+                const stockUpdates = [];
                 for (const mat of usedMaterials) {
                     const qtyToDeduct = Number(mat.cant_usada);
                     if (qtyToDeduct > 0) {
-                        const { data: currentItem } = await supabase.from('inventario').select('cantidad').eq('id', mat.id).single();
-                        if (currentItem) {
-                            const newQty = (currentItem.cantidad || 0) - qtyToDeduct;
-                            await supabase.from('inventario').update({ cantidad: newQty }).eq('id', mat.id);
+                        const { data: currentItem, error: fetchErr } = await supabase.from('inventario').select('cantidad, nombre').eq('id', mat.id).single();
+                        if (fetchErr) throw fetchErr;
+                        
+                        const stockActual = Number(currentItem?.cantidad || 0);
+                        
+                        if (stockActual < qtyToDeduct) {
+                            toast({ 
+                                title: "Stock Insuficiente", 
+                                description: `No hay suficiente "${mat.nombre}". Disponible: ${stockActual}, Requerido: ${qtyToDeduct}.`, 
+                                variant: "destructive" 
+                            });
+                            setLoading(false);
+                            return; 
                         }
+                        
+                        stockUpdates.push({ 
+                            id: mat.id, 
+                            nombre: mat.nombre, 
+                            newQty: stockActual - qtyToDeduct, 
+                            qtyDeducted: qtyToDeduct 
+                        });
+                    }
+                }
+
+                // 🔥 FASE 2: EJECUCIÓN SEGURA 🔥
+                for (const update of stockUpdates) {
+                    const { error: updateErr } = await supabase.from('inventario').update({ cantidad: update.newQty }).eq('id', update.id);
+                    if (updateErr) throw updateErr;
+                    
+                    const orderRef = String(order.orderNumber || order.order_number || order.id).padStart(7, '0');
+                    const { error: histErr } = await supabase.from('historial_inventario').insert([{
+                        material_id: update.id,
+                        material_nombre: update.nombre,
+                        cantidad_cambio: -update.qtyDeducted,
+                        cantidad_resultante: update.newQty,
+                        tipo: 'EGRESO',
+                        motivo: `Consumo en Producción - Orden #${orderRef}`,
+                        usuario: user?.name || 'Sistema'
+                    }]);
+                    
+                    if (histErr) {
+                        console.error("Error guardando historial:", histErr);
+                        throw new Error("No se pudo guardar el historial de " + update.nombre);
                     }
                 }
             }
@@ -137,7 +176,8 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
             await onProductUpdate(index, updated);
             toast({ title: "Producto Finalizado", description: "Se ha registrado la producción y descontado el inventario." });
         } catch (error) {
-            toast({ title: "Error", description: "Ocurrió un problema al finalizar el producto.", variant: "destructive" });
+            console.error(error);
+            toast({ title: "Error de Guardado", description: error.message || "Ocurrió un problema al finalizar el producto.", variant: "destructive" });
         } finally {
             setLoading(false);
         }
@@ -178,13 +218,30 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                           className="w-full text-xs pl-8 pr-2 py-1.5 border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner bg-white"
                                           value={searchTerm} onChange={e => handleSearch(e.target.value)} disabled={noMaterials}
                                        />
+                                       {/* 🔥 AQUÍ SE IMPLEMENTA EL BLOQUEO VISUAL Y DE CLIC PARA STOCK <= 0 🔥 */}
                                        {suggestions.length > 0 && (
                                            <div className="absolute z-20 w-full bg-white border border-slate-300 shadow-xl max-h-40 overflow-y-auto mt-1 rounded-md text-xs">
-                                               {suggestions.map(s => (
-                                                   <div key={s.id} className="p-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 flex justify-between items-center" onClick={() => addMaterial(s)}>
-                                                       <span className="font-bold text-slate-700">{s.nombre}</span><span className="text-[10px] text-slate-500 font-mono bg-slate-100 px-1 rounded border border-slate-200">Stock: {s.cantidad} {s.unidad}</span>
-                                                   </div>
-                                               ))}
+                                               {suggestions.map(s => {
+                                                   const isOutOfStock = Number(s.cantidad) <= 0;
+                                                   return (
+                                                       <div 
+                                                           key={s.id} 
+                                                           className={`p-2 border-b border-slate-100 flex justify-between items-center transition-colors ${isOutOfStock ? 'opacity-70 cursor-not-allowed bg-red-50' : 'hover:bg-blue-50 cursor-pointer'}`} 
+                                                           onClick={() => {
+                                                               if (isOutOfStock) {
+                                                                   toast({ title: "Sin Stock", description: "No puedes seleccionar un material sin inventario.", variant: "destructive" });
+                                                                   return;
+                                                               }
+                                                               addMaterial(s);
+                                                           }}
+                                                       >
+                                                           <span className={`font-bold ${isOutOfStock ? 'text-red-700 line-through' : 'text-slate-700'}`}>{s.nombre}</span>
+                                                           <span className={`text-[10px] font-mono px-1 rounded border ${isOutOfStock ? 'bg-red-100 text-red-700 border-red-200' : 'bg-slate-100 text-slate-500 border-slate-200'}`}>
+                                                               Stock: {s.cantidad} {s.unidad}
+                                                           </span>
+                                                       </div>
+                                                   );
+                                               })}
                                            </div>
                                        )}
                                    </div>
@@ -248,7 +305,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const [loadingImages, setLoadingImages] = useState(false); 
   const [isAdvancing, setIsAdvancing] = useState(false);
 
-  // 🔥 ESTADO DE COMPROBANTES DE LA ORDEN 🔥
   const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
   const [loadingComprobantes, setLoadingComprobantes] = useState(false);
   
@@ -279,7 +335,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
           try {
               const { data } = await supabase.from('ordenes').select('comprobantes').eq('id', order.id).single();
               if (data && data.comprobantes) {
-                  // Mapeo seguro del objeto estructurado de comprobantes
                   if (Array.isArray(data.comprobantes)) {
                       setComprobantesData({ anticipo: data.comprobantes, saldo: [], abonos: {} });
                   } else {
@@ -403,7 +458,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
      switch (order.status) {
          case 'VENTAS': text = nextStatus === 'PRODUCCION' ? "Pasar a Producción" : "Pasar a Contabilidad"; break;
-         case 'PRODUCCION': text = `Pasar a Ventas – ${localVendedor || 'Sin asignar'}`; break;
+         case 'PRODUCCION': text = `Pasar a Por Retirar – ${localVendedor || 'Sin asignar'}`; break;
          case 'VENTAS POR RETIRAR': if (nextStatus === 'CONTABILIDAD') text = "Pasar a Contabilidad"; break;
          case 'CONTABILIDAD': if (nextStatus === 'FINALIZADA') text = "Finalizar orden"; break;
          default: break;
@@ -438,24 +493,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     <span className="cursor-not-allowed opacity-50 flex items-center gap-1 font-mono text-sm">0000000 {' - >'}</span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                    
-                    {/* 🔥 BOTÓN FACTURA OCULTADO PARA FUTURO USO 🔥 
-                    {canInvoice && onGenerateInvoice && <Button size="sm" onClick={() => onGenerateInvoice(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2"><FileText className="h-4 w-4" /> Generar Factura</Button>}
-                    */}
-                    
                     {canEdit && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2" onClick={() => onUpdateOrder && onUpdateOrder()}><Edit2 className="h-4 w-4" /> Editar Orden</Button>}
                     
                     <div className="flex bg-slate-100 rounded-md p-1 border border-slate-200">
-                        {/* 🔥 BOTÓN SRI OCULTADO PARA FUTURO USO 🔥
-                        {showFinancials && (
-                            <>
-                                <Button size="sm" variant="ghost" className="text-blue-700 hover:bg-blue-200 hover:text-blue-800 gap-2 font-bold" onClick={() => handlePrint('sri')}>
-                                    <Printer className="h-4 w-4" /> SRI
-                                </Button>
-                                <div className="w-px bg-slate-300 mx-1"></div>
-                            </>
-                        )}
-                        */}
                         <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-200 hover:text-amber-800 gap-2 font-bold" onClick={() => handlePrint('produccion')}>
                             <Printer className="h-4 w-4" /> Prod
                         </Button>
@@ -714,10 +754,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
             </AnimatePresence>
         </div>
 
-
-        {/* ======================================================== */}
-        {/* 2. VISTAS DE IMPRESIÓN (OCULTAS EN PANTALLA)            */}
-        {/* ======================================================== */}
         <div id="modal-print-container" className="hidden print:block absolute top-0 left-0 w-full bg-white z-[10000] text-black" style={{ minHeight: '100vh', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
             <style>{`
                 @media print {

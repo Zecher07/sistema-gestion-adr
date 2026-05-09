@@ -133,6 +133,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
   const isEffectivelyReadOnly = mode === 'payment_only' || mode === 'read_only' || isPastPaso1;
 
+  // 🔥 BLOQUEO DE SALDO PARA VENDEDORES UNA VEZ CREADA LA ORDEN 🔥
+  const isEditMode = !!(initialData && initialData.id);
+  const isSaldoReadOnly = isEffectivelyReadOnly || (isEditMode && !isAdmin);
+
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
 
@@ -186,10 +190,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, completed: false, es_por_metro: false }), 
+    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, completed: false, es_por_metro: false }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
-    descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: ''
+    descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '',
+    esMayorista: false
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
@@ -291,7 +296,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         tipoLetrero: initialData.tipo_trabajo || initialData.tipoLetrero || initialData.titulo || '',
         tipoOrden: isVentaCorta ? ORDER_TYPES[1] : ORDER_TYPES[0], 
         origenProformaInfo: initialData.origenProformaInfo || initialData.proformaNumber || initialData.numero || '',
-        productos: initialData.productos || initialData.items || [],
+        productos: (initialData.productos || initialData.items || []).map(p => ({
+            ...p,
+            precioUnitario: p.precioUnitario !== undefined ? p.precioUnitario : p.precio || 0
+        })),
         fechaEntrega: calculatedFechaEntrega,
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
         aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true,
@@ -299,7 +307,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
-        descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage
+        descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
+        esMayorista: initialData.esMayorista || false
       }));
       
       setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
@@ -344,7 +353,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precio: 0, cantidad: 0, es_por_metro: false }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, es_por_metro: false }) }));
     }
   }, []);
 
@@ -409,20 +418,36 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
-  const getPriceForQty = (qty, item) => {
-      const tiers = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
+  const getPriceForQty = (qty, item, applyMayorista = false) => {
+      const tiersKey = applyMayorista ? 'precios_distribuidor' : 'precios_escalonados';
+      const baseKey = applyMayorista ? 'precioDistribuidorBase' : 'precioBaseOriginal';
+      const fallbackBaseKey = applyMayorista ? 'precio_distribuidor' : 'precio';
+
+      const tiers = [...(item[tiersKey] || [])].sort((a,b) => b.cantidad - a.cantidad);
       const tier = tiers.find(t => qty >= t.cantidad);
       if (tier) return tier.precio;
-      return item.precioBaseOriginal || 0;
+      
+      return Number(item[baseKey] || item[fallbackBaseKey] || 0);
+  };
+
+  const toggleMayorista = (checked) => {
+      setFormData(prev => {
+          const newProducts = prev.productos.map(p => {
+              if (!p.descripcion) return p;
+              if (p.es_por_metro) return p; 
+              const qty = parseInt(p.cantidad, 10) || 0;
+              const newPrice = getPriceForQty(qty, p, checked);
+              const multiplier = (p.es_por_metro && qty === 0) ? 1 : qty;
+              return { ...p, precioUnitario: newPrice, total: multiplier * newPrice };
+          });
+          return { ...prev, esMayorista: checked, productos: newProducts };
+      });
   };
 
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
     
-    const computedPrice = getPriceForQty(minQty, {
-        precioBaseOriginal: Number(item.precio) || 0,
-        precios_escalonados: item.precios_escalonados || []
-    });
+    const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, item, formData.esMayorista);
 
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
@@ -439,8 +464,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             precioUnitario: computedPrice,
             precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
+            precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
+            precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
-            total: computedPrice * (item.es_por_metro && minQty === 0 ? 1 : minQty)
+            total: item.es_por_metro ? 0 : computedPrice * (item.es_por_metro && minQty === 0 ? 1 : minQty)
         };
 
         if (emptyIndex !== -1) {
@@ -480,10 +507,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
       
-      const computedPrice = getPriceForQty(minQty, {
-          precioBaseOriginal: Number(product.precio) || 0,
-          precios_escalonados: product.precios_escalonados || []
-      });
+      const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, product, formData.esMayorista);
 
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
@@ -497,10 +521,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               precioUnitario: computedPrice,
               precioBaseOriginal: Number(product.precio) || 0,
               precios_escalonados: product.precios_escalonados || [],
+              precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
+              precios_distribuidor: product.precios_distribuidor || [],
               venta_minima: minQty,
               cantidad: minQty,
               es_por_metro: product.es_por_metro || false,
-              total: computedPrice * (product.es_por_metro && minQty === 0 ? 1 : minQty)
+              total: product.es_por_metro ? 0 : minQty * computedPrice
           };
           if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 0, total: 0, venta_minima: 0, es_por_metro: false });
           return { ...prev, productos: newProducts };
@@ -518,7 +544,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             let qty = parseInt(value, 10);
             if (isNaN(qty)) qty = 0;
             item.cantidad = qty;
-            item.precioUnitario = getPriceForQty(qty, item);
+            if (!item.es_por_metro && item.precioBaseOriginal !== undefined) {
+                item.precioUnitario = getPriceForQty(qty, item, prev.esMayorista);
+            }
         }
 
         if (field === 'cantidad' || field === 'precioUnitario') {
@@ -786,6 +814,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setLoading(false); return;
     }
 
+    const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.precioUnitario === '' || Number(p.precioUnitario) <= 0));
+    if (invalidMetroProducts.length > 0) {
+      toast({ title: "Precio Requerido", description: "Debe colocar un precio manual para los productos que son por metro.", variant: "destructive" });
+      setLoading(false); return;
+    }
+
     if (financials.saldoPendiente < -0.02) {
         toast({ title: "Error en montos", description: "La suma de anticipos y abonos supera el total.", variant: "destructive" });
         setLoading(false); return;
@@ -868,6 +902,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             nota_anticipo: formData.notaAnticipo, 
             credito_vence_anticipo: formData.creditoVenceAnticipo, 
             imagenes: formData.imagenes, 
+            esMayorista: formData.esMayorista,
             updated_at: new Date().toISOString()
         };
 
@@ -1059,9 +1094,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              <div className="flex justify-between items-center mb-1">
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
                  {!isEffectivelyReadOnly && (
-                     <div className="flex gap-2">
+                     <div className="flex gap-2 items-center">
+                         <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-md border border-indigo-200 shadow-sm transition-colors hover:bg-indigo-100">
+                             <Checkbox checked={formData.esMayorista || false} onCheckedChange={toggleMayorista} />
+                             Tarifa Mayorista
+                         </label>
                          <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
-                             <ShoppingCart className="h-3 w-3" /> Catálogo de Precios
+                             <ShoppingCart className="h-3 w-3" /> Catálogo
                          </Button>
                          <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs px-3">
                              <Plus className="h-3 w-3 mr-1" /> Item Manual
@@ -1143,7 +1182,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                  <input 
                                      type="number" step="0.01" 
                                      className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0 text-green-700 font-bold h-9" 
-                                     value={row.precioUnitario || row.precio || ''} 
+                                     value={row.precioUnitario !== undefined ? row.precioUnitario : (row.precio || '')} 
                                      onChange={e => updateProduct(idx, 'precioUnitario', e.target.value)} 
                                      readOnly={isEffectivelyReadOnly}
                                  />
@@ -1151,7 +1190,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              
                              <td className="py-2 px-2 text-right font-bold text-slate-800 align-top pt-5 bg-slate-50/50">
                                  $ {Number(row.total || 0).toFixed(2)}
-                                 {(row.es_por_metro && row.cantidad === 0) && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio base por cantidad 0">(PRECIO POR M2)</div>}
+                                 {(row.es_por_metro && row.cantidad === 0) && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio base por cantidad 0">(Precio Base)</div>}
                              </td>
                              <td className="py-2 px-1 text-center align-top pt-4">{!isEffectivelyReadOnly && (row.nombre || row.descripcion) && (<button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
                           </tr>
@@ -1223,7 +1262,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                     {hasAbonosExtras && <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider font-bold shadow-sm">Anticipo Bloqueado por Abonos</span>}
                 </div>
                 <div className="flex bg-slate-100 rounded-md p-1 gap-1 relative">
-                    {(hasAbonosExtras || isEffectivelyReadOnly) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
+                    {(hasAbonosExtras || isSaldoReadOnly) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('full')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'full' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Pago Completo</button>
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('partial')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'partial' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Anticipo</button>
                 </div>
@@ -1237,7 +1276,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1">
                           <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
-                          {isEffectivelyReadOnly || hasAbonosExtras || paymentMode === 'full' ? (
+                          {isSaldoReadOnly || hasAbonosExtras || paymentMode === 'full' ? (
                               <div className="w-full pl-6 pr-12 py-1 border border-slate-200 rounded text-sm font-bold bg-slate-100 text-slate-600 uppercase">{Number(localAnticipo || 0).toFixed(2)}</div>
                           ) : (
                               <input type="number" step="0.01" className="w-full pl-6 pr-12 py-1 border rounded text-sm font-bold bg-white border-slate-300" value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} placeholder="0.00" />
@@ -1248,7 +1287,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
-                      {isEffectivelyReadOnly || hasAbonosExtras ? (
+                      {isSaldoReadOnly || hasAbonosExtras ? (
                           <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoAnticipo || 'Efectivo'}</div>
                       ) : (
                           <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})}>
@@ -1264,7 +1303,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
-                           {isEffectivelyReadOnly || hasAbonosExtras ? (
+                           {isSaldoReadOnly || hasAbonosExtras ? (
                                <div className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.referenciaPago || '-'}</div>
                            ) : (
                                <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." />
@@ -1279,14 +1318,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            onAdd={handleAddComprobantes} 
                            onRemove={handleRemoveComprobante} 
                            isProcessing={isProcessingComprobantes} 
-                           disabled={isEffectivelyReadOnly || hasAbonosExtras}
+                           disabled={isSaldoReadOnly || hasAbonosExtras}
                        />
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                           {isEffectivelyReadOnly || hasAbonosExtras ? (
+                           {isSaldoReadOnly || hasAbonosExtras ? (
                                <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceAnticipo || '-'}</div>
                            ) : (
                                <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
@@ -1296,7 +1335,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
-                      {isEffectivelyReadOnly || hasAbonosExtras ? (
+                      {isSaldoReadOnly || hasAbonosExtras ? (
                           <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaAnticipo || '-'}</div>
                       ) : (
                           <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
@@ -1304,7 +1343,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </div>
 
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
-                        {isEffectivelyReadOnly || hasAbonosExtras ? (
+                        {isSaldoReadOnly || hasAbonosExtras ? (
                             <>
                                 <Checkbox id="chk-ret" checked={applyRetention} disabled />
                                 <label htmlFor="chk-ret" className="text-xs select-none opacity-50 cursor-not-allowed">¿Aplica Retención?</label>
@@ -1335,7 +1374,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         
                         <div className="flex items-center gap-2">
                            <label className="text-xs font-bold w-20">Condición Saldo:</label>
-                           {isEffectivelyReadOnly ? (
+                           {isSaldoReadOnly ? (
                                <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoSaldo || 'No aplica'}</div>
                            ) : (
                                <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})}>
@@ -1351,7 +1390,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         {formData.formaPagoSaldo === 'Crédito' && (
                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                                <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                               {isEffectivelyReadOnly ? (
+                               {isSaldoReadOnly ? (
                                    <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceSaldo || '-'}</div>
                                ) : (
                                    <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceSaldo} onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} />
@@ -1361,14 +1400,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
                         <div className="flex items-center gap-2">
                             <label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label>
-                            {isEffectivelyReadOnly ? (
+                            {isSaldoReadOnly ? (
                                 <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaSaldo || '-'}</div>
                             ) : (
                                 <input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} />
                             )}
                         </div>
                         
-                        {!isEffectivelyReadOnly && (
+                        {!isSaldoReadOnly && (
                             <div className="bg-orange-50 border border-orange-200 rounded p-2 mt-2 animate-in fade-in">
                                <p className="text-[10px] text-orange-800 font-medium leading-snug">ℹ️ Si el cliente va a cancelar este saldo <b>ahora mismo</b>, por favor utiliza la opción de <b>"Añadir Abono"</b> en la sección de abajo.</p>
                             </div>
@@ -1443,7 +1482,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
          <div className="flex gap-3">
              <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
-             
              <Button type="submit" form="orderForm" disabled={loading} className="bg-[#004080] hover:bg-blue-900 text-white px-8 shadow-md">
                 {loading ? 'Guardando...' : (mode === 'create' ? 'Guardar Orden' : 'Actualizar Orden')}
              </Button>

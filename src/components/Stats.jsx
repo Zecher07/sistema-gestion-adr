@@ -10,6 +10,11 @@ import {
 } from 'lucide-react';
 
 const Stats = ({ orders, user }) => {
+  // 🔥 REGLA DE SEGURIDAD: Producción NO ve las estadísticas del Dashboard 🔥
+  if (user?.role === 'Producción') {
+    return null;
+  }
+
   // Verificamos si el usuario es Administrador para mostrar el desglose
   const isAdmin = user?.role === 'Administrador';
 
