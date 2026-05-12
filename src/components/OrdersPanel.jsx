@@ -1,4 +1,3 @@
-// src/components/OrdersPanel.jsx
 import React, { useState, useEffect, useMemo } from 'react';
 import { 
   Eye, Edit, Trash2, CreditCard, 
@@ -90,17 +89,18 @@ const OrdersPanel = ({
   };
 
   const isAdmin = user.role === 'Administrador';
+  const isProduccion = user.role === 'Producción'; // 🔥 Nueva regla de seguridad para el Taller 🔥
 
   const actionConfig = useMemo(() => {
     return {
       showView: true,
       showEdit: true,
-      showClone: true, 
+      showClone: !isProduccion, // Producción no clona
       showPayment: isAdmin,
       showArchive: isAdmin,
       showUnarchive: isAdmin
     };
-  }, [isAdmin]);
+  }, [isAdmin, isProduccion]);
 
   const canModify = (order) => {
       if (isAdmin) return true;
@@ -370,14 +370,18 @@ const OrdersPanel = ({
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4 print:hidden">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-100 pb-4">
           <div className="w-full md:w-auto">
-             <Button onClick={onCreateOrder} className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white gap-2">
-               <Plus className="h-4 w-4" /> Añadir Orden de Producción
-             </Button>
+             {!isProduccion && (
+                 <Button onClick={onCreateOrder} className="w-full md:w-auto bg-green-600 hover:bg-green-700 text-white gap-2">
+                   <Plus className="h-4 w-4" /> Añadir Orden de Producción
+                 </Button>
+             )}
           </div>
           <div className="flex gap-2 w-full md:w-auto">
-            <Button variant="outline" size="sm" onClick={handleExportCSV} className="flex-1 md:flex-none gap-2 text-slate-600">
-              <FileSpreadsheet className="h-4 w-4 text-green-600" /> Exportar
-            </Button>
+            {!isProduccion && (
+                <Button variant="outline" size="sm" onClick={handleExportCSV} className="flex-1 md:flex-none gap-2 text-slate-600">
+                  <FileSpreadsheet className="h-4 w-4 text-green-600" /> Exportar
+                </Button>
+            )}
             <Button variant="outline" size="sm" onClick={handlePrint} className="flex-1 md:flex-none gap-2 text-slate-600">
               <Printer className="h-4 w-4 text-slate-600" /> Imprimir
             </Button>
@@ -442,20 +446,22 @@ const OrdersPanel = ({
           </div>
         </div>
 
-        <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-100">
-          <div className="bg-green-50 p-3 rounded-lg border border-green-100 flex justify-between items-center">
-             <span className="text-xs font-bold text-green-700 uppercase">Total Abonos</span>
-             <span className="text-lg font-bold text-green-800">{formatCurrency(dynamicTotals.abono)}</span>
-          </div>
-          <div className="bg-red-50 p-3 rounded-lg border border-red-100 flex justify-between items-center">
-             <span className="text-xs font-bold text-red-700 uppercase">Saldo Pendiente</span>
-             <span className="text-lg font-bold text-red-800">{formatCurrency(dynamicTotals.saldo)}</span>
-          </div>
-          <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 flex justify-between items-center">
-             <span className="text-xs font-bold text-blue-700 uppercase">Total General</span>
-             <span className="text-lg font-bold text-blue-800">{formatCurrency(dynamicTotals.total)}</span>
-          </div>
-        </div>
+        {!isProduccion && (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-slate-100">
+              <div className="bg-green-50 p-3 rounded-lg border border-green-100 flex justify-between items-center">
+                 <span className="text-xs font-bold text-green-700 uppercase">Total Abonos</span>
+                 <span className="text-lg font-bold text-green-800">{formatCurrency(dynamicTotals.abono)}</span>
+              </div>
+              <div className="bg-red-50 p-3 rounded-lg border border-red-100 flex justify-between items-center">
+                 <span className="text-xs font-bold text-red-700 uppercase">Saldo Pendiente</span>
+                 <span className="text-lg font-bold text-red-800">{formatCurrency(dynamicTotals.saldo)}</span>
+              </div>
+              <div className="bg-blue-50 p-3 rounded-lg border border-blue-100 flex justify-between items-center">
+                 <span className="text-xs font-bold text-blue-700 uppercase">Total General</span>
+                 <span className="text-lg font-bold text-blue-800">{formatCurrency(dynamicTotals.total)}</span>
+              </div>
+            </div>
+        )}
       </div>
 
       <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden w-full">
@@ -505,9 +511,11 @@ const OrdersPanel = ({
                 <SortableHeader label="Tipo" sortKey="tipoOrden" align="center" width="w-16" />
                 <SortableHeader label="Título" sortKey="tipoLetrero" width="max-w-[150px]" />
                 <SortableHeader label="Cliente" sortKey="cliente" width="max-w-[150px]" />
-                <SortableHeader label="Abono" sortKey="anticipo" align="right" width="w-20" />
-                <SortableHeader label="Saldo" sortKey="saldo" align="right" width="w-20" />
-                <SortableHeader label="Total" sortKey="total" align="right" width="w-20" />
+                
+                {!isProduccion && <SortableHeader label="Abono" sortKey="anticipo" align="right" width="w-20" />}
+                {!isProduccion && <SortableHeader label="Saldo" sortKey="saldo" align="right" width="w-20" />}
+                {!isProduccion && <SortableHeader label="Total" sortKey="total" align="right" width="w-20" />}
+                
                 <SortableHeader label="Vendedor" sortKey="vendedor" width="w-24" />
                 <SortableHeader label="Estado" sortKey="status" align="center" width="w-28" />
                 <th className="px-2 py-3 font-bold text-center print:hidden w-32">Acciones</th>
@@ -550,15 +558,23 @@ const OrdersPanel = ({
                         <div>{order.cliente || order.cliente_nombre}</div>
                         {(order.ruc || order.cedula) && <div className="text-[10px] text-slate-400">{order.ruc || order.cedula}</div>}
                       </td>
-                      <td className="px-2 py-3 text-right text-slate-600 whitespace-nowrap">
-                        {formatCurrency(abonoTotal)}
-                      </td>
-                      <td className={`px-2 py-3 text-right font-bold whitespace-nowrap ${saldoReal > 0 ? 'text-red-600' : 'text-green-600'}`}>
-                        {formatCurrency(saldoReal)}
-                      </td>
-                      <td className="px-2 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">
-                        {formatCurrency(financials.total)}
-                      </td>
+                      
+                      {!isProduccion && (
+                          <td className="px-2 py-3 text-right text-slate-600 whitespace-nowrap">
+                            {formatCurrency(abonoTotal)}
+                          </td>
+                      )}
+                      {!isProduccion && (
+                          <td className={`px-2 py-3 text-right font-bold whitespace-nowrap ${saldoReal > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                            {formatCurrency(saldoReal)}
+                          </td>
+                      )}
+                      {!isProduccion && (
+                          <td className="px-2 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">
+                            {formatCurrency(financials.total)}
+                          </td>
+                      )}
+
                       <td className="px-2 py-3 text-slate-600 text-xs truncate max-w-[100px]" title={order.vendedor}>
                         {order.vendedor || 'N/A'}
                       </td>
@@ -604,7 +620,6 @@ const OrdersPanel = ({
                                   </Button>
                                 )}
                                 
-                                {/* 🔥 AHORA SOLO ANULA SI ESTÁ EN VENTAS 🔥 */}
                                 {canCancel(order) && (
                                     <Button 
                                       variant="ghost" 

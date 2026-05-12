@@ -132,10 +132,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
   const isEffectivelyReadOnly = mode === 'payment_only' || mode === 'read_only' || isPastPaso1;
-
-  // 🔥 BLOQUEO DE SALDO PARA VENDEDORES UNA VEZ CREADA LA ORDEN 🔥
   const isEditMode = !!(initialData && initialData.id);
-  const isSaldoReadOnly = isEffectivelyReadOnly || (isEditMode && !isAdmin);
+  
+  const isBottomReadOnly = isEffectivelyReadOnly || (isEditMode && !isAdmin);
 
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
@@ -145,6 +144,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [showNewClientModal, setShowNewClientModal] = useState(false);
   const [localClients, setLocalClients] = useState(clients);
   const searchRef = useRef(null);
+
+  // 🔥 SOLUCIÓN: Congelamos el nombre del nuevo cliente para que no se borre al re-renderizar 🔥
+  const newClientInitialData = useMemo(() => {
+      return showNewClientModal ? { nombre: searchTerm } : null;
+  }, [showNewClientModal]);
 
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState([]);
@@ -871,6 +875,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     try {
+        // 🔥 REMOVEMOS esMayorista del payload porque no existe en la tabla ordenes 🔥
         const payload = {
             cliente_id: formData.clienteId,
             cliente_nombre: formData.cliente,
@@ -902,7 +907,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             nota_anticipo: formData.notaAnticipo, 
             credito_vence_anticipo: formData.creditoVenceAnticipo, 
             imagenes: formData.imagenes, 
-            esMayorista: formData.esMayorista,
             updated_at: new Date().toISOString()
         };
 
@@ -1097,7 +1101,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                      <div className="flex gap-2 items-center">
                          <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-md border border-indigo-200 shadow-sm transition-colors hover:bg-indigo-100">
                              <Checkbox checked={formData.esMayorista || false} onCheckedChange={toggleMayorista} />
-                             Tarifa Mayorista
+                             Tarifa Distribuidor
                          </label>
                          <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
                              <ShoppingCart className="h-3 w-3" /> Catálogo
@@ -1202,7 +1206,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span className="text-slate-500 font-bold" title="Este valor se restará directamente del Total Final">Ajuste al Total ($)</span>
-                            {isEffectivelyReadOnly ? (
+                            {isBottomReadOnly ? (
                                 <span className="font-bold text-red-600 ml-2">${Number(localDiscountVal || 0).toFixed(2)} ({Number(localDiscountPercent || 0).toFixed(2)}%)</span>
                             ) : (
                                 <>
@@ -1242,8 +1246,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       </tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isEffectivelyReadOnly}/>
-                            <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${isEffectivelyReadOnly ? 'opacity-50' : ''}`}>IVA {isAdmin && !isEffectivelyReadOnly ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
+                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isBottomReadOnly}/>
+                            <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>IVA {isAdmin && !isBottomReadOnly ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
@@ -1262,7 +1266,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                     {hasAbonosExtras && <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider font-bold shadow-sm">Anticipo Bloqueado por Abonos</span>}
                 </div>
                 <div className="flex bg-slate-100 rounded-md p-1 gap-1 relative">
-                    {(hasAbonosExtras || isSaldoReadOnly) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
+                    {(hasAbonosExtras || isBottomReadOnly) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('full')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'full' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Pago Completo</button>
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('partial')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'partial' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Anticipo</button>
                 </div>
@@ -1276,7 +1280,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1">
                           <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
-                          {isSaldoReadOnly || hasAbonosExtras || paymentMode === 'full' ? (
+                          {isBottomReadOnly || hasAbonosExtras || paymentMode === 'full' ? (
                               <div className="w-full pl-6 pr-12 py-1 border border-slate-200 rounded text-sm font-bold bg-slate-100 text-slate-600 uppercase">{Number(localAnticipo || 0).toFixed(2)}</div>
                           ) : (
                               <input type="number" step="0.01" className="w-full pl-6 pr-12 py-1 border rounded text-sm font-bold bg-white border-slate-300" value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} placeholder="0.00" />
@@ -1287,7 +1291,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
-                      {isSaldoReadOnly || hasAbonosExtras ? (
+                      {isBottomReadOnly || hasAbonosExtras ? (
                           <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoAnticipo || 'Efectivo'}</div>
                       ) : (
                           <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})}>
@@ -1303,7 +1307,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
-                           {isSaldoReadOnly || hasAbonosExtras ? (
+                           {isBottomReadOnly || hasAbonosExtras ? (
                                <div className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.referenciaPago || '-'}</div>
                            ) : (
                                <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." />
@@ -1318,14 +1322,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            onAdd={handleAddComprobantes} 
                            onRemove={handleRemoveComprobante} 
                            isProcessing={isProcessingComprobantes} 
-                           disabled={isSaldoReadOnly || hasAbonosExtras}
+                           disabled={isBottomReadOnly || hasAbonosExtras}
                        />
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                           {isSaldoReadOnly || hasAbonosExtras ? (
+                           {isBottomReadOnly || hasAbonosExtras ? (
                                <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceAnticipo || '-'}</div>
                            ) : (
                                <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
@@ -1335,7 +1339,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
-                      {isSaldoReadOnly || hasAbonosExtras ? (
+                      {isBottomReadOnly || hasAbonosExtras ? (
                           <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaAnticipo || '-'}</div>
                       ) : (
                           <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
@@ -1343,7 +1347,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </div>
 
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
-                        {isSaldoReadOnly || hasAbonosExtras ? (
+                        {isBottomReadOnly || hasAbonosExtras ? (
                             <>
                                 <Checkbox id="chk-ret" checked={applyRetention} disabled />
                                 <label htmlFor="chk-ret" className="text-xs select-none opacity-50 cursor-not-allowed">¿Aplica Retención?</label>
@@ -1374,7 +1378,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         
                         <div className="flex items-center gap-2">
                            <label className="text-xs font-bold w-20">Condición Saldo:</label>
-                           {isSaldoReadOnly ? (
+                           {isBottomReadOnly ? (
                                <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoSaldo || 'No aplica'}</div>
                            ) : (
                                <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})}>
@@ -1390,7 +1394,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         {formData.formaPagoSaldo === 'Crédito' && (
                            <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                                <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                               {isSaldoReadOnly ? (
+                               {isBottomReadOnly ? (
                                    <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceSaldo || '-'}</div>
                                ) : (
                                    <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceSaldo} onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} />
@@ -1400,14 +1404,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
                         <div className="flex items-center gap-2">
                             <label className="text-xs font-bold w-20 text-slate-500">Nota Saldo:</label>
-                            {isSaldoReadOnly ? (
+                            {isBottomReadOnly ? (
                                 <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaSaldo || '-'}</div>
                             ) : (
                                 <input type="text" placeholder="Ej: Paga al retirar el material" className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaSaldo} onChange={e => setFormData({...formData, notaSaldo: e.target.value})} />
                             )}
                         </div>
                         
-                        {!isSaldoReadOnly && (
+                        {!isBottomReadOnly && (
                             <div className="bg-orange-50 border border-orange-200 rounded p-2 mt-2 animate-in fade-in">
                                <p className="text-[10px] text-orange-800 font-medium leading-snug">ℹ️ Si el cliente va a cancelar este saldo <b>ahora mismo</b>, por favor utiliza la opción de <b>"Añadir Abono"</b> en la sección de abajo.</p>
                             </div>
@@ -1462,12 +1466,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              <div className="text-xs text-slate-500 italic">Arte/Diseño</div>
              <ImageGallery 
                 images={formData.imagenes} 
-                isReadOnly={isEffectivelyReadOnly} 
+                isReadOnly={isBottomReadOnly} 
                 onRemove={removeImage} 
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
              />
-             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isEffectivelyReadOnly} /></div>
+             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isBottomReadOnly} /></div>
           </div>
         </form>
       </div>
@@ -1619,7 +1623,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       {showNewClientModal && (
         <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200 p-4">
             <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-lg">Nuevo Cliente</h3><Button size="sm" variant="ghost" onClick={()=>setShowNewClientModal(false)}><X/></Button></div>
-            <div className="flex-1 overflow-y-auto"><ClientForm user={currentUser} onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={{nombre: searchTerm}} /></div>
+            <div className="flex-1 overflow-y-auto"><ClientForm user={currentUser} onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={newClientInitialData} /></div>
         </div>
       )}
 
