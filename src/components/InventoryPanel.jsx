@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign } from 'lucide-react';
+import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text'; 
 import { useToast } from '@/components/ui/use-toast';
@@ -30,6 +30,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const isAdmin = user?.role === 'Administrador';
   const isProduccion = user?.role === 'Producción'; 
 
+  // Modales
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   
@@ -39,7 +40,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const [editBodegaName, setEditBodegaName] = useState('');
   const [bodegaLoading, setBodegaLoading] = useState(false);
   
-  // 🔥 NUEVOS CAMPOS EN EL ESTADO INICIAL 🔥
   const [formData, setFormData] = useState({ 
       codigo: '', nombre: '', categoria: '', cantidad: 0, unidad: 'Unidades', ubicacion: '', bodega: 'PRINCIPAL',
       valor_perdida: 0, valor_compra: 0, proveedores: ''
@@ -53,6 +53,13 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const [globalHistory, setGlobalHistory] = useState([]);
   const [globalHistoryLoading, setGlobalHistoryLoading] = useState(false);
 
+  const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
+  const [purchaseRef, setPurchaseRef] = useState('');
+  const [purchaseItems, setPurchaseItems] = useState([{ inventoryId: '', qty: '' }]);
+
+  const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
+  const [adjustItems, setAdjustItems] = useState([{ inventoryId: '', newQty: '', reason: '' }]);
+
   useEffect(() => {
     fetchData();
   }, []);
@@ -60,7 +67,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const fetchData = async () => {
     setLoading(true);
     try {
-      const { data: invData, error: invError } = await supabase.from('inventario').select('*');
+      const { data: invData, error: invError } = await supabase.from('inventario').select('*').order('nombre');
       if (invError) throw invError;
       setItems(invData || []);
 
@@ -69,7 +76,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       setBodegasList(bodData || [{ id: 1, nombre: 'PRINCIPAL' }]);
 
     } catch (error) {
-      console.error(error);
+      console.error("Error fetching data:", error);
       toast({ title: "Error", description: "No se pudieron cargar los datos", variant: "destructive" });
     } finally {
       setLoading(false);
@@ -87,6 +94,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           if (error) throw error;
           setGlobalHistory(data || []);
       } catch (err) {
+          console.error("Error fetching global history:", err);
           toast({title: "Error", description: "No se pudo cargar el historial general.", variant: "destructive"});
       } finally {
           setGlobalHistoryLoading(false);
@@ -94,9 +102,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   };
 
   useEffect(() => {
-      if (activeTab === 'history') {
-          fetchGlobalHistory();
-      }
+      if (activeTab === 'history') fetchGlobalHistory();
   }, [activeTab]);
 
   useEffect(() => { setCurrentPage(1); }, [searchTerm, itemsPerPage, selectedCategory, selectedBodega]);
@@ -121,11 +127,13 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       setIsHistoryModalOpen(true);
       setItemHistoryLoading(true);
       try {
-          const { data, error } = await supabase.from('historial_inventario').select('*').eq('material_id', item.id).order('created_at', { ascending: false }).limit(100);
+          // Aseguramos de enviar el ID numérico a Supabase para evitar errores 400
+          const { data, error } = await supabase.from('historial_inventario').select('*').eq('material_id', Number(item.id)).order('created_at', { ascending: false }).limit(100);
           if (error) throw error;
           setItemHistoryData(data || []);
       } catch (err) {
-          toast({title: "Sin registros", description: "Aún no hay historial para este material.", variant: "warning"});
+          console.error("Error fetching item history:", err);
+          toast({title: "Sin registros", description: "Aún no hay historial o hubo un error de conexión.", variant: "warning"});
       } finally {
           setItemHistoryLoading(false);
       }
@@ -135,7 +143,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       if (!newBodegaName.trim()) return;
       const name = newBodegaName.trim().toUpperCase();
       if (bodegasList.find(b => b.nombre === name)) return toast({ title: "Error", description: "La bodega ya existe.", variant: "destructive" });
-
       setBodegaLoading(true);
       try {
           const { error } = await supabase.from('bodegas').insert([{ nombre: name }]);
@@ -143,30 +150,25 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           toast({ title: "Bodega Creada" });
           setNewBodegaName('');
           fetchData();
-      } catch (error) {
-          toast({ title: "Error al crear", description: error.message, variant: "destructive" });
-      } finally { setBodegaLoading(false); }
+      } catch (error) { toast({ title: "Error al crear", description: error.message, variant: "destructive" }); } 
+      finally { setBodegaLoading(false); }
   };
 
   const handleSaveEditBodega = async (bod) => {
       if (!editBodegaName.trim()) return;
       const newName = editBodegaName.trim().toUpperCase();
       if (bod.nombre === newName) return setEditingBodegaId(null);
-
       setBodegaLoading(true);
       try {
           const { error } = await supabase.from('bodegas').update({ nombre: newName }).eq('id', bod.id);
           if (error) throw error;
-          
           await supabase.from('inventario').update({ bodega: newName }).eq('bodega', bod.nombre);
-          
           toast({ title: "Bodega Actualizada" });
           setEditingBodegaId(null);
           if (selectedBodega === bod.nombre) setSelectedBodega(newName);
           fetchData();
-      } catch (error) {
-          toast({ title: "Error al actualizar", description: error.message, variant: "destructive" });
-      } finally { setBodegaLoading(false); }
+      } catch (error) { toast({ title: "Error al actualizar", description: error.message, variant: "destructive" }); } 
+      finally { setBodegaLoading(false); }
   };
 
   const handleDeleteBodega = async (bod) => {
@@ -175,26 +177,22 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       try {
           const { count, error: countError } = await supabase.from('inventario').select('id', { count: 'exact' }).eq('bodega', bod.nombre);
           if (countError) throw countError;
-
           if (count > 0) {
               toast({ title: "No se puede borrar", description: `Esta bodega tiene ${count} productos. Muévelos a otra bodega editándolos primero.`, variant: "destructive" });
               setBodegaLoading(false);
               return;
           }
-
           const { error } = await supabase.from('bodegas').delete().eq('id', bod.id);
           if (error) throw error;
-
           toast({ title: "Bodega Eliminada" });
           if (selectedBodega === bod.nombre) setSelectedBodega('');
           fetchData();
-      } catch (error) {
-          toast({ title: "Error al eliminar", description: error.message, variant: "destructive" });
-      } finally { setBodegaLoading(false); }
+      } catch (error) { toast({ title: "Error al eliminar", description: error.message, variant: "destructive" }); } 
+      finally { setBodegaLoading(false); }
   };
 
   const handleOpenModal = (item = null) => {
-    if (isReadOnly) return; 
+    if (isReadOnly || !isAdmin) return; 
     if (item) {
         setEditingItem(item);
         setFormData({ 
@@ -219,11 +217,10 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
   const handleSave = async () => {
       if (!formData.nombre) return toast({ title: "Atención", description: "El nombre es obligatorio", variant: "destructive" });
-      
       const nuevaCantidad = formData.cantidad !== '' ? parseInt(formData.cantidad, 10) : 0;
 
       if (editingItem && isProduccion && nuevaCantidad < editingItem.cantidad) {
-          return toast({ title: "Acción Restringida", description: "Producción no puede restar inventario manualmente. Las restas se hacen solas al finalizar órdenes.", variant: "destructive" });
+          return toast({ title: "Acción Restringida", description: "Producción no puede restar inventario manualmente.", variant: "destructive" });
       }
 
       setSaving(true);
@@ -250,11 +247,10 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       cantidad_cambio: diff,
                       cantidad_resultante: nuevaCantidad,
                       tipo: diff > 0 ? 'INGRESO' : 'EGRESO',
-                      motivo: 'Ajuste Manual / Edición',
+                      motivo: 'Ajuste Manual Administrativo',
                       usuario: user?.name || 'Sistema'
                   }]);
               }
-
               toast({ title: "Actualizado", description: "Inventario actualizado." });
           } else {
               const { data: newRow, error } = await supabase.from('inventario').insert([payload]).select().single();
@@ -271,14 +267,15 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       usuario: user?.name || 'Sistema'
                   }]);
               }
-
               toast({ title: "Creado", description: "Material añadido al inventario." });
           }
           setIsModalOpen(false);
           fetchData();
-      } catch (error) {
-          toast({ title: "Error", description: error.message, variant: "destructive" });
-      } finally { setSaving(false); }
+      } catch (error) { 
+          console.error("Save error:", error);
+          toast({ title: "Error", description: error.message, variant: "destructive" }); 
+      } 
+      finally { setSaving(false); }
   };
 
   const handleDelete = async (id) => {
@@ -292,15 +289,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   };
 
   const updateQuantity = async (id, currentQty, amount) => {
-      if (isReadOnly) return;
-
-      if (isProduccion && amount < 0) {
-          return toast({ title: "Acción Restringida", description: "Producción solo puede ingresar mercadería (+).", variant: "destructive" });
-      }
-
+      if (!isAdmin) return; 
       const newQty = currentQty + amount;
       if (newQty < 0) return; 
-      
       try {
           setItems(items.map(i => i.id === id ? { ...i, cantidad: newQty } : i));
           const { error } = await supabase.from('inventario').update({ cantidad: newQty }).eq('id', id);
@@ -316,8 +307,102 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               motivo: 'Ajuste manual rápido',
               usuario: user?.name || 'Sistema'
           }]);
-
       } catch (error) { toast({ title: "Error", description: "No se pudo actualizar la cantidad.", variant: "destructive" }); }
+  };
+
+  const openPurchaseModal = () => {
+      setPurchaseRef('');
+      setPurchaseItems([{ inventoryId: '', qty: '' }]);
+      setIsPurchaseModalOpen(true);
+  };
+
+  const handleSavePurchase = async () => {
+      const validItems = purchaseItems.filter(i => i.inventoryId && i.qty !== '' && Number(i.qty) > 0);
+      if (validItems.length === 0) return toast({ title: "Atención", description: "Debe ingresar al menos un material con cantidad válida.", variant: "destructive" });
+
+      setSaving(true);
+      try {
+          for (const pItem of validItems) {
+              const target = items.find(i => String(i.id) === String(pItem.inventoryId));
+              if (!target) continue;
+              const newQty = target.cantidad + Number(pItem.qty);
+              
+              await supabase.from('inventario').update({ cantidad: newQty }).eq('id', target.id);
+              await supabase.from('historial_inventario').insert([{
+                  material_id: target.id,
+                  material_nombre: target.nombre,
+                  cantidad_cambio: Number(pItem.qty),
+                  cantidad_resultante: newQty,
+                  tipo: 'INGRESO',
+                  motivo: `Ingreso por Compra ${purchaseRef ? '- Fac/Ref: ' + purchaseRef : ''}`,
+                  usuario: user?.name || 'Sistema'
+              }]);
+          }
+          toast({ title: "Compra Registrada", description: "Se ha sumado el stock correctamente." });
+          setIsPurchaseModalOpen(false);
+          fetchData();
+      } catch (err) { 
+          console.error("Purchase error:", err);
+          toast({ title: "Error", description: "Hubo un problema al registrar la compra.", variant: "destructive" }); 
+      } 
+      finally { setSaving(false); }
+  };
+
+  const openAdjustModal = () => {
+      setAdjustItems([{ inventoryId: '', newQty: '', reason: '' }]);
+      setIsAdjustModalOpen(true);
+  };
+
+  const handleSaveAdjust = async () => {
+      const validItems = adjustItems.filter(i => i.inventoryId && i.newQty !== '' && i.reason.trim() !== '');
+      if (validItems.length === 0) return toast({ title: "Atención", description: "Debe completar material, stock real y justificación en las filas activas.", variant: "destructive" });
+
+      setSaving(true);
+      try {
+          for (const aItem of validItems) {
+              const target = items.find(i => String(i.id) === String(aItem.inventoryId));
+              if (!target) continue;
+              
+              const nQty = parseInt(aItem.newQty, 10);
+              const diff = nQty - target.cantidad;
+              if (diff === 0) continue; 
+
+              await supabase.from('inventario').update({ cantidad: nQty }).eq('id', target.id);
+              await supabase.from('historial_inventario').insert([{
+                  material_id: target.id,
+                  material_nombre: target.nombre,
+                  cantidad_cambio: diff,
+                  cantidad_resultante: nQty,
+                  tipo: diff > 0 ? 'INGRESO' : 'EGRESO',
+                  motivo: `Cuadre de Inventario: ${aItem.reason}`,
+                  usuario: user?.name || 'Sistema'
+              }]);
+          }
+          toast({ title: "Cuadre Exitoso", description: "Se ha ajustado el inventario y guardado las justificaciones." });
+          setIsAdjustModalOpen(false);
+          fetchData();
+      } catch (err) { 
+          console.error("Adjust error:", err);
+          toast({ title: "Error", description: "Hubo un problema al cuadrar el inventario.", variant: "destructive" }); 
+      } 
+      finally { setSaving(false); }
+  };
+
+  const calculateTotalLoss = () => {
+      return adjustItems.reduce((sum, aItem) => {
+          if (!aItem.inventoryId || aItem.newQty === '') return sum;
+          const target = items.find(i => String(i.id) === String(aItem.inventoryId));
+          if (!target) return sum;
+          
+          const nQty = parseInt(aItem.newQty, 10);
+          const diff = nQty - target.cantidad;
+          
+          if (diff < 0) {
+              const cost = target.valor_perdida || target.valor_compra || 0;
+              return sum + (Math.abs(diff) * cost);
+          }
+          return sum; 
+      }, 0);
   };
 
   const requestSort = (key) => {
@@ -363,8 +448,11 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
   return (
     <>
+      {/* -------------------- ESTRUCTURA PRINCIPAL -------------------- */}
       <div className="space-y-4 animate-in fade-in print:hidden">
-          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
+          
+          {/* HEADER PRINCIPAL */}
+          <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4">
               <div>
                   <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
                       <Package className="h-6 w-6 text-orange-600" /> {isReadOnly ? 'Inventario Disponible' : 'Gestión de Inventario'}
@@ -372,7 +460,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                   <p className="text-slate-500">{isReadOnly ? 'Consulta el material disponible' : 'Controla y actualiza los materiales disponibles por bodega'}</p>
               </div>
               
-              <div className="flex gap-2 w-full md:w-auto">
+              <div className="flex flex-wrap gap-2 w-full xl:w-auto">
                   <Button onClick={() => window.print()} variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 gap-2 font-bold shadow-sm">
                       <Printer className="h-4 w-4" /> Imprimir
                   </Button>
@@ -384,15 +472,23 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                                   <Settings className="h-4 w-4" /> Bodegas
                               </Button>
                           )}
-                          <Button onClick={() => handleOpenModal()} className="bg-orange-600 hover:bg-orange-700 text-white gap-2 font-bold shadow-sm w-full md:w-auto">
-                              <Plus className="h-4 w-4" /> Añadir Material
+                          <Button onClick={openPurchaseModal} className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 font-bold shadow-sm">
+                              <ShoppingCart className="h-4 w-4" /> Agregar Compra
                           </Button>
+                          <Button onClick={openAdjustModal} className="bg-amber-500 hover:bg-amber-600 text-white gap-2 font-bold shadow-sm">
+                              <Scale className="h-4 w-4" /> Cuadre
+                          </Button>
+                          {isAdmin && (
+                              <Button onClick={() => handleOpenModal()} className="bg-orange-600 hover:bg-orange-700 text-white gap-2 font-bold shadow-sm">
+                                  <Plus className="h-4 w-4" /> Añadir Material
+                              </Button>
+                          )}
                       </>
                   )}
               </div>
           </div>
 
-          {/* 🔥 SELECTOR DE PESTAÑAS (TABS) 🔥 */}
+          {/* SELECTOR DE PESTAÑAS */}
           <div className="flex gap-2 bg-slate-200 p-1.5 rounded-lg w-fit border border-slate-300 shadow-inner">
              <button 
                 onClick={() => setActiveTab('inventory')} 
@@ -408,10 +504,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
              </button>
           </div>
 
-          {/* 🔥 PESTAÑA: INVENTARIO ACTUAL 🔥 */}
+          {/* -------------------- TAB 1: INVENTARIO ACTUAL -------------------- */}
           {activeTab === 'inventory' && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[600px] flex flex-col animate-in fade-in duration-300">
-                  
                   <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
                       <Warehouse className="h-4 w-4 text-slate-500 mr-1 shrink-0" />
                       <span className="text-xs font-bold text-slate-600 mr-2 uppercase tracking-wider shrink-0">Bodega:</span>
@@ -446,21 +541,18 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       </div>
                   </div>
 
-                  {/* 🔥 NUEVO ORDEN DE COLUMNAS 🔥 */}
                   <div className="overflow-x-auto flex-1">
                       <table className="w-full text-sm text-left">
                           <thead className="text-xs text-slate-700 font-bold border-b border-slate-200 bg-slate-50/50 select-none">
                               <tr>
                                   <SortableHeader label="Categoría / Bodega" sortKey="categoria" width="w-40" />
                                   <SortableHeader label="Material / Código" sortKey="nombre" />
-                                  <th className="px-4 py-3 whitespace-nowrap text-center w-32">Historial</th>
-                                  <SortableHeader label="Cantidad" sortKey="cantidad" align="center" width="w-32" />
-                                  <SortableHeader label="Valor Pérdida" sortKey="valor_perdida" align="right" width="w-32" />
-                                  
-                                  {isAdmin && <SortableHeader label="Costo Real" sortKey="valor_compra" align="right" width="w-32" />}
-                                  {isAdmin && <SortableHeader label="Proveedores" sortKey="proveedores" width="w-48" />}
-                                  
-                                  {!isReadOnly && <th className="px-4 py-3 whitespace-nowrap text-center w-24">Acciones</th>}
+                                  <th className="px-2 py-3 whitespace-nowrap text-center w-24">Historial</th>
+                                  <SortableHeader label="Cantidad" sortKey="cantidad" align="center" width="w-28" />
+                                  <SortableHeader label="Valor Pérdida" sortKey="valor_perdida" align="right" width="w-28" />
+                                  {isAdmin && <SortableHeader label="Costo Real" sortKey="valor_compra" align="right" width="w-28" />}
+                                  {isAdmin && <SortableHeader label="Proveedores" sortKey="proveedores" width="w-[200px]" />}
+                                  {isAdmin && !isReadOnly && <th className="px-4 py-3 whitespace-nowrap text-center w-24">Acciones</th>}
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
@@ -471,73 +563,53 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                               ) : (
                                   paginatedItems.map(item => (
                                       <tr key={item.id} className="hover:bg-orange-50/40 transition-colors group">
-                                          
-                                          {/* Columna: Categoría y Bodega */}
                                           <td className="px-4 py-3 align-middle">
-                                              <div className="flex flex-col gap-1.5 items-start">
+                                              <div className="flex flex-col gap-0.5 items-start">
                                                   {item.categoria ? (<span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-blue-50 text-blue-700 border border-blue-100 uppercase">{item.categoria}</span>) : '-'}
-                                                  <span className="inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold tracking-wider bg-slate-800 text-white shadow-sm uppercase"><Warehouse className="h-3 w-3 mr-1" /> {item.bodega || 'PRINCIPAL'}</span>
+                                                  <span className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5"><Warehouse className="h-2.5 w-2.5" /> {item.bodega || 'PRINCIPAL'}</span>
                                               </div>
                                           </td>
-                                          
-                                          {/* Columna: Material */}
                                           <td className="px-4 py-3 align-middle">
-                                              <div className="font-bold text-slate-800 uppercase">{item.nombre}</div>
-                                              <div className="flex items-center gap-2 mt-1">
-                                                  {item.codigo && <span className="font-mono text-[10px] bg-slate-100 text-slate-600 px-1 rounded border border-slate-200">{item.codigo}</span>}
-                                                  <span className="text-[10px] text-slate-500 font-bold">MEDIDA: <span className="text-orange-600 uppercase">{item.unidad}</span></span>
+                                              <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                                  <span className="font-bold text-slate-800 uppercase">{item.nombre}</span>
+                                                  {item.codigo && <span className="font-mono text-[10px] text-slate-400">[{item.codigo}]</span>}
+                                                  <span className="text-[10px] text-orange-600 font-medium">({item.unidad})</span>
                                               </div>
                                           </td>
-
-                                          {/* Columna: Historial */}
-                                          <td className="px-4 py-3 text-center align-middle">
-                                              <Button variant="outline" size="sm" onClick={() => openItemHistory(item)} className="h-7 text-[10px] border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold shadow-sm whitespace-nowrap">
-                                                  <History className="h-3.5 w-3.5 mr-1" /> VER DETALLE
+                                          <td className="px-2 py-3 text-center align-middle whitespace-nowrap">
+                                              <Button variant="outline" size="sm" onClick={() => openItemHistory(item)} className="h-7 text-[10px] border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold shadow-sm px-2 mx-auto">
+                                                  <History className="h-3.5 w-3.5 mr-1" /> VER
                                               </Button>
                                           </td>
-
-                                          {/* Columna: Cantidad */}
                                           <td className="px-4 py-3 align-middle">
-                                              {isReadOnly ? (
-                                                  <div className="flex justify-center items-center"><span className={cn("font-bold text-base px-3 py-1 rounded-md", item.cantidad <= 5 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-800')}>{item.cantidad}</span></div>
-                                              ) : (
+                                              {isAdmin ? (
                                                   <div className="flex items-center justify-center gap-2 bg-white p-1 rounded-full border border-slate-200 shadow-sm w-fit mx-auto">
-                                                      {!isProduccion ? (
-                                                          <button onClick={() => updateQuantity(item.id, item.cantidad, -1)} className="h-6 w-6 flex items-center justify-center rounded-full bg-slate-50 hover:bg-red-100 hover:text-red-600 text-slate-500 font-bold transition-colors">-</button>
-                                                      ) : (
-                                                          <div className="h-6 w-6"></div> 
-                                                      )}
+                                                      <button onClick={() => updateQuantity(item.id, item.cantidad, -1)} className="h-6 w-6 flex items-center justify-center rounded-full bg-slate-50 hover:bg-red-100 hover:text-red-600 text-slate-500 font-bold transition-colors">-</button>
                                                       <span className={cn("font-bold w-10 text-center text-sm", item.cantidad <= 5 ? 'text-red-600' : 'text-slate-900')}>{item.cantidad}</span>
                                                       <button onClick={() => updateQuantity(item.id, item.cantidad, 1)} className="h-6 w-6 flex items-center justify-center rounded-full bg-slate-50 hover:bg-green-100 hover:text-green-600 text-slate-500 font-bold transition-colors">+</button>
                                                   </div>
+                                              ) : (
+                                                  <div className="flex justify-center items-center"><span className={cn("font-bold text-base px-3 py-1 rounded-md", item.cantidad <= 5 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-800')}>{item.cantidad}</span></div>
                                               )}
                                           </td>
-                                          
-                                          {/* Columna: Valor Pérdida */}
                                           <td className="px-4 py-3 text-right font-semibold text-red-700 align-middle">
                                               ${Number(item.valor_perdida || 0).toFixed(2)}
                                           </td>
-
-                                          {/* Columna: Compra Real (Solo Admin) */}
                                           {isAdmin && (
                                               <td className="px-4 py-3 text-right font-bold text-green-700 align-middle bg-green-50/30 border-l border-slate-100">
                                                   ${Number(item.valor_compra || 0).toFixed(2)}
                                               </td>
                                           )}
-
-                                          {/* Columna: Proveedores (Solo Admin) */}
                                           {isAdmin && (
-                                              <td className="px-4 py-3 text-slate-600 text-xs align-middle bg-green-50/30">
+                                              <td className="px-4 py-3 text-slate-600 text-[11px] align-middle bg-green-50/30">
                                                   {item.proveedores || '-'}
                                               </td>
                                           )}
-
-                                          {/* Columna: Acciones */}
-                                          {!isReadOnly && (
+                                          {isAdmin && !isReadOnly && (
                                               <td className="px-4 py-3 align-middle">
                                                   <div className="flex justify-center gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
                                                       <Button variant="ghost" size="icon" onClick={() => handleOpenModal(item)} className="h-8 w-8 text-blue-600 hover:bg-blue-50" title="Editar"><Edit2 className="h-4 w-4" /></Button>
-                                                      {isAdmin && (<Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="h-8 w-8 text-red-600 hover:bg-red-50" title="Eliminar"><Trash2 className="h-4 w-4" /></Button>)}
+                                                      <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="h-8 w-8 text-red-600 hover:bg-red-50" title="Eliminar"><Trash2 className="h-4 w-4" /></Button>
                                                   </div>
                                               </td>
                                           )}
@@ -559,7 +631,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
-          {/* 🔥 PESTAÑA: HISTORIAL Y CONSUMOS GLOBAL 🔥 */}
+          {/* -------------------- TAB 2: HISTORIAL GLOBAL -------------------- */}
           {activeTab === 'history' && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[600px] flex flex-col animate-in fade-in duration-300">
                   <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -575,12 +647,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       ) : (
                           Object.keys(groupedGlobalHistory).map(dateStr => (
                               <div key={dateStr} className="mb-8">
-                                  {/* Cabecera de la Fecha */}
                                   <div className="bg-slate-800 text-white px-4 py-2 font-bold text-sm sticky top-0 shadow-md z-10 flex items-center gap-2 uppercase tracking-wide">
                                       <CalendarIcon className="h-4 w-4 text-orange-400"/> {dateStr}
                                   </div>
-                                  
-                                  {/* Tabla del Día */}
                                   <table className="w-full text-sm text-left">
                                       <thead className="bg-white border-b border-slate-200 text-[11px] uppercase text-slate-500 font-bold">
                                          <tr>
@@ -614,6 +683,153 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
+          {/* -------------------- ZONA DE MODALES (AL FINAL) -------------------- */}
+
+          {/* Modal: Compras */}
+          <AnimatePresence>
+          {isPurchaseModalOpen && (
+              <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+                      <div className="bg-emerald-700 p-4 text-white flex justify-between items-center shrink-0">
+                          <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-emerald-200"/> Registrar Ingreso por Compras</h3>
+                          <button onClick={() => setIsPurchaseModalOpen(false)} className="hover:bg-emerald-800 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
+                      </div>
+                      
+                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+                          <div className="mb-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                              <label className="text-xs font-bold text-slate-600 uppercase mb-1 block">Nº Factura / Proveedor (Opcional)</label>
+                              <Input value={purchaseRef} onChange={e=>setPurchaseRef(e.target.value)} placeholder="Ej: Factura 001 - Importadora..." />
+                          </div>
+
+                          <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-600 uppercase block border-b border-slate-200 pb-1">Materiales Adquiridos</label>
+                              {purchaseItems.map((pItem, idx) => (
+                                  <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+                                      <select 
+                                         className="flex-1 text-sm border border-slate-300 rounded px-2 py-1.5 outline-none focus:border-emerald-500 uppercase font-medium"
+                                         value={pItem.inventoryId}
+                                         onChange={e => {
+                                             const newItems = [...purchaseItems];
+                                             newItems[idx].inventoryId = e.target.value;
+                                             setPurchaseItems(newItems);
+                                         }}
+                                      >
+                                          <option value="">Seleccionar material...</option>
+                                          {items.map(i => <option key={i.id} value={i.id}>{i.nombre} - ({i.unidad})</option>)}
+                                      </select>
+                                      <Input type="number" min="1" className="w-24 text-center font-bold text-emerald-700" placeholder="Cant." value={pItem.qty} onChange={e => {
+                                          const newItems = [...purchaseItems];
+                                          newItems[idx].qty = e.target.value;
+                                          setPurchaseItems(newItems);
+                                      }}/>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => {
+                                          if(purchaseItems.length > 1) setPurchaseItems(purchaseItems.filter((_, i) => i !== idx));
+                                      }}><Trash2 className="h-4 w-4"/></Button>
+                                  </div>
+                              ))}
+                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => setPurchaseItems([...purchaseItems, {inventoryId:'', qty:''}])}><Plus className="h-4 w-4 mr-1"/> Añadir otra fila</Button>
+                          </div>
+                      </div>
+
+                      <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+                          <Button variant="outline" onClick={() => setIsPurchaseModalOpen(false)}>Cancelar</Button>
+                          <Button onClick={handleSavePurchase} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Registrar Ingreso</Button>
+                      </div>
+                  </motion.div>
+              </div>
+          )}
+          </AnimatePresence>
+
+          {/* Modal: Cuadre de Inventario */}
+          <AnimatePresence>
+          {isAdjustModalOpen && (
+              <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+                      <div className="bg-amber-600 p-4 text-white flex justify-between items-center shrink-0">
+                          <h3 className="font-bold text-lg flex items-center gap-2"><Scale className="h-5 w-5 text-amber-200"/> Cuadre de Inventario (Auditoría)</h3>
+                          <button onClick={() => setIsAdjustModalOpen(false)} className="hover:bg-amber-700 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
+                      </div>
+                      
+                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+                          <div className="space-y-3">
+                              <div className="grid grid-cols-12 gap-2 px-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
+                                  <div className="col-span-4">Material</div>
+                                  <div className="col-span-2 text-center">Stock Sistema</div>
+                                  <div className="col-span-2 text-center">Stock Físico (Real)</div>
+                                  <div className="col-span-4">Justificación / Motivo</div>
+                              </div>
+                              {adjustItems.map((aItem, idx) => {
+                                  const targetItem = items.find(i => String(i.id) === String(aItem.inventoryId));
+                                  const sysQty = targetItem ? targetItem.cantidad : '-';
+                                  let diff = 0;
+                                  if(targetItem && aItem.newQty !== '') {
+                                      diff = parseInt(aItem.newQty, 10) - targetItem.cantidad;
+                                  }
+
+                                  return (
+                                      <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm relative">
+                                          <div className="col-span-4">
+                                              <select 
+                                                 className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 outline-none focus:border-amber-500 uppercase font-medium"
+                                                 value={aItem.inventoryId}
+                                                 onChange={e => {
+                                                     const newItems = [...adjustItems];
+                                                     newItems[idx].inventoryId = e.target.value;
+                                                     setAdjustItems(newItems);
+                                                 }}
+                                              >
+                                                  <option value="">Seleccionar material...</option>
+                                                  {items.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
+                                              </select>
+                                          </div>
+                                          <div className="col-span-2 text-center font-bold text-slate-400 text-lg bg-slate-50 rounded border border-slate-100 py-1">{sysQty}</div>
+                                          <div className="col-span-2 relative">
+                                              <Input type="number" min="0" className="w-full text-center font-bold text-lg" placeholder="0" value={aItem.newQty} onChange={e => {
+                                                  const newItems = [...adjustItems];
+                                                  newItems[idx].newQty = e.target.value;
+                                                  setAdjustItems(newItems);
+                                              }}/>
+                                              {targetItem && aItem.newQty !== '' && diff !== 0 && (
+                                                  <span className={cn("absolute -top-2 -right-2 text-[10px] font-black px-1.5 rounded shadow-sm", diff > 0 ? "bg-green-500 text-white" : "bg-red-500 text-white")}>
+                                                      {diff > 0 ? `+${diff}` : diff}
+                                                  </span>
+                                              )}
+                                          </div>
+                                          <div className="col-span-3">
+                                              <Input className="w-full text-xs italic" placeholder="Ej: Material dañado, error de conteo..." value={aItem.reason} onChange={e => {
+                                                  const newItems = [...adjustItems];
+                                                  newItems[idx].reason = e.target.value;
+                                                  setAdjustItems(newItems);
+                                              }}/>
+                                          </div>
+                                          <div className="col-span-1 flex justify-end">
+                                              <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => {
+                                                  if(adjustItems.length > 1) setAdjustItems(adjustItems.filter((_, i) => i !== idx));
+                                              }}><Trash2 className="h-4 w-4"/></Button>
+                                          </div>
+                                      </div>
+                                  );
+                              })}
+                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-amber-300 text-amber-700 hover:bg-amber-50" onClick={() => setAdjustItems([...adjustItems, {inventoryId:'', newQty:'', reason:''}])}><Plus className="h-4 w-4 mr-1"/> Añadir otra fila</Button>
+                          </div>
+                      </div>
+
+                      <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-between items-center shrink-0">
+                          <div className="bg-red-50 border border-red-200 px-4 py-2 rounded-lg flex items-center gap-3">
+                              <span className="text-xs font-bold text-red-800 uppercase tracking-wider">Valor total pérdida monetaria:</span>
+                              <span className="text-xl font-black text-red-600">${calculateTotalLoss().toFixed(2)}</span>
+                          </div>
+                          <div className="flex gap-3">
+                              <Button variant="outline" onClick={() => setIsAdjustModalOpen(false)}>Cancelar</Button>
+                              <Button onClick={handleSaveAdjust} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Ejecutar Cuadre</Button>
+                          </div>
+                      </div>
+                  </motion.div>
+              </div>
+          )}
+          </AnimatePresence>
+
+          {/* Modal: Gestión de Bodegas */}
           <AnimatePresence>
           {isBodegasModalOpen && isAdmin && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -659,8 +875,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           )}
           </AnimatePresence>
 
+          {/* Modal: Crear / Editar Material */}
           <AnimatePresence>
-          {isModalOpen && !isReadOnly && (
+          {isModalOpen && isAdmin && !isReadOnly && (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
                   <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
                       <div className="bg-slate-800 p-4 text-white flex justify-between items-center">
@@ -724,24 +941,20 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                               </div>
 
                               {isAdmin && (
-                                  <>
-                                      <div className="col-span-2 border-t border-slate-200 mt-2 pt-4 grid grid-cols-2 gap-5">
-                                          <div>
-                                              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block flex items-center gap-1"><DollarSign className="h-3 w-3 text-green-600"/> Costo Real (Admin)</label>
-                                              <div className="relative">
-                                                  <span className="absolute left-3 top-2 text-green-600 font-bold">$</span>
-                                                  <Input type="number" step="0.01" min="0" className="pl-7 text-sm font-bold border-green-300 bg-green-50 text-green-800" value={formData.valor_compra} onChange={e => setFormData({...formData, valor_compra: e.target.value})} />
-                                              </div>
-                                          </div>
-                                          <div>
-                                              <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block text-green-700">Proveedores (Admin)</label>
-                                              <Input className="text-sm border-green-300 bg-green-50" placeholder="Ej: Importadora XY..." value={formData.proveedores} onChange={e => setFormData({...formData, proveedores: e.target.value})} />
+                                  <div className="col-span-2 border-t border-slate-200 mt-2 pt-4 grid grid-cols-2 gap-5">
+                                      <div>
+                                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block flex items-center gap-1"><DollarSign className="h-3 w-3 text-green-600"/> Costo Real (Admin)</label>
+                                          <div className="relative">
+                                              <span className="absolute left-3 top-2 text-green-600 font-bold">$</span>
+                                              <Input type="number" step="0.01" min="0" className="pl-7 text-sm font-bold border-green-300 bg-green-50 text-green-800" value={formData.valor_compra} onChange={e => setFormData({...formData, valor_compra: e.target.value})} />
                                           </div>
                                       </div>
-                                  </>
+                                      <div>
+                                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block text-green-700">Proveedores (Admin)</label>
+                                          <Input className="text-sm border-green-300 bg-green-50" placeholder="Ej: Importadora XY..." value={formData.proveedores} onChange={e => setFormData({...formData, proveedores: e.target.value})} />
+                                      </div>
+                                  </div>
                               )}
-
-                              {/* La ubicación se oculta para dar espacio, pero si la necesitas, está en el estado */}
                           </div>
                       </div>
                       <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-3">
@@ -753,7 +966,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           )}
           </AnimatePresence>
 
-          {/* 🔥 MODAL DE HISTORIAL POR ITEM 🔥 */}
+          {/* Modal: Historial por Item */}
           <AnimatePresence>
           {isHistoryModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -801,6 +1014,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
       </div>
 
+      {/* -------------------- VISTA DE IMPRESIÓN -------------------- */}
       <div className="hidden print:block print:p-8 font-sans text-black bg-white min-h-screen">
           <div className="mb-6 border-b-2 border-slate-800 pb-4 flex justify-between items-end">
               <div>
