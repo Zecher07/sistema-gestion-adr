@@ -7,6 +7,7 @@ import { cn } from '@/lib/utils';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabaseClient';
+import ClientForm from './ClientForm';
 
 const ProformaForm = ({ 
   initialData = null,
@@ -16,11 +17,21 @@ const ProformaForm = ({
   onCancel,
   mode = 'create', 
   currentUser,
-  nextProformaNumber
+  nextProformaNumber,
+  onReloadClients
 }) => {
   const { toast } = useToast();
   const [isLoading, setIsLoading] = useState(false);
   const [isSavingDraft, setIsSavingDraft] = useState(false);
+
+  // Estados para el Cliente Nuevo
+  const [showNewClientModal, setShowNewClientModal] = useState(false);
+  const [searchTerm, setSearchTerm] = useState('');
+  
+  // 🔥 SOLUCIÓN: Congelamos el nombre del nuevo cliente 🔥
+  const newClientInitialData = useMemo(() => {
+      return showNewClientModal ? { nombre: searchTerm } : null;
+  }, [showNewClientModal]);
 
   // Estados para el Catálogo
   const [catalogItems, setCatalogItems] = useState([]);
@@ -46,7 +57,7 @@ const ProformaForm = ({
     notasInternas: '',
     responsable: currentUser?.name || '',
     
-    esMayorista: false // 🔥 Nuevo Campo 🔥
+    esMayorista: false
   });
 
   const [errors, setErrors] = useState({});
@@ -64,6 +75,9 @@ const ProformaForm = ({
             precioUnitario: p.precioUnitario !== undefined ? p.precioUnitario : p.precio || 0
         }))
       });
+      if (initialData.clienteData?.nombre) {
+         setSearchTerm(initialData.clienteData.nombre);
+      }
     }
   }, [initialData]);
 
@@ -94,10 +108,20 @@ const ProformaForm = ({
     const selectedClient = clients.find(c => c.id === clientId) || { razonSocial: clientName.split(' - ')[0], id: clientId };
     
     setFormData(prev => ({ ...prev, cliente: clientId, clienteData: selectedClient }));
+    setSearchTerm(clientName.split(' - ')[0]);
     if (errors.cliente) setErrors(prev => ({ ...prev, cliente: null }));
   };
 
-  // 🔥 LÓGICA DE PRECIO MAYORISTA 🔥
+  const handleNewClientCreated = (newClient) => {
+    const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
+    if(clientData) {
+        setFormData(prev => ({ ...prev, cliente: clientData.id, clienteData: clientData }));
+        setSearchTerm(clientData.nombre || clientData.razonSocial);
+        setShowNewClientModal(false);
+        if(onReloadClients) onReloadClients();
+    }
+  };
+
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       const tiersKey = applyMayorista ? 'precios_distribuidor' : 'precios_escalonados';
       const baseKey = applyMayorista ? 'precioDistribuidorBase' : 'precioBaseOriginal';
@@ -252,7 +276,6 @@ const ProformaForm = ({
     setFormData(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
   };
 
-  // Calculations
   const subtotal = formData.items.reduce((sum, item) => {
     if (!item.producto) return sum;
     const qty = parseInt(item.cantidad, 10) || 0;
@@ -291,16 +314,18 @@ const ProformaForm = ({
 
     setIsSavingDraft(true);
     try {
+      // 🔥 REMOVEMOS esMayorista del payload porque no existe en la tabla de proformas 🔥
+      const { esMayorista, ...restFormData } = formData;
+      
       const proformaData = {
-        ...formData,
+        ...restFormData,
         items: validItems,
         proformaNumber: initialData?.proformaNumber || nextProformaNumber,
         status, 
         financials: { subtotal, descuento, impuesto, total },
         anticipoMonto,
         saldoMonto,
-        tiempoEntrega: formData.deliveryTime,
-        esMayorista: formData.esMayorista
+        tiempoEntrega: formData.deliveryTime
       };
 
       await onSubmit(proformaData);
@@ -343,11 +368,12 @@ const ProformaForm = ({
                 </div>
 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Cliente:</label>
-                <div className="col-span-12 md:col-span-4">
+                <div className="col-span-12 md:col-span-4 flex gap-2">
                    <select value={formData.cliente} onChange={handleClientChange} className={cn("w-full border rounded px-2 py-1 text-sm bg-white focus:outline-none", errors.cliente ? "border-red-500" : "border-slate-300")}>
                     <option value="">Seleccionar...</option>
                     {clients.map(client => (<option key={client.id} value={client.id}>{client.razonSocial} - {client.ruc || client.cedulaRuc}</option>))}
                   </select>
+                  <Button type="button" size="sm" variant="outline" onClick={() => setShowNewClientModal(true)} className="h-8 px-2 border-blue-400 text-blue-600 hover:bg-blue-50 shrink-0">+</Button>
                 </div>
 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tiempo Entrega:</label>
@@ -541,7 +567,7 @@ const ProformaForm = ({
         </div>
       </div>
 
-      <div className="bg-slate-50 border-t border-slate-300 p-4 flex justify-end gap-3">
+      <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
          <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
          <Button type="button" onClick={() => handleSubmit('BORRADOR')} className="bg-[#004080] hover:bg-blue-900 text-white px-8 gap-2" disabled={isSavingDraft}>
             {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
@@ -585,6 +611,13 @@ const ProformaForm = ({
                 ))}
                 {catalogItems.length === 0 && <div className="text-center py-10 text-slate-400">Catálogo vacío.</div>}
             </div>
+        </div>
+      )}
+      
+      {showNewClientModal && (
+        <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200 p-4">
+            <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-lg">Nuevo Cliente</h3><Button size="sm" variant="ghost" onClick={()=>setShowNewClientModal(false)}><X/></Button></div>
+            <div className="flex-1 overflow-y-auto"><ClientForm user={currentUser} onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={newClientInitialData} /></div>
         </div>
       )}
     </motion.div>
