@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale, ClipboardList } from 'lucide-react';
+import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale, ClipboardList, PenTool } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text'; 
 import { useToast } from '@/components/ui/use-toast';
@@ -11,8 +11,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const { toast } = useToast();
   
   const [activeTab, setActiveTab] = useState('inventory'); 
-
-  // 🔥 NUEVO: Estado para diferenciar el tipo de impresión 🔥
   const [printType, setPrintType] = useState('normal');
 
   const [items, setItems] = useState([]);
@@ -63,6 +61,11 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [purchaseRef, setPurchaseRef] = useState('');
   const [purchaseItems, setPurchaseItems] = useState([{ inventoryId: '', qty: '' }]);
+
+  // 🔥 NUEVO: Modal de CONSUMO INTERNO 🔥
+  const [isConsumeModalOpen, setIsConsumeModalOpen] = useState(false);
+  const [consumeReason, setConsumeReason] = useState('');
+  const [consumeItems, setConsumeItems] = useState([{ inventoryId: '', qty: '' }]);
 
   // Modal de CUADRE DE INVENTARIO
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
@@ -319,6 +322,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       } catch (error) { toast({ title: "Error", description: "No se pudo actualizar la cantidad.", variant: "destructive" }); }
   };
 
+  // --- 🔥 LÓGICA AGREGAR COMPRA 🔥 ---
   const openPurchaseModal = () => {
       setPurchaseRef('');
       setPurchaseItems([{ inventoryId: '', qty: '' }]);
@@ -357,6 +361,53 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       finally { setSaving(false); }
   };
 
+  // --- 🔥 LÓGICA CONSUMO INTERNO (TONERS, ETC) 🔥 ---
+  const openConsumeModal = () => {
+      setConsumeReason('');
+      setConsumeItems([{ inventoryId: '', qty: '' }]);
+      setIsConsumeModalOpen(true);
+  };
+
+  const handleSaveConsume = async () => {
+      if (!consumeReason.trim()) return toast({ title: "Atención", description: "Debe especificar el motivo o destino del consumo.", variant: "destructive" });
+      const validItems = consumeItems.filter(i => i.inventoryId && i.qty !== '' && Number(i.qty) > 0);
+      if (validItems.length === 0) return toast({ title: "Atención", description: "Seleccione al menos un material a consumir.", variant: "destructive" });
+
+      setSaving(true);
+      try {
+          for (const cItem of validItems) {
+              const target = items.find(i => String(i.id) === String(cItem.inventoryId));
+              if (!target) continue;
+              
+              const qtyToDeduct = Number(cItem.qty);
+              if (qtyToDeduct > target.cantidad) {
+                  throw new Error(`Stock insuficiente de ${target.nombre}. Solicitado: ${qtyToDeduct}, Disponible: ${target.cantidad}`);
+              }
+
+              const newQty = target.cantidad - qtyToDeduct;
+              
+              await supabase.from('inventario').update({ cantidad: newQty }).eq('id', target.id);
+              await supabase.from('historial_inventario').insert([{
+                  material_id: target.id,
+                  material_nombre: target.nombre,
+                  cantidad_cambio: -qtyToDeduct,
+                  cantidad_resultante: newQty,
+                  tipo: 'EGRESO',
+                  motivo: `Consumo Interno / Operativo: ${consumeReason}`,
+                  usuario: user?.name || 'Sistema'
+              }]);
+          }
+          toast({ title: "Consumo Registrado", description: "Se ha descontado el stock operativo correctamente." });
+          setIsConsumeModalOpen(false);
+          fetchData();
+      } catch (err) { 
+          console.error("Consume error:", err);
+          toast({ title: "Error de Stock", description: err.message, variant: "destructive" }); 
+      } 
+      finally { setSaving(false); }
+  };
+
+  // --- 🔥 LÓGICA CUADRE DE INVENTARIO 🔥 ---
   const openAdjustModal = () => {
       setAdjustItems([{ inventoryId: '', newQty: '', reason: '' }]);
       setIsAdjustModalOpen(true);
@@ -420,7 +471,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       setSortConfig({ key, direction });
   };
 
-  // 🔥 NUEVO: Función para manejar el botón de impresión y el estado 🔥
   const handlePrint = (type) => {
       setPrintType(type);
       setTimeout(() => {
@@ -465,10 +515,8 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
   return (
     <>
-      {/* -------------------- ESTRUCTURA PRINCIPAL -------------------- */}
       <div className="space-y-4 animate-in fade-in print:hidden">
           
-          {/* HEADER PRINCIPAL */}
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4">
               <div>
                   <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
@@ -478,7 +526,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
               
               <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                  {/* 🔥 BOTONES DE IMPRESIÓN SEPARADOS 🔥 */}
                   <Button onClick={() => handlePrint('normal')} variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 gap-2 font-bold shadow-sm">
                       <Printer className="h-4 w-4" /> Reporte Normal
                   </Button>
@@ -496,6 +543,12 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                           <Button onClick={openPurchaseModal} className="bg-emerald-600 hover:bg-emerald-700 text-white gap-2 font-bold shadow-sm">
                               <ShoppingCart className="h-4 w-4" /> Agregar Compra
                           </Button>
+                          
+                          {/* 🔥 NUEVO BOTÓN PARA CONSUMO INTERNO 🔥 */}
+                          <Button onClick={openConsumeModal} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 font-bold shadow-sm">
+                              <PenTool className="h-4 w-4" /> Registrar Consumo
+                          </Button>
+
                           <Button onClick={openAdjustModal} className="bg-amber-500 hover:bg-amber-600 text-white gap-2 font-bold shadow-sm">
                               <Scale className="h-4 w-4" /> Cuadre
                           </Button>
@@ -509,7 +562,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           </div>
 
-          {/* SELECTOR DE PESTAÑAS */}
           <div className="flex gap-2 bg-slate-200 p-1.5 rounded-lg w-fit border border-slate-300 shadow-inner">
              <button 
                 onClick={() => setActiveTab('inventory')} 
@@ -525,7 +577,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
              </button>
           </div>
 
-          {/* -------------------- TAB 1: INVENTARIO ACTUAL -------------------- */}
           {activeTab === 'inventory' && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[600px] flex flex-col animate-in fade-in duration-300">
                   <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
@@ -652,7 +703,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
-          {/* -------------------- TAB 2: HISTORIAL GLOBAL -------------------- */}
           {activeTab === 'history' && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[600px] flex flex-col animate-in fade-in duration-300">
                   <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -755,6 +805,67 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
                           <Button variant="outline" onClick={() => setIsPurchaseModalOpen(false)}>Cancelar</Button>
                           <Button onClick={handleSavePurchase} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Registrar Ingreso</Button>
+                      </div>
+                  </motion.div>
+              </div>
+          )}
+          </AnimatePresence>
+
+          {/* 🔥 MODAL DE CONSUMO INTERNO (TONERS) 🔥 */}
+          <AnimatePresence>
+          {isConsumeModalOpen && (
+              <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
+                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
+                      <div className="bg-blue-700 p-4 text-white flex justify-between items-center shrink-0">
+                          <h3 className="font-bold text-lg flex items-center gap-2"><PenTool className="h-5 w-5 text-blue-200"/> Registrar Consumo Operativo</h3>
+                          <button onClick={() => setIsConsumeModalOpen(false)} className="hover:bg-blue-800 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
+                      </div>
+                      
+                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+                          <div className="mb-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-blue-500">
+                              <p className="text-[11px] text-slate-500 italic mb-2 leading-snug">Utilice esta ventana para registrar artículos de uso interno o consumibles que no se descuentan automáticamente (ej. Toners, cuchillas, cinta de embalaje).</p>
+                              <label className="text-xs font-bold text-slate-600 uppercase mb-1 block">Motivo / Destino de los materiales *</label>
+                              <Input 
+                                  value={consumeReason} 
+                                  onChange={e=>setConsumeReason(e.target.value)} 
+                                  placeholder="Ej: Cambio de toner negro en impresora de Ventas para OP 000123" 
+                                  className="border-blue-200 focus:ring-blue-500"
+                              />
+                          </div>
+
+                          <div className="space-y-2">
+                              <label className="text-xs font-bold text-slate-600 uppercase block border-b border-slate-200 pb-1">Materiales a Consumir</label>
+                              {consumeItems.map((cItem, idx) => (
+                                  <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
+                                      <select 
+                                         className="flex-1 text-sm border border-slate-300 rounded px-2 py-1.5 outline-none focus:border-blue-500 uppercase font-medium"
+                                         value={cItem.inventoryId}
+                                         onChange={e => {
+                                             const newItems = [...consumeItems];
+                                             newItems[idx].inventoryId = e.target.value;
+                                             setConsumeItems(newItems);
+                                         }}
+                                      >
+                                          <option value="">Seleccionar material...</option>
+                                          {items.map(i => <option key={i.id} value={i.id}>{i.nombre} - (Disp: {i.cantidad} {i.unidad})</option>)}
+                                      </select>
+                                      <Input type="number" min="1" className="w-24 text-center font-bold text-blue-700" placeholder="Cant." value={cItem.qty} onChange={e => {
+                                          const newItems = [...consumeItems];
+                                          newItems[idx].qty = e.target.value;
+                                          setConsumeItems(newItems);
+                                      }}/>
+                                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => {
+                                          if(consumeItems.length > 1) setConsumeItems(consumeItems.filter((_, i) => i !== idx));
+                                      }}><Trash2 className="h-4 w-4"/></Button>
+                                  </div>
+                              ))}
+                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => setConsumeItems([...consumeItems, {inventoryId:'', qty:''}])}><Plus className="h-4 w-4 mr-1"/> Añadir otra fila</Button>
+                          </div>
+                      </div>
+
+                      <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
+                          <Button variant="outline" onClick={() => setIsConsumeModalOpen(false)}>Cancelar</Button>
+                          <Button onClick={handleSaveConsume} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Registrar Consumo</Button>
                       </div>
                   </motion.div>
               </div>
@@ -1067,7 +1178,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
-          {/* TABLA DE IMPRESIÓN */}
           <table className="w-full text-sm border-collapse border-2 border-slate-800">
               <thead>
                   <tr className="bg-slate-200 border-b-2 border-slate-800">
@@ -1076,7 +1186,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       <th className="p-2 border-r border-slate-400 text-left font-bold">Material / Código</th>
                       <th className="p-2 border-r border-slate-400 text-center w-24 font-bold leading-tight">Stock<br/>Sist.</th>
                       
-                      {/* Columnas exclusivas de Auditoría */}
                       {printType === 'audit' && (
                           <>
                               <th className="p-2 border-r border-slate-400 text-center w-32 font-bold leading-tight bg-white">Stock<br/>Físico</th>
@@ -1104,7 +1213,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                               {item.cantidad}
                           </td>
                           
-                          {/* Columnas exclusivas de Auditoría */}
                           {printType === 'audit' && (
                               <>
                                   <td className="p-2 border-r border-slate-400 text-center"></td>
@@ -1123,7 +1231,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </tbody>
           </table>
           
-          {/* Zona de firmas exclusiva de Auditoría */}
           {printType === 'audit' && (
               <div className="mt-16 flex justify-around px-20">
                   <div className="text-center w-64">
