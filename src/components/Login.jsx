@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text'; 
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
-import { LogIn, Loader2 } from 'lucide-react';
+import { Loader2 } from 'lucide-react'; // Se eliminó el ícono LogIn
 
 const DOMINIO_INTERNO = "@graficasadr.com"; 
 
@@ -62,11 +62,11 @@ const Login = ({ onLogin }) => {
         
         {/* Encabezado con más margen inferior (mb-10) */}
         <div className="text-center mb-10">
-          <div className="h-14 w-14 bg-blue-900 rounded-xl mx-auto mb-4 flex items-center justify-center shadow-md">
-            <LogIn className="h-7 w-7 text-white" />
-          </div>
-          <h1 className="text-2xl font-bold text-slate-900 tracking-tight">Gráficas ADR</h1>
-          <p className="text-slate-500 text-sm mt-2">Sistema de Gestión de Producción</p>
+          {/* 🔥 AQUÍ ESTÁ EL LOGO 🔥 */}
+          <img 
+            src="/logo.png" 
+            className="h-20 w-auto object-contain mx-auto mb-6 drop-shadow-sm" 
+          />
         </div>
 
         {/* Aumenté el espaciado vertical global a space-y-6 */}
@@ -111,7 +111,7 @@ const Login = ({ onLogin }) => {
           <div className="pt-2">
             <Button 
                 type="submit" 
-                className="w-full bg-blue-900 hover:bg-blue-800 h-12 text-base font-semibold shadow-md transition-all hover:shadow-lg" 
+                className="w-full bg-[#1e3a8a] hover:bg-blue-900 h-12 text-base font-semibold shadow-md transition-all hover:shadow-lg text-white" 
                 disabled={loading}
             >
                 {loading ? <Loader2 className="mr-2 h-5 w-5 animate-spin" /> : null}

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale } from 'lucide-react';
+import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale, ClipboardList } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text'; 
 import { useToast } from '@/components/ui/use-toast';
@@ -11,6 +11,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const { toast } = useToast();
   
   const [activeTab, setActiveTab] = useState('inventory'); 
+
+  // 🔥 NUEVO: Estado para diferenciar el tipo de impresión 🔥
+  const [printType, setPrintType] = useState('normal');
 
   const [items, setItems] = useState([]);
   const [bodegasList, setBodegasList] = useState([]); 
@@ -30,10 +33,11 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const isAdmin = user?.role === 'Administrador';
   const isProduccion = user?.role === 'Producción'; 
 
-  // Modales
+  // Modal Crear/Editar Material (Solo Admin)
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   
+  // Modal Bodegas
   const [isBodegasModalOpen, setIsBodegasModalOpen] = useState(false);
   const [newBodegaName, setNewBodegaName] = useState('');
   const [editingBodegaId, setEditingBodegaId] = useState(null);
@@ -46,17 +50,21 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   });
   const [saving, setSaving] = useState(false);
 
+  // Historial Modal
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [itemHistoryData, setItemHistoryData] = useState([]);
   const [itemHistoryLoading, setItemHistoryLoading] = useState(false);
 
+  // Historial Global
   const [globalHistory, setGlobalHistory] = useState([]);
   const [globalHistoryLoading, setGlobalHistoryLoading] = useState(false);
 
+  // Modal de COMPRAS
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [purchaseRef, setPurchaseRef] = useState('');
   const [purchaseItems, setPurchaseItems] = useState([{ inventoryId: '', qty: '' }]);
 
+  // Modal de CUADRE DE INVENTARIO
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
   const [adjustItems, setAdjustItems] = useState([{ inventoryId: '', newQty: '', reason: '' }]);
 
@@ -127,7 +135,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       setIsHistoryModalOpen(true);
       setItemHistoryLoading(true);
       try {
-          // Aseguramos de enviar el ID numérico a Supabase para evitar errores 400
           const { data, error } = await supabase.from('historial_inventario').select('*').eq('material_id', Number(item.id)).order('created_at', { ascending: false }).limit(100);
           if (error) throw error;
           setItemHistoryData(data || []);
@@ -139,6 +146,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       }
   };
 
+  // --- LÓGICA DE BODEGAS ---
   const handleAddBodega = async () => {
       if (!newBodegaName.trim()) return;
       const name = newBodegaName.trim().toUpperCase();
@@ -191,6 +199,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       finally { setBodegaLoading(false); }
   };
 
+  // --- LÓGICA DE MATERIALES ---
   const handleOpenModal = (item = null) => {
     if (isReadOnly || !isAdmin) return; 
     if (item) {
@@ -411,6 +420,14 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       setSortConfig({ key, direction });
   };
 
+  // 🔥 NUEVO: Función para manejar el botón de impresión y el estado 🔥
+  const handlePrint = (type) => {
+      setPrintType(type);
+      setTimeout(() => {
+          window.print();
+      }, 100);
+  };
+
   const processedItems = useMemo(() => {
       let filtered = items.filter(item => {
           const matchSearch = item.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (item.codigo && item.codigo.toLowerCase().includes(searchTerm.toLowerCase()));
@@ -461,8 +478,12 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
               
               <div className="flex flex-wrap gap-2 w-full xl:w-auto">
-                  <Button onClick={() => window.print()} variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 gap-2 font-bold shadow-sm">
-                      <Printer className="h-4 w-4" /> Imprimir
+                  {/* 🔥 BOTONES DE IMPRESIÓN SEPARADOS 🔥 */}
+                  <Button onClick={() => handlePrint('normal')} variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 gap-2 font-bold shadow-sm">
+                      <Printer className="h-4 w-4" /> Reporte Normal
+                  </Button>
+                  <Button onClick={() => handlePrint('audit')} variant="outline" className="border-slate-300 text-slate-700 hover:bg-slate-50 gap-2 font-bold shadow-sm">
+                      <ClipboardList className="h-4 w-4" /> Imprimir Auditoría
                   </Button>
                   
                   {!isReadOnly && (
@@ -683,9 +704,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
-          {/* -------------------- ZONA DE MODALES (AL FINAL) -------------------- */}
+          {/* -------------------- ZONA DE MODALES -------------------- */}
 
-          {/* Modal: Compras */}
+          {/* Modal Compras */}
           <AnimatePresence>
           {isPurchaseModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -740,7 +761,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           )}
           </AnimatePresence>
 
-          {/* Modal: Cuadre de Inventario */}
+          {/* Modal Cuadre Inventario */}
           <AnimatePresence>
           {isAdjustModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -829,7 +850,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           )}
           </AnimatePresence>
 
-          {/* Modal: Gestión de Bodegas */}
+          {/* Modal Bodegas */}
           <AnimatePresence>
           {isBodegasModalOpen && isAdmin && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -875,7 +896,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           )}
           </AnimatePresence>
 
-          {/* Modal: Crear / Editar Material */}
+          {/* Modal Crear/Editar Material */}
           <AnimatePresence>
           {isModalOpen && isAdmin && !isReadOnly && (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
@@ -966,7 +987,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           )}
           </AnimatePresence>
 
-          {/* Modal: Historial por Item */}
+          {/* Modal Historial por Item */}
           <AnimatePresence>
           {isHistoryModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
@@ -1011,19 +1032,29 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
           </AnimatePresence>
-
       </div>
 
       {/* -------------------- VISTA DE IMPRESIÓN -------------------- */}
-      <div className="hidden print:block print:p-8 font-sans text-black bg-white min-h-screen">
-          <div className="mb-6 border-b-2 border-slate-800 pb-4 flex justify-between items-end">
+      <div className="hidden print:block font-sans text-black bg-white min-h-screen">
+          <style>{`
+            @page { size: landscape; margin: 10mm; }
+            @media print {
+              body * { visibility: hidden; }
+              .print\\:block, .print\\:block * { visibility: visible; }
+              .print\\:block { position: absolute; left: 0; top: 0; width: 100%; }
+            }
+          `}</style>
+
+          <div className="mb-6 border-b-2 border-slate-800 pb-2 flex justify-between items-end">
               <div>
-                  <h1 className="text-2xl font-black tracking-widest uppercase text-slate-900">Reporte de Inventario</h1>
+                  <h1 className="text-2xl font-black tracking-widest uppercase text-slate-900">
+                     {printType === 'audit' ? 'Auditoría Física de Inventario' : 'Reporte de Inventario'}
+                  </h1>
                   <p className="text-sm text-slate-600 mt-1 font-medium">ADRCOMPANY SAS</p>
               </div>
               <div className="text-right">
                   <p className="text-sm font-bold">Fecha: {new Date().toLocaleDateString()}</p>
-                  <p className="text-xs text-slate-500 mt-1">Generado por: {user?.name || 'Sistema'}</p>
+                  <p className="text-xs text-slate-500 mt-1">Impreso por: {user?.name || 'Sistema'}</p>
               </div>
           </div>
           
@@ -1036,34 +1067,75 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
+          {/* TABLA DE IMPRESIÓN */}
           <table className="w-full text-sm border-collapse border-2 border-slate-800">
               <thead>
                   <tr className="bg-slate-200 border-b-2 border-slate-800">
-                      <th className="p-2 border-r border-slate-400 text-center w-12 font-bold">N°</th>
-                      <th className="p-2 border-r border-slate-400 text-left font-bold">Producto / Material</th>
-                      <th className="p-2 border-r border-slate-400 text-center w-32 font-bold">Bodega</th>
-                      <th className="p-2 text-center w-24 font-bold">Cantidad</th>
+                      <th className="p-2 border-r border-slate-400 text-center w-10 font-bold">N°</th>
+                      <th className="p-2 border-r border-slate-400 text-left w-40 font-bold">Categoría / Bodega</th>
+                      <th className="p-2 border-r border-slate-400 text-left font-bold">Material / Código</th>
+                      <th className="p-2 border-r border-slate-400 text-center w-24 font-bold leading-tight">Stock<br/>Sist.</th>
+                      
+                      {/* Columnas exclusivas de Auditoría */}
+                      {printType === 'audit' && (
+                          <>
+                              <th className="p-2 border-r border-slate-400 text-center w-32 font-bold leading-tight bg-white">Stock<br/>Físico</th>
+                              <th className="p-2 text-right w-24 font-bold leading-tight">Valor<br/>Pérdida</th>
+                          </>
+                      )}
                   </tr>
               </thead>
               <tbody>
                   {processedItems.map((item, idx) => (
-                      <tr key={item.id} className="border-b border-slate-400">
+                      <tr key={item.id} className="border-b border-slate-400 h-10">
                           <td className="p-2 border-r border-slate-400 text-center text-xs text-slate-500">{idx + 1}</td>
-                          <td className="p-2 border-r border-slate-400 uppercase">
-                              <span className="font-bold">{item.nombre}</span>
-                              {item.codigo && <span className="text-[10px] text-slate-500 ml-2 font-mono">({item.codigo})</span>}
+                          <td className="p-2 border-r border-slate-400 uppercase text-[11px] leading-tight">
+                              <div className="font-bold text-slate-800">{item.categoria || '-'}</div>
+                              <div className="text-[9px] text-slate-500 font-medium mt-0.5">{item.bodega || 'PRINCIPAL'}</div>
                           </td>
-                          <td className="p-2 border-r border-slate-400 text-center text-xs uppercase font-medium">{item.bodega || 'PRINCIPAL'}</td>
-                          <td className="p-2 text-center font-bold text-base">
-                              {item.cantidad} <span className="text-[10px] font-normal text-slate-500">{item.unidad}</span>
+                          <td className="p-2 border-r border-slate-400 uppercase leading-tight">
+                              <div>
+                                  <span className="font-bold text-xs">{item.nombre}</span>
+                                  {item.codigo && <span className="text-[10px] text-slate-500 ml-1 font-mono">[{item.codigo}]</span>}
+                              </div>
+                              <div className="text-[9px] text-slate-500 font-medium mt-0.5">UNIDAD: {item.unidad}</div>
                           </td>
+                          <td className={cn("p-2 text-center font-bold text-base bg-slate-100/50", printType === 'audit' ? "border-r border-slate-400" : "")}>
+                              {item.cantidad}
+                          </td>
+                          
+                          {/* Columnas exclusivas de Auditoría */}
+                          {printType === 'audit' && (
+                              <>
+                                  <td className="p-2 border-r border-slate-400 text-center"></td>
+                                  <td className="p-2 text-right font-medium text-xs">
+                                      ${Number(item.valor_perdida || 0).toFixed(2)}
+                                  </td>
+                              </>
+                          )}
                       </tr>
                   ))}
                   {processedItems.length === 0 && (
-                      <tr><td colSpan="4" className="p-4 text-center text-slate-500 italic">No hay productos en esta vista.</td></tr>
+                      <tr>
+                          <td colSpan={printType === 'audit' ? "6" : "4"} className="p-4 text-center text-slate-500 italic">No hay productos en esta vista.</td>
+                      </tr>
                   )}
               </tbody>
           </table>
+          
+          {/* Zona de firmas exclusiva de Auditoría */}
+          {printType === 'audit' && (
+              <div className="mt-16 flex justify-around px-20">
+                  <div className="text-center w-64">
+                      <div className="border-t border-slate-800 pt-2 font-bold text-sm">Firma de Producción</div>
+                      <div className="text-xs text-slate-500 mt-1">Responsable del área</div>
+                  </div>
+                  <div className="text-center w-64">
+                      <div className="border-t border-slate-800 pt-2 font-bold text-sm">Firma de Administración</div>
+                      <div className="text-xs text-slate-500 mt-1">Revisado y aprobado</div>
+                  </div>
+              </div>
+          )}
       </div>
     </>
   );
