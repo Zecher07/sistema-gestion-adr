@@ -1,127 +1,168 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { X, Plus, Trash2, Save, Loader2, Search, ShoppingCart, Info } from 'lucide-react';
+import { supabase } from '../supabaseClient';
+import { Save, X, Plus, Trash2, User, Search, Calculator, FileText, Loader2, UserPlus, Mail, Clock, ShoppingCart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/Text';
+import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
-import { cn } from '@/lib/utils';
-import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
-import { motion } from 'framer-motion';
-import { supabase } from '../supabaseClient';
-import ClientForm from './ClientForm';
+import { Card, CardContent } from '@/components/ui/card';
 
-const ProformaForm = ({ 
-  initialData = null,
-  clients = [],
-  staffUsers = [],
-  onSubmit,
-  onCancel,
-  mode = 'create', 
-  currentUser,
-  nextProformaNumber,
-  onReloadClients
-}) => {
+// --- 🔥 FUNCIÓN PARA COMPRIMIR IMÁGENES 🔥 ---
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
+        const reader = new FileReader();
+        reader.readAsDataURL(file);
+        reader.onload = (event) => {
+            const img = new Image();
+            img.src = event.target.result;
+            img.onload = () => {
+                const canvas = document.createElement('canvas');
+                const MAX_WIDTH = 1024; 
+                let width = img.width;
+                let height = img.height;
+                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                canvas.width = width;
+                canvas.height = height;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(img, 0, 0, width, height);
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                resolve({ name: file.name, url: dataUrl });
+            };
+        };
+    });
+};
+
+const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = null, nextProformaNumber, onCreateClient }) => {
   const { toast } = useToast();
-  const [isLoading, setIsLoading] = useState(false);
-  const [isSavingDraft, setIsSavingDraft] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [isLoadingImages, setIsLoadingImages] = useState(false);
 
-  // Estados para el Cliente Nuevo
-  const [showNewClientModal, setShowNewClientModal] = useState(false);
-  const [searchTerm, setSearchTerm] = useState('');
+  const [titulo, setTitulo] = useState(''); 
+  const [diasEntrega, setDiasEntrega] = useState(''); 
   
-  // 🔥 SOLUCIÓN: Congelamos el nombre del nuevo cliente 🔥
-  const newClientInitialData = useMemo(() => {
-      return showNewClientModal ? { nombre: searchTerm } : null;
-  }, [showNewClientModal]);
+  const [clientSearch, setClientSearch] = useState('');
+  const [showClientSuggestions, setShowClientSuggestions] = useState(false);
+  const [selectedClient, setSelectedClient] = useState({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' });
 
-  // Estados para el Catálogo
-  const [catalogItems, setCatalogItems] = useState([]);
+  const [products, setProducts] = useState([
+    { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }
+  ]);
+  
+  // 🔥 ESTADO PARA LAS IMÁGENES 🔥
+  const [imagenes, setImagenes] = useState([]);
+
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
+  const [catalogItems, setCatalogItems] = useState([]);
   const [searchCatalog, setSearchCatalog] = useState('');
+
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
 
-  const [formData, setFormData] = useState({
-    cliente: '',
-    clienteData: null,
-    items: [{ producto: '', cantidad: 0, precioUnitario: 0, es_por_metro: false }],
-    descuentoTipo: 'porcentaje', 
-    descuentoValor: 0,
-    impuestoTasa: 15, 
-    
-    formaPago: 'Efectivo',
-    creditoVence: '',
-    
-    deliveryTime: '', 
-    advancePercentage: 50,
-    balancePercentage: 50,
-    notasInternas: '',
-    responsable: currentUser?.name || '',
-    
-    esMayorista: false
-  });
+  const [financials, setFinancials] = useState({ subtotal: 0, iva: 0, total: 0, descuento: 0, descuentoPorc: 0, anticipoPorc: 50, anticipoValor: 0, saldoPorc: 50, saldoValor: 0 });
+  const [notes, setNotes] = useState('');
+  const [ivaPercentage, setIvaPercentage] = useState(15); 
+  const [applyIva, setApplyIva] = useState(true);
 
-  const [errors, setErrors] = useState({});
+  const [localDiscountVal, setLocalDiscountVal] = useState('');
+  const [localDiscountPercent, setLocalDiscountPercent] = useState('');
+  
+  // 🔥 TARIFA MAYORISTA INTERNA 🔥
+  const [esMayorista, setEsMayorista] = useState(false);
+
+  const findClientId = (c) => { if (!c) return ''; return c.ruc || c.cedula || c.identificacion || c.dni || c.empresa || ''; };
+
+  useEffect(() => { const fetchCatalog = async () => { const { data } = await supabase.from('catalogo_productos').select('*').order('nombre'); if (data) setCatalogItems(data); }; fetchCatalog(); }, []);
+
+  useEffect(() => {
+    const fetchGlobalConfig = async () => {
+      try {
+        if (initialData) { setIvaPercentage(initialData.ivaPercentage || initialData.iva_percentage || 15); setApplyIva((initialData.iva_total || initialData.iva) > 0); return; }
+        const { data } = await supabase.from('configuracion_global').select('iva_porcentaje').single(); if (data) setIvaPercentage(data.iva_porcentaje);
+      } catch (error) { console.error(error); }
+    }; fetchGlobalConfig();
+  }, [initialData]);
 
   useEffect(() => {
     if (initialData) {
-      setFormData({
-        ...initialData,
-        advancePercentage: initialData.advancePercentage || 50,
-        balancePercentage: initialData.balancePercentage || 50,
-        deliveryTime: initialData.deliveryTime || initialData.tiempoEntrega || '',
-        esMayorista: initialData.esMayorista || false,
-        items: (initialData.items || []).map(p => ({
-            ...p,
-            precioUnitario: p.precioUnitario !== undefined ? p.precioUnitario : p.precio || 0
-        }))
-      });
-      if (initialData.clienteData?.nombre) {
-         setSearchTerm(initialData.clienteData.nombre);
+      setTitulo(initialData.titulo || initialData.tipo_trabajo || ''); setClientSearch(initialData.cliente_nombre || '');
+      setSelectedClient({ nombre: initialData.cliente_nombre || '', identificacion: initialData.cliente_identificacion || '', telefono: initialData.cliente_telefono || '', direccion: initialData.cliente_direccion || '', email: initialData.cliente_email || '' });
+      const items = Array.isArray(initialData.items) ? initialData.items : [];
+      setProducts(items.length > 0 ? items : [{ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }]);
+      setNotes(initialData.notas || ''); setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
+      
+      // Rescatar si es mayorista
+      setEsMayorista(initialData.esMayorista || initialData.es_mayorista || false);
+      setImagenes(initialData.imagenes || []);
+
+      if (initialData.financials) { 
+          const dMonto = initialData.financials.descuentoMonto || 0;
+          setFinancials(prev => ({ 
+              ...prev, 
+              descuentoMonto: dMonto,
+              descuento: initialData.financials.descuento || 0, 
+              anticipoPorc: initialData.financials.anticipoPorc || 50 
+          })); 
+          setLocalDiscountVal(dMonto > 0 ? dMonto.toFixed(2) : '');
       }
     }
   }, [initialData]);
 
-  const isAdmin = currentUser?.role === 'Administrador';
-  const isSeller = currentUser?.role === 'Vendedor';
-  
-  const validSellers = useMemo(() => removeDuplicateUsers(getValidSellers(staffUsers)), [staffUsers]);
-
   useEffect(() => {
-    if (mode === 'create' && isSeller) {
-       setFormData(prev => ({ ...prev, responsable: currentUser.name }));
-    }
-  }, [mode, isSeller, currentUser]);
-
-  useEffect(() => {
-    const fetchCatalog = async () => {
-      const { data } = await supabase.from('catalogo_productos').select('*').order('nombre');
-      if (data) setCatalogItems(data);
-    };
-    fetchCatalog();
-  }, []);
-
-  const formasPago = ['Efectivo', 'Transferencia', 'Cheque', 'Crédito', 'Tarjeta'];
-
-  const handleClientChange = (e) => {
-    const clientId = e.target.value;
-    const clientName = e.target.options[e.target.selectedIndex].text;
-    const selectedClient = clients.find(c => c.id === clientId) || { razonSocial: clientName.split(' - ')[0], id: clientId };
+    const subtotalBruto = products.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
     
-    setFormData(prev => ({ ...prev, cliente: clientId, clienteData: selectedClient }));
-    setSearchTerm(clientName.split(' - ')[0]);
-    if (errors.cliente) setErrors(prev => ({ ...prev, cliente: null }));
-  };
+    const descuentoDirectoTotal = Number(financials.descuentoMonto) || 0;
+    const tasaIva = applyIva ? (ivaPercentage / 100) : 0;
+    
+    const descuentoBase = applyIva ? (descuentoDirectoTotal / (1 + tasaIva)) : descuentoDirectoTotal;
+    const subtotalNeto = Math.max(0, subtotalBruto - descuentoBase);
+    
+    const iva = applyIva ? subtotalNeto * tasaIva : 0; 
+    const total = subtotalNeto + iva;
+    const anticipoValor = total * ((financials.anticipoPorc || 0) / 100);
+    const saldoPorc = 100 - (financials.anticipoPorc || 0); 
+    const saldoValor = total - anticipoValor;
+    
+    setFinancials(prev => ({ 
+        ...prev, 
+        subtotal: subtotalBruto, 
+        descuento: descuentoBase, 
+        iva, 
+        total, 
+        anticipoValor, 
+        saldoPorc, 
+        saldoValor 
+    }));
 
-  const handleNewClientCreated = (newClient) => {
-    const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
-    if(clientData) {
-        setFormData(prev => ({ ...prev, cliente: clientData.id, clienteData: clientData }));
-        setSearchTerm(clientData.nombre || clientData.razonSocial);
-        setShowNewClientModal(false);
-        if(onReloadClients) onReloadClients();
+    if (document.activeElement?.name !== 'proformaPercentInput') {
+        const perc = subtotalBruto > 0 ? (descuentoBase / subtotalBruto) * 100 : 0;
+        setLocalDiscountPercent(perc > 0 ? perc.toFixed(2) : '');
     }
+  }, [products, ivaPercentage, applyIva, financials.descuentoMonto, financials.anticipoPorc]);
+
+  // 🔥 HANDLERS PARA IMÁGENES 🔥
+  const handleAddImages = async (e) => {
+      const files = Array.from(e.target.files);
+      if(!files.length) return;
+      setIsLoadingImages(true);
+      const newImages = [];
+      for (const file of files) {
+          try {
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
+          } catch (error) { console.error(error); }
+      }
+      setImagenes(prev => [...prev, ...newImages]);
+      setIsLoadingImages(false);
   };
 
+  const removeImage = (index) => {
+      setImagenes(prev => prev.filter((_, i) => i !== index));
+  };
+
+  const filteredClients = clients.filter(c => { const term = clientSearch.toLowerCase().trim(); if (!term) return false; const name = (c.nombre || c.razonSocial || c.full_name || '').toLowerCase(); const id = String(findClientId(c)); return name.includes(term) || id.includes(term); });
+  
+  // 🔥 LÓGICA DE PRECIO MAYORISTA 🔥
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       const tiersKey = applyMayorista ? 'precios_distribuidor' : 'precios_escalonados';
       const baseKey = applyMayorista ? 'precioDistribuidorBase' : 'precioBaseOriginal';
@@ -134,474 +175,399 @@ const ProformaForm = ({
       return Number(item[baseKey] || item[fallbackBaseKey] || 0);
   };
 
-  const toggleMayorista = (checked) => {
-      setFormData(prev => {
-          const newItems = prev.items.map(p => {
-              if (!p.producto) return p;
-              if (p.es_por_metro) return p; 
-              const qty = parseInt(p.cantidad, 10) || 0;
-              const newPrice = getPriceForQty(qty, p, checked);
-              return { ...p, precioUnitario: newPrice };
-          });
-          return { ...prev, esMayorista: checked, items: newItems };
+  const recalculatePrices = (itemsList, isWholesale) => {
+      return itemsList.map(p => {
+          if (!p.descripcion) return p;
+          if (p.es_por_metro) return p; 
+          const qty = parseInt(p.cantidad, 10) || 0;
+          const newPrice = getPriceForQty(qty, p, isWholesale);
+          return { ...p, precioUnitario: newPrice, total: qty * newPrice };
       });
   };
 
+  const handleClientSelect = (client) => { 
+      const idFound = findClientId(client); 
+      const isWholesale = client.es_mayorista || false;
+
+      setSelectedClient({ 
+          nombre: client.nombre || client.razonSocial || client.full_name, 
+          identificacion: idFound, 
+          telefono: client.telefono || client.celular || '', 
+          direccion: client.direccion || '', 
+          email: client.email || client.correo || '' 
+      }); 
+      setClientSearch(client.nombre || client.razonSocial || client.full_name); 
+      setShowClientSuggestions(false); 
+      
+      setEsMayorista(isWholesale);
+      setProducts(prev => recalculatePrices(prev, isWholesale));
+  };
+
+  const handleNewClient = () => { 
+      if (onCreateClient) onCreateClient(); 
+      else { 
+          setSelectedClient({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' }); 
+          setClientSearch(''); 
+      } 
+  };
+
   const handleCatalogSelect = (item) => {
-    const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
-    const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, item, formData.esMayorista);
+    const minQty = item.venta_minima || 1;
+    const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, item, esMayorista);
 
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
 
-    setFormData(prev => {
-        const newItems = [...prev.items];
-        const emptyIndex = newItems.findIndex(p => !p.producto || p.producto.trim() === '');
+    setProducts(prev => {
+        const newProducts = [...prev];
+        const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
-        const newItem = {
-            cantidad: minQty,
-            venta_minima: minQty,
-            producto: finalDesc,
-            precioUnitario: computedPrice,
-            precioBaseOriginal: Number(item.precio) || 0,
+        const newProduct = {
+            cantidad: minQty, venta_minima: minQty, descripcion: finalDesc,
+            observaciones: item.observaciones || '', 
+            precioUnitario: computedPrice, precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
             precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
             precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
+            total: (item.es_por_metro || false) ? 0 : computedPrice * minQty
         };
 
-        if (emptyIndex !== -1) {
-            newItems[emptyIndex] = newItem;
-            if (emptyIndex === newItems.length - 1) newItems.push({ producto: '', cantidad: 0, precioUnitario: 0, es_por_metro: false });
-        } else {
-            newItems.push(newItem);
-            newItems.push({ producto: '', cantidad: 0, precioUnitario: 0, es_por_metro: false });
-        }
-        return { ...prev, items: newItems };
+        if (emptyIndex !== -1) { newProducts[emptyIndex] = newProduct; if (emptyIndex === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false }); } 
+        else { newProducts.push(newProduct); newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false }); }
+        return newProducts;
     });
-    
-    setIsCatalogOpen(false);
-    toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la proforma.` });
+    setIsCatalogOpen(false); toast({ title: "Añadido", description: `${item.nombre} agregado a la proforma.` });
   };
 
   const handleProductSearchRequest = async (index, value) => {
-      handleItemChange(index, 'producto', value);
-      if (value.trim().length < 2) {
-          setProductSuggestions([]);
-          setActiveProductSearchRow(null);
-          return;
-      }
+      updateProduct(index, 'descripcion', value);
+      if (value.trim().length < 2) { setProductSuggestions([]); setActiveProductSearchRow(null); return; }
       setActiveProductSearchRow(index);
       
       const terms = value.trim().split(/\s+/);
       let query = supabase.from('catalogo_productos').select('*');
-      
-      terms.forEach(term => {
-          query = query.or(`nombre.ilike.%${term}%,categoria.ilike.%${term}%,codigo.ilike.%${term}%`);
-      });
-
+      terms.forEach(term => { query = query.or(`nombre.ilike.%${term}%,categoria.ilike.%${term}%,codigo.ilike.%${term}%`); });
       const { data } = await query.limit(12);
+      
       setProductSuggestions(data || []);
   };
 
   const handleSelectProductSuggestion = (index, product) => {
-      const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
-      const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, product, formData.esMayorista);
+      const minQty = product.venta_minima || 1;
+      const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, product, esMayorista);
 
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
 
-      setFormData(prev => {
-          const newItems = [...prev.items];
-          newItems[index] = { 
-              ...newItems[index], 
-              producto: finalDesc,
-              precioUnitario: computedPrice,
-              precioBaseOriginal: Number(product.precio) || 0,
+      setProducts(prev => {
+          const newProducts = [...prev];
+          newProducts[index] = { 
+              ...newProducts[index], descripcion: finalDesc, 
+              observaciones: product.observaciones || '', 
+              precioUnitario: computedPrice, precioBaseOriginal: Number(product.precio) || 0,
               precios_escalonados: product.precios_escalonados || [],
               precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
               precios_distribuidor: product.precios_distribuidor || [],
-              venta_minima: minQty,
-              cantidad: minQty,
-              es_por_metro: product.es_por_metro || false,
+              venta_minima: minQty, cantidad: minQty, es_por_metro: product.es_por_metro || false,
+              total: (product.es_por_metro || false) ? 0 : minQty * computedPrice 
           };
-          if (index === newItems.length - 1) newItems.push({ producto: '', cantidad: 0, precioUnitario: 0, es_por_metro: false });
-          return { ...prev, items: newItems };
+          if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false });
+          return newProducts;
       });
-      setProductSuggestions([]);
-      setActiveProductSearchRow(null);
+      setProductSuggestions([]); setActiveProductSearchRow(null);
   };
 
-  const handleItemChange = (index, field, value) => {
-    setFormData(prev => {
-        const newItems = [...prev.items];
-        let item = { ...newItems[index], [field]: value };
-
+  const updateProduct = (index, field, value) => {
+    setProducts(prev => {
+        const newProducts = [...prev];
+        let item = { ...newProducts[index], [field]: value };
+        
         if (field === 'cantidad') {
-            let qty = parseInt(value, 10);
-            if (isNaN(qty)) qty = 0;
-            item.cantidad = qty;
+            const qty = Number(value) || 0;
             if (!item.es_por_metro && item.precioBaseOriginal !== undefined) {
-                item.precioUnitario = getPriceForQty(qty, item, prev.esMayorista);
+               item.precioUnitario = getPriceForQty(qty, item, esMayorista);
             }
         }
 
-        if (index === newItems.length - 1 && value !== '' && field === 'producto') {
-           newItems.push({ producto: '', cantidad: 0, precioUnitario: 0, es_por_metro: false });
+        if (field === 'cantidad' || field === 'precioUnitario') {
+          const qty = Number(item.cantidad) || 0;
+          const price = Number(item.precioUnitario) || 0;
+          item.total = item.es_por_metro ? price : qty * price;
         }
-
-        newItems[index] = item;
-        return { ...prev, items: newItems };
+        
+        newProducts[index] = item; return newProducts;
     });
   };
 
   const handleQuantityBlur = (index, value) => {
-      const item = formData.items[index];
-      if (!item.producto) return;
-      
-      const min = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
-      let qty = parseInt(value, 10);
-      if (isNaN(qty)) qty = 0;
-      
-      if (qty > 0 && min > 0 && qty < min) {
-          toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
-          handleItemChange(index, 'cantidad', min);
-      } else {
-          handleItemChange(index, 'cantidad', qty);
-      }
+      const item = products[index]; if (!item.descripcion) return;
+      const min = item.venta_minima || 1; const qty = Number(value);
+      if (qty > 0 && qty < min) { toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" }); updateProduct(index, 'cantidad', min); }
   };
 
-  const removeItem = (index) => {
-    if (formData.items.length <= 1) return;
-    setFormData(prev => ({ ...prev, items: prev.items.filter((_, i) => i !== index) }));
-  };
+  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false }]);
+  const removeProduct = (idx) => setProducts(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
 
-  const subtotal = formData.items.reduce((sum, item) => {
-    if (!item.producto) return sum;
-    const qty = parseInt(item.cantidad, 10) || 0;
-    const multiplier = (item.es_por_metro && qty === 0) ? 1 : qty;
-    return sum + (multiplier * Number(item.precioUnitario));
-  }, 0);
+  const handleSubmit = async () => {
+    const finalName = selectedClient.nombre || clientSearch;
+    if (!finalName) { toast({ title: "Falta Cliente", description: "Ingrese el nombre del cliente.", variant: "destructive" }); return; }
+    if (!titulo.trim()) { toast({ title: "Falta Título", description: "Por favor, agregue un título o referencia a la cotización.", variant: "destructive" }); return; }
+    const validProducts = products.filter(p => p.descripcion && p.descripcion.trim() !== '');
+    if (validProducts.length === 0) { toast({ title: "Sin productos", description: "Añada al menos un producto a la cotización.", variant: "destructive" }); return; }
 
-  const descuento = formData.descuentoTipo === 'porcentaje' 
-    ? (subtotal * Number(formData.descuentoValor)) / 100
-    : Number(formData.descuentoValor);
-
-  const subtotalConDescuento = subtotal - descuento;
-  const impuesto = (subtotalConDescuento * Number(formData.impuestoTasa)) / 100;
-  const total = subtotalConDescuento + impuesto;
-
-  const anticipoMonto = (total * (formData.advancePercentage || 0)) / 100;
-  const saldoMonto = (total * (formData.balancePercentage || 0)) / 100;
-
-  const validateForm = () => {
-    const newErrors = {};
-    if (!formData.cliente) newErrors.cliente = 'Seleccione un cliente';
-    const validItems = formData.items.filter(item => item.producto.trim() !== '');
-    if (validItems.length === 0) newErrors.items = 'Agregue al menos un producto válido';
-    if (!formData.deliveryTime) newErrors.deliveryTime = 'Ingrese tiempo de entrega';
-    setErrors(newErrors);
-    return Object.keys(newErrors).length === 0;
-  };
-
-  const handleSubmit = async (status = 'BORRADOR') => {
-    if (!validateForm()) {
-      toast({ title: "Formulario incompleto", description: "Complete todos los campos requeridos", variant: "destructive" });
-      return;
-    }
-
-    const validItems = formData.items.filter(item => item.producto.trim() !== '');
-
-    setIsSavingDraft(true);
+    setLoading(true);
     try {
-      // 🔥 REMOVEMOS esMayorista del payload porque no existe en la tabla de proformas 🔥
-      const { esMayorista, ...restFormData } = formData;
-      
-      const proformaData = {
-        ...restFormData,
-        items: validItems,
-        proformaNumber: initialData?.proformaNumber || nextProformaNumber,
-        status, 
-        financials: { subtotal, descuento, impuesto, total },
-        anticipoMonto,
-        saldoMonto,
-        tiempoEntrega: formData.deliveryTime
+      const payload = {
+        titulo: titulo, cliente_nombre: finalName, cliente_identificacion: selectedClient.identificacion, cliente_telefono: selectedClient.telefono,
+        cliente_direccion: selectedClient.direccion, cliente_email: selectedClient.email, items: validProducts, 
+        subtotal: financials.subtotal, iva: financials.iva, total: financials.total, iva_percentage: applyIva ? ivaPercentage : 0, dias_entrega: Number(diasEntrega) || 0,
+        financials: { 
+            subtotal: financials.subtotal, iva: financials.iva, total: financials.total, ivaPercentage: applyIva ? ivaPercentage : 0, diasEntrega: Number(diasEntrega) || 0,
+            descuento: financials.descuento, descuentoMonto: financials.descuentoMonto, 
+            anticipoPorc: financials.anticipoPorc, anticipoValor: financials.anticipoValor, saldoPorc: financials.saldoPorc, saldoValor: financials.saldoValor
+        },
+        notas: notes, responsable_nombre: user.name, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
+        imagenes: imagenes 
       };
 
-      await onSubmit(proformaData);
-      toast({ title: "✅ Guardado exitoso", description: `Proforma #${String(proformaData.proformaNumber).padStart(7, '0')} guardada` });
-    } catch (error) {
-      toast({ title: "Error", description: "No se pudo guardar la proforma", variant: "destructive" });
-    } finally {
-      setIsSavingDraft(false);
-    }
+      if (!initialData) { payload.created_at = new Date().toISOString(); payload.creado_por = user.id; }
+      if (initialData) { await supabase.from('proformas').update(payload).eq('id', initialData.id); } 
+      else { await supabase.from('proformas').insert([payload]); }
+
+      toast({ title: "✅ Guardado", description: "Proforma registrada con éxito." }); onSuccess();
+    } catch (error) { toast({ title: "Error", description: error.message || "No se pudo guardar", variant: "destructive" }); } 
+    finally { setLoading(false); }
   };
 
-  const getDisplayedNumber = () => String(initialData?.proformaNumber || nextProformaNumber).padStart(7, '0');
+  const getDisplayedProformaNumber = () => { if (initialData && (initialData.numero || initialData.proformaNumber)) { return String(initialData.numero || initialData.proformaNumber).padStart(6, '0'); } return 'Automático'; };
 
   return (
-    <motion.div initial={{ opacity: 0, scale: 0.98 }} animate={{ opacity: 1, scale: 1 }} className="bg-white shadow-xl rounded-lg flex flex-col h-full border border-slate-300 relative">
-      <div className="bg-slate-100 border-b border-slate-300 px-6 py-3 flex justify-between items-center">
-        <h2 className="text-lg font-bold text-slate-800 uppercase">
-          {mode === 'create' ? `Nueva Proforma (${getDisplayedNumber()})` : `Editar Proforma #${getDisplayedNumber()}`}
-        </h2>
-        <div className="flex items-center gap-2">
-           <Button variant="ghost" size="sm" onClick={onCancel} className="h-8 w-8 p-0"><X className="h-5 w-5 text-slate-500" /></Button>
-        </div>
+    <div className="flex flex-col h-full bg-slate-50 relative">
+      <div className="bg-white px-6 py-4 border-b border-slate-200 flex justify-between items-center sticky top-0 z-10 shadow-sm">
+        <div><h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" />{initialData ? 'Editar Proforma' : 'Nueva Cotización'}</h2><p className="text-sm text-slate-500">{initialData ? `Editando #${getDisplayedProformaNumber()}` : `Consecutivo #${getDisplayedProformaNumber()}`}</p></div>
+        <Button variant="ghost" onClick={onCancel} className="hover:bg-slate-100 rounded-full h-10 w-10 p-0"><X className="h-6 w-6 text-slate-500" /></Button>
       </div>
 
-      <div className="p-6 overflow-y-auto flex-1 bg-white">
-        <div className="space-y-6">
-          
-          <div className="space-y-3 pb-6 border-b border-slate-200">
-             <h3 className="font-bold text-slate-700 text-sm border-b border-blue-500 pb-1 mb-3 inline-block">Información General</h3>
-             
-             <div className="grid grid-cols-12 gap-4 items-center">
-                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Responsable:</label>
-                <div className="col-span-12 md:col-span-4">
-                   {isAdmin ? (
-                      <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.responsable} onChange={(e) => setFormData({...formData, responsable: e.target.value})}>
-                         <option value="">Seleccionar...</option>
-                         {validSellers.map(u => (<option key={u.id} value={u.name}>{formatResponsableName(u)}</option>))}
-                      </select>
-                   ) : (<input type="text" className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-slate-100" value={formData.responsable} readOnly />)}
+      <div className="flex-1 overflow-y-auto p-6">
+        <div className="max-w-5xl mx-auto space-y-6">
+          <Card className="shadow-sm border-slate-200">
+            <CardContent className="p-6">
+              <div className="flex items-center justify-between mb-4 border-b pb-2"><div className="flex items-center gap-2 text-blue-700 font-semibold"><User className="h-5 w-5" /> Datos Generales</div></div>
+              
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                <div className="md:col-span-1"><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Título / Referencia del Trabajo <span className="text-red-500">*</span></label><Input placeholder="Ej: Letrero luminoso..." value={titulo} onChange={(e) => setTitulo(e.target.value)} className="font-semibold text-blue-800" /></div>
+                <div className="md:col-span-1"><label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1"><Clock className="h-3 w-3 text-orange-500"/> Días Laborables para Entrega</label><Input type="number" min="0" placeholder="Ej: 5" value={diasEntrega} onChange={(e) => setDiasEntrega(e.target.value)} className="font-semibold text-orange-700 bg-orange-50/50 border-orange-200" /></div>
+                
+                <div className="relative md:col-span-2 flex gap-2 items-end">
+                  <div className="relative flex-1">
+                    <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Buscar Cliente</label>
+                    <div className="relative">
+                      <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
+                      <Input placeholder="Buscar por Nombre o RUC..." className="pl-9" value={clientSearch} onChange={(e) => { setClientSearch(e.target.value); setSelectedClient(prev => ({...prev, nombre: e.target.value})); setShowClientSuggestions(true); }} onFocus={() => setShowClientSuggestions(true)} onBlur={() => setTimeout(() => setShowClientSuggestions(false), 200)} />
+                    </div>
+                    {showClientSuggestions && clientSearch.length > 1 && filteredClients.length > 0 && (
+                      <div className="absolute z-20 w-full bg-white border border-slate-200 rounded-md shadow-xl mt-1 max-h-60 overflow-y-auto">
+                        {filteredClients.map(client => { const displayId = findClientId(client) || 'S/N'; return ( <div key={client.id} className="px-4 py-3 hover:bg-blue-50 cursor-pointer text-sm border-b border-slate-100 last:border-0" onMouseDown={(e) => { e.preventDefault(); handleClientSelect(client); }}><div className="font-bold text-slate-800">{client.nombre || client.razonSocial || client.full_name}</div><div className="text-xs text-slate-500">ID: {displayId}</div></div> ); })}
+                      </div>
+                    )}
+                  </div>
+                  <Button onClick={handleNewClient} className="bg-green-600 hover:bg-green-700 text-white min-w-[140px] mb-[1px]" type="button"><UserPlus className="h-4 w-4 mr-2" /> Nuevo Cliente</Button>
                 </div>
+                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">RUC / ID</label><Input value={selectedClient.identificacion} onChange={(e) => setSelectedClient({...selectedClient, identificacion: e.target.value})} placeholder="099..." /></div>
+                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Teléfono</label><Input value={selectedClient.telefono} onChange={(e) => setSelectedClient({...selectedClient, telefono: e.target.value})} /></div>
+                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1"><Mail className="h-3 w-3" /> Email</label><Input value={selectedClient.email} onChange={(e) => setSelectedClient({...selectedClient, email: e.target.value})} placeholder="correo@ejemplo.com" /></div>
+                <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Dirección</label><Input value={selectedClient.direccion} onChange={(e) => setSelectedClient({...selectedClient, direccion: e.target.value})} /></div>
+              </div>
+            </CardContent>
+          </Card>
 
-                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Cliente:</label>
-                <div className="col-span-12 md:col-span-4 flex gap-2">
-                   <select value={formData.cliente} onChange={handleClientChange} className={cn("w-full border rounded px-2 py-1 text-sm bg-white focus:outline-none", errors.cliente ? "border-red-500" : "border-slate-300")}>
-                    <option value="">Seleccionar...</option>
-                    {clients.map(client => (<option key={client.id} value={client.id}>{client.razonSocial} - {client.ruc || client.cedulaRuc}</option>))}
-                  </select>
-                  <Button type="button" size="sm" variant="outline" onClick={() => setShowNewClientModal(true)} className="h-8 px-2 border-blue-400 text-blue-600 hover:bg-blue-50 shrink-0">+</Button>
-                </div>
-
-                <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tiempo Entrega:</label>
-                <div className="col-span-12 md:col-span-10">
-                   <input type="text" className={cn("w-full md:w-1/3 border rounded px-2 py-1 text-sm focus:outline-none", errors.deliveryTime ? "border-red-500" : "border-slate-300")} value={formData.deliveryTime} onChange={e => setFormData({...formData, deliveryTime: e.target.value})} placeholder="Ej: 5 días laborales" />
-                </div>
-             </div>
-          </div>
-
-          <div className="space-y-2">
-             <div className="flex justify-between items-center mb-1">
-                 <h3 className="text-xs text-slate-500 italic">Detalle de Productos / Servicios</h3>
+          <Card className="shadow-sm border-slate-200">
+            <CardContent className="p-6">
+              <div className="flex justify-between items-center mb-4 border-b pb-2">
+                 <div className="flex items-center gap-2 text-blue-700 font-semibold"><Calculator className="h-5 w-5" /> Items a Cotizar</div>
                  <div className="flex gap-2 items-center">
-                     <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-md border border-indigo-200 shadow-sm transition-colors hover:bg-indigo-100">
-                         <Checkbox checked={formData.esMayorista || false} onCheckedChange={toggleMayorista} />
-                         Tarifa Mayorista
-                     </label>
-                     <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
-                         <ShoppingCart className="h-3 w-3" /> Catálogo
-                     </Button>
-                     <Button size="sm" type="button" onClick={() => {
-                         setFormData(prev => ({...prev, items: [...prev.items, { producto: '', cantidad: 0, precioUnitario: 0, es_por_metro: false }]}));
-                     }} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs px-3">
-                         <Plus className="h-3 w-3 mr-1" /> Manual
-                     </Button>
+                    {/* Botón de mayorista oculto pero funcionalidad activa */}
+                    {esMayorista && <span className="text-xs font-bold bg-indigo-100 text-indigo-800 px-2 py-1 rounded shadow-sm">TARIFA MAYORISTA APLICADA</span>}
+                    <Button size="sm" type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2"><ShoppingCart className="h-4 w-4"/> Catálogo</Button>
+                    <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50"><Plus className="h-4 w-4 mr-1" /> Item Manual</Button>
                  </div>
-             </div>
-
-             <div className="border border-slate-300 rounded-sm overflow-hidden">
+              </div>
+              <div className="overflow-visible border rounded-lg pb-10 bg-white"> 
                 <table className="w-full text-sm">
-                   <thead className="bg-[#004080] text-white text-xs">
-                      <tr>
-                         <th className="py-1 px-2 text-left">Descripción</th>
-                         <th className="py-1 px-2 text-center w-24">Cantidad</th>
-                         <th className="py-1 px-2 text-right w-32">P. Unitario</th>
-                         <th className="py-1 px-2 text-right w-32">Total</th>
-                         <th className="w-8"></th>
-                      </tr>
+                   <thead className="bg-slate-100 text-slate-600 font-semibold">
+                      <tr><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center w-24">Cant.</th><th className="px-3 py-2 text-right w-32">P. Unit</th><th className="px-3 py-2 text-right w-32">Total</th><th className="px-3 py-2 w-10"></th></tr>
                    </thead>
-                   <tbody className="divide-y divide-slate-200">
-                      {formData.items.map((row, idx) => {
-                        const rowQty = parseInt(row.cantidad, 10) || 0;
-                        const rowPrice = parseFloat(row.precioUnitario) || 0;
-                        const multiplier = (row.es_por_metro && rowQty === 0) ? 1 : rowQty;
-                        const rowTotal = multiplier * rowPrice;
-
-                        return (
-                          <tr key={idx} className="hover:bg-slate-50 group">
-                             <td className="py-1 px-2 relative">
-                                <textarea 
-                                    className="w-full border-none bg-transparent focus:ring-0 text-sm p-0 placeholder-slate-300 resize-y min-h-[40px]" 
-                                    placeholder={idx === formData.items.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
-                                    value={row.producto} 
-                                    onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
-                                    onFocus={() => { if((row.producto)?.length >= 2) handleProductSearchRequest(idx, row.producto); }}
-                                    onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
-                                />
-                                {activeProductSearchRow === idx && productSuggestions.length > 0 && (
-                                    <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-xl max-h-60 overflow-y-auto left-0">
-                                        {productSuggestions.map(prod => (
-                                            <div 
-                                                key={prod.id} 
-                                                className="px-3 py-2 hover:bg-purple-50 cursor-pointer text-sm border-b border-slate-100" 
-                                                onMouseDown={(e) => { e.preventDefault(); handleSelectProductSuggestion(idx, prod); }}
-                                            >
-                                                <div className="font-bold text-slate-800">{prod.nombre}</div>
-                                                <div className="flex justify-between items-center mt-1">
-                                                    <span className="text-[10px] text-slate-500 font-mono">{prod.codigo || ''}</span>
-                                                    <span className="text-xs text-green-600 font-bold">${Number(prod.precio).toFixed(2)}</span>
-                                                </div>
-                                            </div>
-                                        ))}
-                                    </div>
-                                )}
-                             </td>
-                             <td className="py-1 px-2 relative">
-                                <input 
+                   <tbody className="divide-y divide-slate-100 bg-white">
+                      {products.map((row, idx) => (
+                        <tr key={idx} className="hover:bg-slate-50 group">
+                           <td className="p-2 relative align-top pt-3">
+                              <textarea 
+                                  className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
+                                  placeholder={idx === products.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
+                                  value={row.descripcion} 
+                                  onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
+                                  onFocus={() => { if(row.descripcion && row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
+                                  onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
+                              />
+                              {row.observaciones && (
+                                  <div className="text-[10px] text-slate-500 italic mt-1 leading-tight">
+                                      {row.observaciones}
+                                  </div>
+                              )}
+                              {activeProductSearchRow === idx && productSuggestions.length > 0 && (
+                                  <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-2xl max-h-60 overflow-y-auto left-0">
+                                      {productSuggestions.map(prod => (
+                                          <div key={prod.id} className="px-3 py-2 hover:bg-purple-50 cursor-pointer text-sm border-b border-slate-100" onMouseDown={(e) => { e.preventDefault(); handleSelectProductSuggestion(idx, prod); }}>
+                                              <div className="font-bold text-slate-800">{prod.nombre}</div>
+                                              <div className="flex justify-between items-center mt-1"><span className="text-[10px] text-slate-500 font-mono">{prod.codigo || ''}</span><span className="text-xs text-green-600 font-bold">${Number(prod.precio).toFixed(2)}</span></div>
+                                          </div>
+                                      ))}
+                                  </div>
+                              )}
+                           </td>
+                           <td className="p-2 relative align-top pt-3">
+                               <Input 
                                   type="number" 
-                                  step="1"
-                                  className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0"
-                                  value={row.cantidad !== undefined ? row.cantidad : ''}
-                                  onChange={e => handleItemChange(idx, 'cantidad', e.target.value)}
-                                  onKeyDown={e => { if (e.key === '.' || e.key === ',') e.preventDefault(); }}
-                                  onBlur={e => handleQuantityBlur(idx, e.target.value)}
-                                />
-                             </td>
-                             <td className="py-1 px-2">
-                                <input 
-                                  type="number" 
-                                  step="0.01"
-                                  className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0"
-                                  value={row.precioUnitario !== undefined ? row.precioUnitario : ''}
-                                  onChange={e => handleItemChange(idx, 'precioUnitario', e.target.value)}
-                                />
-                             </td>
-                             <td className="py-1 px-2 text-right font-medium text-slate-700 relative">
-                                $ {rowTotal.toFixed(2)}
-                                {(row.es_por_metro && row.cantidad === 0) && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio base por cantidad 0">(Precio Base)</div>}
-                             </td>
-                             <td className="py-1 px-1 text-center">
-                                {row.producto && formData.items.length > 1 && (
-                                  <button type="button" onClick={() => removeItem(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-3 w-3" /></button>
-                                )}
-                             </td>
-                          </tr>
-                        );
-                      })}
+                                  step={row.es_por_metro ? "0.01" : "1"}
+                                  className="text-center h-9 font-bold" 
+                                  min={row.venta_minima || 1} 
+                                  value={row.cantidad || ''} 
+                                  onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} 
+                                  onKeyDown={e => {
+                                      if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
+                                  }}
+                                  onBlur={(e) => handleQuantityBlur(idx, e.target.value)} 
+                               />
+                               {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                           </td>
+                           <td className="p-2 align-top pt-3"><Input type="number" className="text-right h-9 font-bold text-green-700" min="0" step="0.01" value={row.precioUnitario!==undefined?row.precioUnitario:''} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
+                           <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">
+                               ${Number(row.total || 0).toFixed(2)}
+                               {row.es_por_metro && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio fijo por rango">(Fijo)</div>}
+                           </td>
+                           <td className="p-2 text-center align-top pt-4"><button type="button" onClick={() => removeProduct(idx)} className="text-slate-400 hover:text-red-500 transition-colors" disabled={products.length === 1}><Trash2 className="h-4 w-4" /></button></td>
+                        </tr>
+                      ))}
                    </tbody>
                    <tfoot className="bg-slate-50 text-xs font-medium text-slate-700 border-t border-slate-300">
                       <tr>
                          <td colSpan="3" className="text-right py-1 px-2">SubTotal</td>
-                         <td className="text-right py-1 px-2">$ {subtotal.toFixed(2)}</td>
+                         <td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td>
                          <td></td>
                       </tr>
                       <tr>
                          <td colSpan="3" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span>Descuento</span>
                             <div className="flex items-center border border-slate-300 rounded bg-white overflow-hidden">
-                               <select className="text-xs px-1 py-0.5 border-r border-slate-200 outline-none" value={formData.descuentoTipo} onChange={e => setFormData({...formData, descuentoTipo: e.target.value})}>
-                                  <option value="porcentaje">%</option>
-                                  <option value="fijo">$</option>
-                               </select>
-                               <input type="number" step="0.01" className="w-16 text-right px-1 py-0.5 outline-none text-xs" value={formData.descuentoValor} onChange={e => setFormData({...formData, descuentoValor: parseFloat(e.target.value) || 0})} />
+                               <span className="text-xs px-2 py-0.5 border-r border-slate-200 outline-none bg-slate-100">$</span>
+                               <input 
+                                 type="number" step="0.01"
+                                 className="w-16 text-right px-1 py-0.5 outline-none text-xs"
+                                 value={localDiscountVal}
+                                 onChange={e => {
+                                     setLocalDiscountVal(e.target.value);
+                                     setFinancials(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
+                                 }}
+                               />
                             </div>
                          </td>
-                         <td className="text-right py-1 px-2 text-red-500">- $ {descuento.toFixed(2)}</td>
+                         <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuento.toFixed(2)}</td>
                          <td></td>
                       </tr>
                       <tr>
                          <td colSpan="3" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                              <span>IVA (%)</span>
-                             <input type="number" step="0.01" className="w-12 text-right border border-slate-300 rounded px-1 text-xs" value={formData.impuestoTasa} onChange={e => setFormData({...formData, impuestoTasa: parseFloat(e.target.value) || 0})} />
+                             <input 
+                               type="number" step="0.01"
+                               className="w-12 text-right border border-slate-300 rounded px-1 text-xs"
+                               value={ivaPercentage}
+                               onChange={e => setIvaPercentage(parseFloat(e.target.value) || 0)}
+                             />
                          </td>
-                         <td className="text-right py-1 px-2">$ {impuesto.toFixed(2)}</td>
+                         <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td>
                          <td></td>
                       </tr>
                       <tr className="bg-slate-100 font-bold text-slate-900 border-t border-slate-300">
                          <td colSpan="3" className="text-right py-2 px-2">TOTAL</td>
-                         <td className="text-right py-2 px-2">$ {total.toFixed(2)}</td>
+                         <td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td>
                          <td></td>
                       </tr>
                    </tfoot>
                 </table>
+              </div>
+            </CardContent>
+          </Card>
+
+          {/* 🔥 SECCIÓN: IMÁGENES DE REFERENCIA 🔥 */}
+          <div className="space-y-3 pt-2">
+             <label className="text-xs font-bold text-slate-700 block mb-1">Imágenes de Referencia / Artes (Opcional):</label>
+             <div className="flex flex-wrap gap-4 items-start bg-white border border-slate-200 rounded-lg p-4">
+                 {imagenes.map((img, i) => (
+                     <div key={i} className="relative w-24 h-24 border border-slate-300 rounded overflow-hidden group shadow-sm">
+                         <img src={img.url} className="w-full h-full object-cover" alt="Referencia" />
+                         <button type="button" onClick={() => removeImage(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"><X className="h-3 w-3"/></button>
+                     </div>
+                 ))}
+                 
+                 {isLoadingImages ? (
+                     <div className="w-24 h-24 flex items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 text-blue-600 rounded"><Loader2 className="w-6 h-6 animate-spin" /></div>
+                 ) : (
+                     <label className="w-24 h-24 border-2 border-dashed border-slate-300 bg-slate-50 hover:bg-blue-50 hover:border-blue-300 hover:text-blue-600 text-slate-400 rounded flex flex-col items-center justify-center cursor-pointer transition-colors shadow-sm">
+                         <input type="file" multiple accept="image/*" className="hidden" onChange={handleAddImages} />
+                         <Plus className="h-6 w-6" />
+                         <span className="text-[10px] font-bold mt-1 text-center leading-tight">Añadir<br/>Imágenes</span>
+                     </label>
+                 )}
              </div>
           </div>
 
-          <div className="space-y-4 pt-2">
-             <div className="text-xs text-slate-500 italic border-b border-slate-200 pb-1">Condiciones Comerciales</div>
-             
-             <div className="grid grid-cols-1 md:grid-cols-2 gap-8">
-                 <div className="space-y-3">
-                    <div className="flex items-center justify-between">
-                       <label className="text-xs font-bold text-slate-700">Anticipo (%):</label>
-                       <div className="flex items-center gap-2">
-                          <input type="number" className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-right" value={formData.advancePercentage} onChange={e => { const val = parseFloat(e.target.value) || 0; setFormData({...formData, advancePercentage: val, balancePercentage: 100 - val}); }} />
-                          <span className="text-sm font-bold w-24 text-right">$ {anticipoMonto.toFixed(2)}</span>
-                       </div>
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 pt-4">
+            <div className="md:col-span-2">
+                <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Condiciones / Notas Comerciales</label>
+                <textarea className="w-full border border-slate-300 rounded-md p-3 text-sm focus:ring-2 focus:ring-blue-500 outline-none h-32 resize-none" placeholder="El cliente debe enviar el logo en curvas..." value={notes} onChange={(e) => setNotes(e.target.value)} />
+            </div>
+            
+            <Card className="bg-slate-50 border-slate-200 h-fit">
+              <CardContent className="p-5 space-y-3">
+                <div className="flex justify-between text-sm text-slate-600"><span>Subtotal:</span><span className="font-medium">${financials.subtotal.toFixed(2)}</span></div>
+                
+                <div className="flex justify-between items-center text-sm text-slate-600 bg-white p-2 rounded border border-slate-100 mt-2">
+                  <div className="flex items-center gap-2"><Switch checked={applyIva} onCheckedChange={setApplyIva} className="scale-75 data-[state=checked]:bg-blue-600" /><span className={!applyIva ? 'text-slate-400 line-through' : 'font-medium'}>IVA ({ivaPercentage}%)</span></div>
+                  <span className={`font-medium ${!applyIva ? 'text-slate-300' : ''}`}>${financials.iva.toFixed(2)}</span>
+                </div>
+                <div className="border-t border-slate-300 pt-3 flex justify-between items-center"><span className="font-bold text-lg text-slate-800">TOTAL:</span><span className="font-bold text-2xl text-blue-700">${financials.total.toFixed(2)}</span></div>
+                
+                <div className="border-t border-blue-200 mt-4 pt-3 space-y-2">
+                    <span className="text-xs font-bold text-blue-800 uppercase block mb-2">Forma de Pago Requerida</span>
+                    <div className="flex items-center justify-between text-sm">
+                        <span className="flex items-center text-slate-600">Anticipo <input type="number" className="w-12 h-6 border rounded text-center ml-2 text-xs font-bold text-blue-700 bg-blue-50" value={financials.anticipoPorc} onChange={e => { let val = Number(e.target.value); if(val > 100) val = 100; if(val < 0) val = 0; setFinancials(prev => ({...prev, anticipoPorc: val})); }} />%</span>
+                        <span className="font-bold text-slate-700">${financials.anticipoValor.toFixed(2)}</span>
                     </div>
-                    <div className="flex items-center justify-between">
-                       <label className="text-xs font-bold text-slate-700">Saldo contra entrega (%):</label>
-                       <div className="flex items-center gap-2">
-                          <input type="number" className="w-16 border border-slate-300 rounded px-2 py-1 text-sm text-right" value={formData.balancePercentage} onChange={e => { const val = parseFloat(e.target.value) || 0; setFormData({...formData, balancePercentage: val, advancePercentage: 100 - val}); }} />
-                          <span className="text-sm font-bold w-24 text-right">$ {saldoMonto.toFixed(2)}</span>
-                       </div>
-                    </div>
-                 </div>
-
-                 <div className="space-y-3">
-                    <div className="flex items-center gap-2">
-                       <label className="text-xs font-bold text-slate-700 w-24">Forma Pago:</label>
-                       <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPago} onChange={e => { const val = e.target.value; setFormData({...formData, formaPago: val, creditoVence: val === 'Crédito' ? formData.creditoVence : ''}); }}>
-                          {formasPago.map(fp => <option key={fp} value={fp}>{fp}</option>)}
-                       </select>
-                    </div>
-                    
-                    {formData.formaPago === 'Crédito' && (
-                       <div className="flex items-center gap-2">
-                          <label className="text-xs font-bold text-slate-700 w-24">Vencimiento:</label>
-                          <input type="date" className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm" value={formData.creditoVence} onChange={e => setFormData({...formData, creditoVence: e.target.value})} />
-                       </div>
-                    )}
-                 </div>
-             </div>
+                    <div className="flex items-center justify-between text-sm"><span className="text-slate-500">Saldo ({financials.saldoPorc}%)</span><span className="font-bold text-slate-700">${financials.saldoValor.toFixed(2)}</span></div>
+                </div>
+              </CardContent>
+            </Card>
           </div>
-
-          <div className="space-y-2 pt-2 border-t border-slate-200">
-             <label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas:</label>
-             <textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:outline-none" value={formData.notasInternas} onChange={e => setFormData({...formData, notasInternas: e.target.value})} placeholder="Observaciones para uso interno..." />
-          </div>
-
         </div>
       </div>
 
-      <div className="bg-slate-50 px-6 py-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
-         <Button type="button" variant="outline" onClick={onCancel} className="bg-white">Cancelar</Button>
-         <Button type="button" onClick={() => handleSubmit('BORRADOR')} className="bg-[#004080] hover:bg-blue-900 text-white px-8 gap-2" disabled={isSavingDraft}>
-            {isSavingDraft ? <Loader2 className="h-4 w-4 animate-spin" /> : <Save className="h-4 w-4" />}
-            Guardar Proforma
-         </Button>
+      <div className="bg-white border-t border-slate-200 p-4 flex justify-end gap-3 sticky bottom-0 z-20">
+        <Button variant="outline" onClick={onCancel} disabled={loading}>Cancelar</Button>
+        <Button onClick={handleSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[160px]">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} {initialData ? 'Actualizar' : 'Guardar Cotización'}</Button>
       </div>
 
-      {/* 🔥 CATÁLOGO LATERAL 🔥 */}
+      {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}
       {isCatalogOpen && (
         <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
-            <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5"/> Catálogo de Precios</h3>
-                <Button variant="ghost" size="icon" onClick={() => setIsCatalogOpen(false)} className="hover:bg-slate-700"><X className="h-5 w-5" /></Button>
-            </div>
-            <div className="p-4 border-b border-slate-200 shrink-0 bg-slate-50">
-                <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    <Input autoFocus placeholder="Buscar por código, nombre o categoría..." className="pl-9 bg-white" value={searchCatalog} onChange={e => setSearchCatalog(e.target.value)} />
-                </div>
-            </div>
+            <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0"><h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5"/> Catálogo de Precios</h3><Button variant="ghost" size="icon" onClick={() => setIsCatalogOpen(false)} className="hover:bg-slate-700"><X className="h-5 w-5" /></Button></div>
+            <div className="p-4 border-b border-slate-200 shrink-0 bg-slate-50"><div className="relative"><Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" /><Input autoFocus placeholder="Buscar por código, nombre o categoría..." className="pl-9 bg-white" value={searchCatalog} onChange={e => setSearchCatalog(e.target.value)} /></div></div>
             <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
-                {catalogItems.filter(item => 
-                    (item.nombre || '').toLowerCase().includes(searchCatalog.toLowerCase()) || 
-                    (item.codigo || '').toLowerCase().includes(searchCatalog.toLowerCase()) ||
-                    (item.categoria || '').toLowerCase().includes(searchCatalog.toLowerCase())
-                ).map(item => (
+                {catalogItems.filter(item => (item.nombre || '').toLowerCase().includes(searchCatalog.toLowerCase()) || (item.codigo || '').toLowerCase().includes(searchCatalog.toLowerCase()) || (item.categoria || '').toLowerCase().includes(searchCatalog.toLowerCase())).map(item => (
                     <div key={item.id} className="bg-slate-50 border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-400 hover:shadow-md cursor-pointer transition-all group" onClick={() => handleCatalogSelect(item)}>
-                        <div className="flex justify-between items-start mb-1">
-                            <span className="font-bold text-sm text-slate-800 group-hover:text-blue-700 uppercase">{item.nombre}</span>
-                            <span className="font-bold text-green-700">${Number(item.precio).toFixed(2)}</span>
-                        </div>
+                        <div className="flex justify-between items-start mb-1"><span className="font-bold text-sm text-slate-800 group-hover:text-blue-700 uppercase">{item.nombre}</span><span className="font-bold text-green-700">${Number(item.precio).toFixed(2)}</span></div>
                         <div className="text-[10px] font-bold text-purple-600 mb-1">{item.categoria}</div>
                         <div className="text-xs text-slate-500 line-clamp-2">{item.descripcion || item.observaciones}</div>
-                        
                         <div className="mt-2 flex flex-wrap items-center gap-2">
                             {item.es_por_metro && <span className="text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-1.5 py-0.5 rounded">Precio Fijo/Rango</span>}
                             {item.venta_minima > 1 && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">Mínimo: {item.venta_minima}</span>}
@@ -609,18 +575,10 @@ const ProformaForm = ({
                         </div>
                     </div>
                 ))}
-                {catalogItems.length === 0 && <div className="text-center py-10 text-slate-400">Catálogo vacío.</div>}
             </div>
         </div>
       )}
-      
-      {showNewClientModal && (
-        <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200 p-4">
-            <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-lg">Nuevo Cliente</h3><Button size="sm" variant="ghost" onClick={()=>setShowNewClientModal(false)}><X/></Button></div>
-            <div className="flex-1 overflow-y-auto"><ClientForm user={currentUser} onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={newClientInitialData} /></div>
-        </div>
-      )}
-    </motion.div>
+    </div>
   );
 };
 

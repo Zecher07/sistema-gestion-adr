@@ -145,7 +145,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [localClients, setLocalClients] = useState(clients);
   const searchRef = useRef(null);
 
-  // 🔥 SOLUCIÓN: Congelamos el nombre del nuevo cliente para que no se borre al re-renderizar 🔥
   const newClientInitialData = useMemo(() => {
       return showNewClientModal ? { nombre: searchTerm } : null;
   }, [showNewClientModal]);
@@ -312,7 +311,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
         descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
-        esMayorista: initialData.esMayorista || false
+        esMayorista: initialData.esMayorista || initialData.es_mayorista || false
       }));
       
       setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
@@ -422,6 +421,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
+  // 🔥 LÓGICA DE PRECIOS DETECTANDO AL CLIENTE 🔥
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       const tiersKey = applyMayorista ? 'precios_distribuidor' : 'precios_escalonados';
       const baseKey = applyMayorista ? 'precioDistribuidorBase' : 'precioBaseOriginal';
@@ -434,23 +434,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       return Number(item[baseKey] || item[fallbackBaseKey] || 0);
   };
 
-  const toggleMayorista = (checked) => {
-      setFormData(prev => {
-          const newProducts = prev.productos.map(p => {
-              if (!p.descripcion) return p;
-              if (p.es_por_metro) return p; 
-              const qty = parseInt(p.cantidad, 10) || 0;
-              const newPrice = getPriceForQty(qty, p, checked);
-              const multiplier = (p.es_por_metro && qty === 0) ? 1 : qty;
-              return { ...p, precioUnitario: newPrice, total: multiplier * newPrice };
-          });
-          return { ...prev, esMayorista: checked, productos: newProducts };
-      });
-  };
-
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
-    
     const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, item, formData.esMayorista);
 
     let finalDesc = item.nombre;
@@ -499,7 +484,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       
       const terms = value.trim().split(/\s+/);
       let query = supabase.from('catalogo_productos').select('*');
-      
       terms.forEach(term => {
           query = query.or(`nombre.ilike.%${term}%,categoria.ilike.%${term}%,codigo.ilike.%${term}%`);
       });
@@ -510,7 +494,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
-      
       const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, product, formData.esMayorista);
 
       let finalDesc = product.nombre;
@@ -602,8 +585,26 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.includes(searchTerm)));
 
+  // 🔥 SOLUCIÓN: AL SELECCIONAR CLIENTE SE RECALCULAN LOS PRECIOS 🔥
   const handleSelectClient = (client) => {
-    setFormData({ ...formData, clienteId: client.id, cliente: client.nombre });
+    const isWholesale = client.es_mayorista || false;
+    setFormData(prev => {
+        const newProducts = prev.productos.map(p => {
+              if (!p.descripcion) return p;
+              if (p.es_por_metro) return p; 
+              const qty = parseInt(p.cantidad, 10) || 0;
+              const newPrice = getPriceForQty(qty, p, isWholesale);
+              const multiplier = (p.es_por_metro && qty === 0) ? 1 : qty;
+              return { ...p, precioUnitario: newPrice, total: multiplier * newPrice };
+        });
+        return { 
+            ...prev, 
+            clienteId: client.id, 
+            cliente: client.nombre, 
+            esMayorista: isWholesale,
+            productos: newProducts
+        };
+    });
     setSearchTerm(client.nombre);
     setIsSearching(false);
   };
@@ -875,7 +876,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     try {
-        // 🔥 REMOVEMOS esMayorista del payload porque no existe en la tabla ordenes 🔥
         const payload = {
             cliente_id: formData.clienteId,
             cliente_nombre: formData.cliente,
@@ -1099,10 +1099,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
                  {!isEffectivelyReadOnly && (
                      <div className="flex gap-2 items-center">
-                         <label className="flex items-center gap-1.5 cursor-pointer text-xs font-bold text-indigo-800 bg-indigo-50 px-3 py-1.5 rounded-md border border-indigo-200 shadow-sm transition-colors hover:bg-indigo-100">
-                             <Checkbox checked={formData.esMayorista || false} onCheckedChange={toggleMayorista} />
-                             Tarifa Distribuidor
-                         </label>
                          <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
                              <ShoppingCart className="h-3 w-3" /> Catálogo
                          </Button>

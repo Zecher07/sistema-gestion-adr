@@ -1,17 +1,19 @@
 import React, { useState, useEffect } from 'react';
-import { Save, X, User, Mail, MapPin, Phone, FileText, DollarSign, CreditCard } from 'lucide-react';
+import { Save, X, User, Mail, MapPin, Phone, FileText, DollarSign, CreditCard, ShieldAlert, Star } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { motion } from 'framer-motion';
 import { supabase } from '../supabaseClient';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
+import { Checkbox } from '@/components/ui/checkbox';
 
 const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
 
-  // 🔥 VALIDACIÓN DE ROL PARA EL CRÉDITO 🔥
+  // 🔥 VALIDACIÓN DE ROL PARA CRÉDITO Y TARIFA MAYORISTA 🔥
   const canEditCredit = user?.role === 'Administrador' || user?.role === 'Contabilidad';
+  const isAdmin = user?.role === 'Administrador';
 
   const [formData, setFormData] = useState({
     razonSocial: '',
@@ -20,7 +22,8 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
     direccion: '',
     celular: '',
     permiteCredito: false, 
-    limiteCredito: 0       
+    limiteCredito: 0,
+    esMayorista: false // 🔥 Nuevo campo de estado 🔥
   });
 
   useEffect(() => {
@@ -32,7 +35,8 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
         direccion: clienteAEditar.direccion || '',
         celular: clienteAEditar.telefono || '',  
         permiteCredito: clienteAEditar.permiteCredito || false,
-        limiteCredito: clienteAEditar.limiteCredito || 0
+        limiteCredito: clienteAEditar.limiteCredito || 0,
+        esMayorista: clienteAEditar.es_mayorista || false // Rescatar estado de la BD
       });
     }
   }, [clienteAEditar]);
@@ -61,9 +65,11 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
         telefono: formData.celular,
         direccion: formData.direccion,
         empresa: formData.cedulaRuc,
-        // Conservamos los valores de crédito intactos si es un vendedor
+        // Conservamos los valores de crédito intactos si no es admin/contabilidad
         permiteCredito: canEditCredit ? formData.permiteCredito : (clienteAEditar?.permiteCredito || false),
-        limiteCredito: canEditCredit ? (formData.permiteCredito ? Number(formData.limiteCredito) : 0) : (clienteAEditar?.limiteCredito || 0)
+        limiteCredito: canEditCredit ? (formData.permiteCredito ? Number(formData.limiteCredito) : 0) : (clienteAEditar?.limiteCredito || 0),
+        // Conservamos el valor de mayorista si no es admin
+        es_mayorista: isAdmin ? formData.esMayorista : (clienteAEditar?.es_mayorista || false)
       };
 
       let error;
@@ -228,7 +234,41 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
                        </p>
                    </div>
                    <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
-                       🔒 Solo el área de Contabilidad o Administración pueden modificar el crédito.
+                       <ShieldAlert className="h-3 w-3" /> Solo el área de Contabilidad o Administración pueden modificar el crédito.
+                   </p>
+                </div>
+            )}
+
+            {/* 🔥 SECCIÓN DE TARIFA MAYORISTA DINÁMICA SEGÚN EL ROL 🔥 */}
+            {isAdmin ? (
+                <div className="bg-indigo-50 p-5 rounded-lg border border-indigo-200 mt-4">
+                    <h3 className="text-sm font-bold text-slate-800 mb-2 flex items-center gap-2">
+                        <Star className="h-4 w-4 text-indigo-600" /> Clasificación Comercial
+                    </h3>
+                    <p className="text-xs text-slate-500 mb-4">Define si este cliente recibe precios especiales de distribuidor automáticamente en el sistema.</p>
+                    
+                    <label className="flex items-center gap-3 cursor-pointer group bg-white p-3 rounded-md border border-slate-200 hover:border-indigo-400 transition-colors w-full sm:w-auto shadow-sm">
+                        <div className="relative flex items-center">
+                            <input type="checkbox" name="esMayorista" checked={formData.esMayorista} onChange={handleChange} className="sr-only peer" />
+                            <div className="w-11 h-6 bg-slate-300 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                        </div>
+                        <span className="text-sm font-bold text-slate-700 group-hover:text-indigo-700">Cliente Mayorista (Distribuidor)</span>
+                    </label>
+                </div>
+            ) : (
+                <div className="bg-slate-50 p-5 rounded-lg border border-slate-200 mt-4 opacity-80 pointer-events-none">
+                   <h3 className="text-sm font-bold text-slate-800 mb-2 flex items-center gap-2">
+                       <Star className="h-4 w-4 text-slate-400" /> Clasificación Comercial Actual
+                   </h3>
+                   <div className="bg-white p-3 rounded-md border border-slate-200">
+                       <p className="text-sm font-bold text-slate-700">
+                           {formData.esMayorista 
+                               ? '🏷️ Tarifa Mayorista Activa (Aplica descuentos automáticos)' 
+                               : '👤 Tarifa de Consumidor Final.'}
+                       </p>
+                   </div>
+                   <p className="text-xs text-slate-400 mt-2 flex items-center gap-1">
+                       <ShieldAlert className="h-3 w-3" /> Solo el área de Administración puede modificar esta clasificación.
                    </p>
                 </div>
             )}
