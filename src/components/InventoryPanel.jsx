@@ -31,7 +31,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const isAdmin = user?.role === 'Administrador';
   const isProduccion = user?.role === 'Producción'; 
 
-  // Modal Crear/Editar Material (Solo Admin)
+  // Modal Crear/Editar Material
   const [isModalOpen, setIsModalOpen] = useState(false);
   const [editingItem, setEditingItem] = useState(null);
   
@@ -48,7 +48,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   });
   const [saving, setSaving] = useState(false);
 
-  // Historial Modal
+  // Historial Item
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
   const [itemHistoryData, setItemHistoryData] = useState([]);
   const [itemHistoryLoading, setItemHistoryLoading] = useState(false);
@@ -57,19 +57,19 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const [globalHistory, setGlobalHistory] = useState([]);
   const [globalHistoryLoading, setGlobalHistoryLoading] = useState(false);
 
-  // Modal de COMPRAS
+  // Modal COMPRAS
   const [isPurchaseModalOpen, setIsPurchaseModalOpen] = useState(false);
   const [purchaseRef, setPurchaseRef] = useState('');
-  const [purchaseItems, setPurchaseItems] = useState([{ inventoryId: '', qty: '' }]);
+  const [purchaseItems, setPurchaseItems] = useState([{ inventoryId: '', qty: '', searchTerm: '', isSearching: false }]);
 
-  // 🔥 NUEVO: Modal de CONSUMO INTERNO 🔥
+  // Modal CONSUMO INTERNO
   const [isConsumeModalOpen, setIsConsumeModalOpen] = useState(false);
   const [consumeReason, setConsumeReason] = useState('');
-  const [consumeItems, setConsumeItems] = useState([{ inventoryId: '', qty: '' }]);
+  const [consumeItems, setConsumeItems] = useState([{ inventoryId: '', qty: '', searchTerm: '', isSearching: false }]);
 
-  // Modal de CUADRE DE INVENTARIO
+  // Modal CUADRE DE INVENTARIO
   const [isAdjustModalOpen, setIsAdjustModalOpen] = useState(false);
-  const [adjustItems, setAdjustItems] = useState([{ inventoryId: '', newQty: '', reason: '' }]);
+  const [adjustItems, setAdjustItems] = useState([{ inventoryId: '', newQty: '', reason: '', searchTerm: '', isSearching: false }]);
 
   useEffect(() => {
     fetchData();
@@ -149,7 +149,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       }
   };
 
-  // --- LÓGICA DE BODEGAS ---
   const handleAddBodega = async () => {
       if (!newBodegaName.trim()) return;
       const name = newBodegaName.trim().toUpperCase();
@@ -202,7 +201,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       finally { setBodegaLoading(false); }
   };
 
-  // --- LÓGICA DE MATERIALES ---
   const handleOpenModal = (item = null) => {
     if (isReadOnly || !isAdmin) return; 
     if (item) {
@@ -322,10 +320,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       } catch (error) { toast({ title: "Error", description: "No se pudo actualizar la cantidad.", variant: "destructive" }); }
   };
 
-  // --- 🔥 LÓGICA AGREGAR COMPRA 🔥 ---
   const openPurchaseModal = () => {
       setPurchaseRef('');
-      setPurchaseItems([{ inventoryId: '', qty: '' }]);
+      setPurchaseItems([{ inventoryId: '', qty: '', searchTerm: '', isSearching: false }]);
       setIsPurchaseModalOpen(true);
   };
 
@@ -361,10 +358,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       finally { setSaving(false); }
   };
 
-  // --- 🔥 LÓGICA CONSUMO INTERNO (TONERS, ETC) 🔥 ---
   const openConsumeModal = () => {
       setConsumeReason('');
-      setConsumeItems([{ inventoryId: '', qty: '' }]);
+      setConsumeItems([{ inventoryId: '', qty: '', searchTerm: '', isSearching: false }]);
       setIsConsumeModalOpen(true);
   };
 
@@ -407,9 +403,8 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       finally { setSaving(false); }
   };
 
-  // --- 🔥 LÓGICA CUADRE DE INVENTARIO 🔥 ---
   const openAdjustModal = () => {
-      setAdjustItems([{ inventoryId: '', newQty: '', reason: '' }]);
+      setAdjustItems([{ inventoryId: '', newQty: '', reason: '', searchTerm: '', isSearching: false }]);
       setIsAdjustModalOpen(true);
   };
 
@@ -544,7 +539,6 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                               <ShoppingCart className="h-4 w-4" /> Agregar Compra
                           </Button>
                           
-                          {/* 🔥 NUEVO BOTÓN PARA CONSUMO INTERNO 🔥 */}
                           <Button onClick={openConsumeModal} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 font-bold shadow-sm">
                               <PenTool className="h-4 w-4" /> Registrar Consumo
                           </Button>
@@ -703,6 +697,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
+          {/* -------------------- TAB 2: HISTORIAL GLOBAL -------------------- */}
           {activeTab === 'history' && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[600px] flex flex-col animate-in fade-in duration-300">
                   <div className="p-4 border-b border-slate-100 bg-slate-50 flex justify-between items-center">
@@ -756,139 +751,210 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
           {/* -------------------- ZONA DE MODALES -------------------- */}
 
-          {/* Modal Compras */}
+          {/* 🔥 MODAL COMPRAS 🔥 */}
           <AnimatePresence>
           {isPurchaseModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
                   <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
-                      <div className="bg-emerald-700 p-4 text-white flex justify-between items-center shrink-0">
+                      <div className="bg-emerald-700 p-4 md:p-5 text-white flex justify-between items-center shrink-0">
                           <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5 text-emerald-200"/> Registrar Ingreso por Compras</h3>
                           <button onClick={() => setIsPurchaseModalOpen(false)} className="hover:bg-emerald-800 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
                       </div>
                       
-                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50 min-h-[400px]">
                           <div className="mb-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
                               <label className="text-xs font-bold text-slate-600 uppercase mb-1 block">Nº Factura / Proveedor (Opcional)</label>
-                              <Input value={purchaseRef} onChange={e=>setPurchaseRef(e.target.value)} placeholder="Ej: Factura 001 - Importadora..." />
+                              <Input className="text-sm py-1.5" value={purchaseRef} onChange={e=>setPurchaseRef(e.target.value)} placeholder="Ej: Factura 001 - Importadora..." />
                           </div>
 
                           <div className="space-y-2">
                               <label className="text-xs font-bold text-slate-600 uppercase block border-b border-slate-200 pb-1">Materiales Adquiridos</label>
                               {purchaseItems.map((pItem, idx) => (
-                                  <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                      <select 
-                                         className="flex-1 text-sm border border-slate-300 rounded px-2 py-1.5 outline-none focus:border-emerald-500 uppercase font-medium"
-                                         value={pItem.inventoryId}
-                                         onChange={e => {
-                                             const newItems = [...purchaseItems];
-                                             newItems[idx].inventoryId = e.target.value;
-                                             setPurchaseItems(newItems);
-                                         }}
-                                      >
-                                          <option value="">Seleccionar material...</option>
-                                          {items.map(i => <option key={i.id} value={i.id}>{i.nombre} - ({i.unidad})</option>)}
-                                      </select>
-                                      <Input type="number" min="1" className="w-24 text-center font-bold text-emerald-700" placeholder="Cant." value={pItem.qty} onChange={e => {
+                                  <div key={idx} className={cn("flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm", pItem.isSearching ? "relative z-50 ring-2 ring-emerald-200" : "relative")}>
+                                      <div className="flex-1 relative">
+                                          <input 
+                                             className="w-full text-sm border border-slate-300 rounded px-3 py-2 outline-none focus:border-emerald-500 uppercase font-bold bg-white transition-colors"
+                                             placeholder="🔍 Buscar material..."
+                                             value={pItem.searchTerm !== undefined ? pItem.searchTerm : (items.find(i => String(i.id) === String(pItem.inventoryId))?.nombre || '')}
+                                             onChange={e => {
+                                                 const newItems = [...purchaseItems];
+                                                 newItems[idx].searchTerm = e.target.value;
+                                                 newItems[idx].inventoryId = '';
+                                                 newItems[idx].isSearching = true;
+                                                 setPurchaseItems(newItems);
+                                             }}
+                                             onFocus={() => {
+                                                 const newItems = [...purchaseItems];
+                                                 newItems[idx].isSearching = true;
+                                                 setPurchaseItems(newItems);
+                                             }}
+                                             onBlur={() => setTimeout(() => {
+                                                 setPurchaseItems(prev => {
+                                                     const newItems = [...prev];
+                                                     if (newItems[idx]) newItems[idx].isSearching = false;
+                                                     return newItems;
+                                                 });
+                                             }, 250)}
+                                          />
+                                          {pItem.isSearching && (
+                                              <div className="absolute z-[100] w-full mt-1 bg-white border border-slate-300 rounded-md shadow-xl max-h-64 overflow-y-auto left-0">
+                                                  {items.filter(i => i.nombre.toLowerCase().includes((pItem.searchTerm || '').toLowerCase()) || (i.codigo || '').toLowerCase().includes((pItem.searchTerm || '').toLowerCase())).slice(0, 50).map(i => (
+                                                      <div 
+                                                          key={i.id} 
+                                                          className="px-3 py-2 hover:bg-emerald-50 cursor-pointer border-b border-slate-100 transition-colors" 
+                                                          onMouseDown={(e) => { 
+                                                              e.preventDefault(); 
+                                                              const newItems = [...purchaseItems];
+                                                              newItems[idx].inventoryId = String(i.id);
+                                                              newItems[idx].searchTerm = i.nombre;
+                                                              newItems[idx].isSearching = false;
+                                                              setPurchaseItems(newItems);
+                                                          }}
+                                                      >
+                                                          <div className="font-bold text-slate-800 uppercase text-xs">{i.nombre}</div>
+                                                          <div className="text-[10px] text-slate-500 font-medium">Disp: <span className="font-bold text-slate-700">{i.cantidad}</span> {i.unidad} {i.codigo ? ` | Cód: ${i.codigo}` : ''}</div>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                          )}
+                                      </div>
+                                      <Input type="number" min="1" className="w-24 text-center font-bold text-emerald-700 text-sm py-2" placeholder="Cant." value={pItem.qty} onChange={e => {
                                           const newItems = [...purchaseItems];
                                           newItems[idx].qty = e.target.value;
                                           setPurchaseItems(newItems);
                                       }}/>
-                                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => {
+                                      <Button variant="ghost" size="icon" className="h-9 w-9 text-red-500 hover:bg-red-50 rounded shrink-0" onClick={() => {
                                           if(purchaseItems.length > 1) setPurchaseItems(purchaseItems.filter((_, i) => i !== idx));
                                       }}><Trash2 className="h-4 w-4"/></Button>
                                   </div>
                               ))}
-                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50" onClick={() => setPurchaseItems([...purchaseItems, {inventoryId:'', qty:''}])}><Plus className="h-4 w-4 mr-1"/> Añadir otra fila</Button>
+                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-emerald-300 text-emerald-700 hover:bg-emerald-50 mt-2" onClick={() => setPurchaseItems([...purchaseItems, {inventoryId:'', qty:'', searchTerm:'', isSearching: false}])}><Plus className="h-4 w-4 mr-1"/> Añadir fila</Button>
                           </div>
                       </div>
 
                       <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
                           <Button variant="outline" onClick={() => setIsPurchaseModalOpen(false)}>Cancelar</Button>
-                          <Button onClick={handleSavePurchase} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Registrar Ingreso</Button>
+                          <Button onClick={handleSavePurchase} disabled={saving} className="bg-emerald-600 hover:bg-emerald-700 text-white font-bold"><ShoppingCart className="h-4 w-4 mr-2"/> {saving ? 'Registrando...' : 'Registrar Ingreso'}</Button>
                       </div>
                   </motion.div>
               </div>
           )}
           </AnimatePresence>
 
-          {/* 🔥 MODAL DE CONSUMO INTERNO (TONERS) 🔥 */}
+          {/* 🔥 MODAL CONSUMO INTERNO 🔥 */}
           <AnimatePresence>
           {isConsumeModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
                   <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-2xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
-                      <div className="bg-blue-700 p-4 text-white flex justify-between items-center shrink-0">
+                      <div className="bg-blue-700 p-4 md:p-5 text-white flex justify-between items-center shrink-0">
                           <h3 className="font-bold text-lg flex items-center gap-2"><PenTool className="h-5 w-5 text-blue-200"/> Registrar Consumo Operativo</h3>
                           <button onClick={() => setIsConsumeModalOpen(false)} className="hover:bg-blue-800 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
                       </div>
                       
-                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50 min-h-[400px]">
                           <div className="mb-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm border-l-4 border-l-blue-500">
-                              <p className="text-[11px] text-slate-500 italic mb-2 leading-snug">Utilice esta ventana para registrar artículos de uso interno o consumibles que no se descuentan automáticamente (ej. Toners, cuchillas, cinta de embalaje).</p>
+                              <p className="text-[11px] text-slate-500 italic mb-2 leading-snug">Utilice esta ventana para registrar artículos de uso interno o consumibles (ej. Toners, cinta de embalaje).</p>
                               <label className="text-xs font-bold text-slate-600 uppercase mb-1 block">Motivo / Destino de los materiales *</label>
                               <Input 
                                   value={consumeReason} 
                                   onChange={e=>setConsumeReason(e.target.value)} 
-                                  placeholder="Ej: Cambio de toner negro en impresora de Ventas para OP 000123" 
-                                  className="border-blue-200 focus:ring-blue-500"
+                                  placeholder="Ej: Cambio de toner en impresora de Ventas para OP 000123" 
+                                  className="text-sm py-1.5 border-blue-200 focus:ring-blue-500"
                               />
                           </div>
 
                           <div className="space-y-2">
                               <label className="text-xs font-bold text-slate-600 uppercase block border-b border-slate-200 pb-1">Materiales a Consumir</label>
                               {consumeItems.map((cItem, idx) => (
-                                  <div key={idx} className="flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm">
-                                      <select 
-                                         className="flex-1 text-sm border border-slate-300 rounded px-2 py-1.5 outline-none focus:border-blue-500 uppercase font-medium"
-                                         value={cItem.inventoryId}
-                                         onChange={e => {
-                                             const newItems = [...consumeItems];
-                                             newItems[idx].inventoryId = e.target.value;
-                                             setConsumeItems(newItems);
-                                         }}
-                                      >
-                                          <option value="">Seleccionar material...</option>
-                                          {items.map(i => <option key={i.id} value={i.id}>{i.nombre} - (Disp: {i.cantidad} {i.unidad})</option>)}
-                                      </select>
-                                      <Input type="number" min="1" className="w-24 text-center font-bold text-blue-700" placeholder="Cant." value={cItem.qty} onChange={e => {
+                                  <div key={idx} className={cn("flex gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm", cItem.isSearching ? "relative z-50 ring-2 ring-blue-200" : "relative")}>
+                                      <div className="flex-1 relative">
+                                          <input 
+                                             className="w-full text-sm border border-slate-300 rounded px-3 py-2 outline-none focus:border-blue-500 uppercase font-bold bg-white transition-colors"
+                                             placeholder="🔍 Buscar material..."
+                                             value={cItem.searchTerm !== undefined ? cItem.searchTerm : (items.find(i => String(i.id) === String(cItem.inventoryId))?.nombre || '')}
+                                             onChange={e => {
+                                                 const newItems = [...consumeItems];
+                                                 newItems[idx].searchTerm = e.target.value;
+                                                 newItems[idx].inventoryId = '';
+                                                 newItems[idx].isSearching = true;
+                                                 setConsumeItems(newItems);
+                                             }}
+                                             onFocus={() => {
+                                                 const newItems = [...consumeItems];
+                                                 newItems[idx].isSearching = true;
+                                                 setConsumeItems(newItems);
+                                             }}
+                                             onBlur={() => setTimeout(() => {
+                                                 setConsumeItems(prev => {
+                                                     const newItems = [...prev];
+                                                     if (newItems[idx]) newItems[idx].isSearching = false;
+                                                     return newItems;
+                                                 });
+                                             }, 250)}
+                                          />
+                                          {cItem.isSearching && (
+                                              <div className="absolute z-[100] w-full mt-1 bg-white border border-slate-300 rounded-md shadow-xl max-h-64 overflow-y-auto left-0">
+                                                  {items.filter(i => i.nombre.toLowerCase().includes((cItem.searchTerm || '').toLowerCase()) || (i.codigo || '').toLowerCase().includes((cItem.searchTerm || '').toLowerCase())).slice(0, 50).map(i => (
+                                                      <div 
+                                                          key={i.id} 
+                                                          className="px-3 py-2 hover:bg-blue-50 cursor-pointer border-b border-slate-100 transition-colors" 
+                                                          onMouseDown={(e) => { 
+                                                              e.preventDefault(); 
+                                                              const newItems = [...consumeItems];
+                                                              newItems[idx].inventoryId = String(i.id);
+                                                              newItems[idx].searchTerm = i.nombre;
+                                                              newItems[idx].isSearching = false;
+                                                              setConsumeItems(newItems);
+                                                          }}
+                                                      >
+                                                          <div className="font-bold text-slate-800 uppercase text-xs">{i.nombre}</div>
+                                                          <div className="text-[10px] text-slate-500 font-medium">Disp: <span className="font-bold text-slate-700">{i.cantidad}</span> {i.unidad} {i.codigo ? ` | Cód: ${i.codigo}` : ''}</div>
+                                                      </div>
+                                                  ))}
+                                              </div>
+                                          )}
+                                      </div>
+                                      <Input type="number" min="1" className="w-24 text-center font-bold text-blue-700 text-sm py-2" placeholder="Cant." value={cItem.qty} onChange={e => {
                                           const newItems = [...consumeItems];
                                           newItems[idx].qty = e.target.value;
                                           setConsumeItems(newItems);
                                       }}/>
-                                      <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => {
+                                      <Button variant="ghost" size="icon" className="h-9 w-9 text-red-500 hover:bg-red-50 rounded shrink-0" onClick={() => {
                                           if(consumeItems.length > 1) setConsumeItems(consumeItems.filter((_, i) => i !== idx));
                                       }}><Trash2 className="h-4 w-4"/></Button>
                                   </div>
                               ))}
-                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-blue-300 text-blue-700 hover:bg-blue-50" onClick={() => setConsumeItems([...consumeItems, {inventoryId:'', qty:''}])}><Plus className="h-4 w-4 mr-1"/> Añadir otra fila</Button>
+                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-blue-300 text-blue-700 hover:bg-blue-50 mt-2" onClick={() => setConsumeItems([...consumeItems, {inventoryId:'', qty:'', searchTerm:'', isSearching: false}])}><Plus className="h-4 w-4 mr-1"/> Añadir fila</Button>
                           </div>
                       </div>
 
                       <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
                           <Button variant="outline" onClick={() => setIsConsumeModalOpen(false)}>Cancelar</Button>
-                          <Button onClick={handleSaveConsume} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Registrar Consumo</Button>
+                          <Button onClick={handleSaveConsume} disabled={saving} className="bg-blue-600 hover:bg-blue-700 text-white font-bold"><PenTool className="h-4 w-4 mr-2"/> {saving ? 'Registrando...' : 'Registrar Consumo'}</Button>
                       </div>
                   </motion.div>
               </div>
           )}
           </AnimatePresence>
 
-          {/* Modal Cuadre Inventario */}
+          {/* 🔥 MODAL CUADRE INVENTARIO 🔥 */}
           <AnimatePresence>
           {isAdjustModalOpen && (
               <div className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
                   <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-4xl overflow-hidden border border-slate-200 flex flex-col max-h-[90vh]">
-                      <div className="bg-amber-600 p-4 text-white flex justify-between items-center shrink-0">
+                      <div className="bg-amber-600 p-4 md:p-5 text-white flex justify-between items-center shrink-0">
                           <h3 className="font-bold text-lg flex items-center gap-2"><Scale className="h-5 w-5 text-amber-200"/> Cuadre de Inventario (Auditoría)</h3>
                           <button onClick={() => setIsAdjustModalOpen(false)} className="hover:bg-amber-700 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
                       </div>
                       
-                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50">
+                      <div className="p-6 overflow-y-auto flex-1 bg-slate-50 min-h-[400px]">
                           <div className="space-y-3">
-                              <div className="grid grid-cols-12 gap-2 px-2 text-xs font-bold text-slate-500 uppercase tracking-wider">
-                                  <div className="col-span-4">Material</div>
-                                  <div className="col-span-2 text-center">Stock Sistema</div>
-                                  <div className="col-span-2 text-center">Stock Físico (Real)</div>
-                                  <div className="col-span-4">Justificación / Motivo</div>
+                              <div className="grid grid-cols-12 gap-2 px-2 text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1">
+                                  <div className="col-span-5">Material a cuadrar</div>
+                                  <div className="col-span-1 text-center" title="Stock en el Sistema">Sis.</div>
+                                  <div className="col-span-2 text-center" title="Stock Físico Real">Físico</div>
+                                  <div className="col-span-3">Justificación / Motivo</div>
+                                  <div className="col-span-1 text-center"></div>
                               </div>
                               {adjustItems.map((aItem, idx) => {
                                   const targetItem = items.find(i => String(i.id) === String(aItem.inventoryId));
@@ -899,61 +965,94 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                                   }
 
                                   return (
-                                      <div key={idx} className="grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm relative">
-                                          <div className="col-span-4">
-                                              <select 
-                                                 className="w-full text-sm border border-slate-300 rounded px-2 py-1.5 outline-none focus:border-amber-500 uppercase font-medium"
-                                                 value={aItem.inventoryId}
+                                      <div key={idx} className={cn("grid grid-cols-12 gap-2 items-center bg-white p-2 rounded-lg border border-slate-200 shadow-sm", aItem.isSearching ? "relative z-50 ring-2 ring-amber-200" : "relative")}>
+                                          <div className="col-span-5 relative">
+                                              <input 
+                                                 className="w-full text-sm border border-slate-300 rounded px-3 py-2 outline-none focus:border-amber-500 uppercase font-bold bg-white transition-colors"
+                                                 placeholder="🔍 Buscar material..."
+                                                 value={aItem.searchTerm !== undefined ? aItem.searchTerm : (items.find(i => String(i.id) === String(aItem.inventoryId))?.nombre || '')}
                                                  onChange={e => {
                                                      const newItems = [...adjustItems];
-                                                     newItems[idx].inventoryId = e.target.value;
+                                                     newItems[idx].searchTerm = e.target.value;
+                                                     newItems[idx].inventoryId = '';
+                                                     newItems[idx].isSearching = true;
                                                      setAdjustItems(newItems);
                                                  }}
-                                              >
-                                                  <option value="">Seleccionar material...</option>
-                                                  {items.map(i => <option key={i.id} value={i.id}>{i.nombre}</option>)}
-                                              </select>
+                                                 onFocus={() => {
+                                                     const newItems = [...adjustItems];
+                                                     newItems[idx].isSearching = true;
+                                                     setAdjustItems(newItems);
+                                                 }}
+                                                 onBlur={() => setTimeout(() => {
+                                                     setAdjustItems(prev => {
+                                                         const newItems = [...prev];
+                                                         if (newItems[idx]) newItems[idx].isSearching = false;
+                                                         return newItems;
+                                                     });
+                                                 }, 250)}
+                                              />
+                                              {aItem.isSearching && (
+                                                  <div className="absolute z-[100] w-[110%] mt-1 bg-white border border-slate-300 rounded-md shadow-xl max-h-64 overflow-y-auto left-0">
+                                                      {items.filter(i => i.nombre.toLowerCase().includes((aItem.searchTerm || '').toLowerCase()) || (i.codigo || '').toLowerCase().includes((aItem.searchTerm || '').toLowerCase())).slice(0, 50).map(i => (
+                                                          <div 
+                                                              key={i.id} 
+                                                              className="px-3 py-2 hover:bg-amber-50 cursor-pointer border-b border-slate-100 transition-colors" 
+                                                              onMouseDown={(e) => { 
+                                                                  e.preventDefault(); 
+                                                                  const newItems = [...adjustItems];
+                                                                  newItems[idx].inventoryId = String(i.id);
+                                                                  newItems[idx].searchTerm = i.nombre;
+                                                                  newItems[idx].isSearching = false;
+                                                                  setAdjustItems(newItems);
+                                                              }}
+                                                          >
+                                                              <div className="font-bold text-slate-800 uppercase text-xs">{i.nombre}</div>
+                                                              <div className="text-[10px] text-slate-500 font-medium mt-0.5">Disp: <span className="font-bold text-slate-700">{i.cantidad}</span> {i.unidad} {i.codigo ? ` | Cód: ${i.codigo}` : ''}</div>
+                                                          </div>
+                                                      ))}
+                                                  </div>
+                                              )}
                                           </div>
-                                          <div className="col-span-2 text-center font-bold text-slate-400 text-lg bg-slate-50 rounded border border-slate-100 py-1">{sysQty}</div>
+                                          <div className="col-span-1 text-center font-bold text-slate-400 text-sm bg-slate-50 rounded border border-slate-200 py-1.5">{sysQty}</div>
                                           <div className="col-span-2 relative">
-                                              <Input type="number" min="0" className="w-full text-center font-bold text-lg" placeholder="0" value={aItem.newQty} onChange={e => {
+                                              <Input type="number" min="0" className="w-full text-center font-bold text-sm py-1.5" placeholder="0" value={aItem.newQty} onChange={e => {
                                                   const newItems = [...adjustItems];
                                                   newItems[idx].newQty = e.target.value;
                                                   setAdjustItems(newItems);
                                               }}/>
                                               {targetItem && aItem.newQty !== '' && diff !== 0 && (
-                                                  <span className={cn("absolute -top-2 -right-2 text-[10px] font-black px-1.5 rounded shadow-sm", diff > 0 ? "bg-green-500 text-white" : "bg-red-500 text-white")}>
+                                                  <span className={cn("absolute -top-2 -right-2 text-[10px] font-black px-1.5 py-0.5 rounded shadow-sm z-10", diff > 0 ? "bg-green-500 text-white" : "bg-red-500 text-white")}>
                                                       {diff > 0 ? `+${diff}` : diff}
                                                   </span>
                                               )}
                                           </div>
                                           <div className="col-span-3">
-                                              <Input className="w-full text-xs italic" placeholder="Ej: Material dañado, error de conteo..." value={aItem.reason} onChange={e => {
+                                              <Input className="w-full text-xs font-medium py-2 italic" placeholder="Ej: Error de conteo..." value={aItem.reason} onChange={e => {
                                                   const newItems = [...adjustItems];
                                                   newItems[idx].reason = e.target.value;
                                                   setAdjustItems(newItems);
                                               }}/>
                                           </div>
-                                          <div className="col-span-1 flex justify-end">
-                                              <Button variant="ghost" size="icon" className="h-8 w-8 text-red-500 hover:bg-red-50" onClick={() => {
+                                          <div className="col-span-1 flex justify-center">
+                                              <Button variant="ghost" size="icon" className="h-9 w-9 text-red-500 hover:bg-red-100 hover:text-red-700 rounded shrink-0" onClick={() => {
                                                   if(adjustItems.length > 1) setAdjustItems(adjustItems.filter((_, i) => i !== idx));
                                               }}><Trash2 className="h-4 w-4"/></Button>
                                           </div>
                                       </div>
                                   );
                               })}
-                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-amber-300 text-amber-700 hover:bg-amber-50" onClick={() => setAdjustItems([...adjustItems, {inventoryId:'', newQty:'', reason:''}])}><Plus className="h-4 w-4 mr-1"/> Añadir otra fila</Button>
+                              <Button type="button" variant="outline" size="sm" className="w-full border-dashed border-amber-300 text-amber-700 hover:bg-amber-50 mt-2" onClick={() => setAdjustItems([...adjustItems, {inventoryId:'', newQty:'', reason:'', searchTerm:'', isSearching: false}])}><Plus className="h-4 w-4 mr-1"/> Añadir fila</Button>
                           </div>
                       </div>
 
                       <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-between items-center shrink-0">
-                          <div className="bg-red-50 border border-red-200 px-4 py-2 rounded-lg flex items-center gap-3">
-                              <span className="text-xs font-bold text-red-800 uppercase tracking-wider">Valor total pérdida monetaria:</span>
-                              <span className="text-xl font-black text-red-600">${calculateTotalLoss().toFixed(2)}</span>
+                          <div className="bg-red-50 border border-red-200 px-4 py-2 rounded-lg flex items-center gap-3 shadow-sm">
+                              <span className="text-xs font-bold text-red-800 uppercase tracking-wider">Pérdida monetaria:</span>
+                              <span className="text-lg font-black text-red-600">${calculateTotalLoss().toFixed(2)}</span>
                           </div>
                           <div className="flex gap-3">
                               <Button variant="outline" onClick={() => setIsAdjustModalOpen(false)}>Cancelar</Button>
-                              <Button onClick={handleSaveAdjust} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white font-bold">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Ejecutar Cuadre</Button>
+                              <Button onClick={handleSaveAdjust} disabled={saving} className="bg-amber-600 hover:bg-amber-700 text-white font-bold shadow-md">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} Ejecutar Cuadre</Button>
                           </div>
                       </div>
                   </motion.div>
@@ -1148,7 +1247,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       {/* -------------------- VISTA DE IMPRESIÓN -------------------- */}
       <div className="hidden print:block font-sans text-black bg-white min-h-screen">
           <style>{`
-            @page { size: landscape; margin: 10mm; }
+            @page { size: portrait; margin: 10mm; }
             @media print {
               body * { visibility: hidden; }
               .print\\:block, .print\\:block * { visibility: visible; }

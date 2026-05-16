@@ -421,17 +421,26 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
-  // 🔥 LÓGICA DE PRECIOS DETECTANDO AL CLIENTE 🔥
+  // 🔥 LÓGICA DE PRECIOS DETECTANDO AL CLIENTE (CORREGIDA PARA EVITAR VALORES EN 0) 🔥
   const getPriceForQty = (qty, item, applyMayorista = false) => {
-      const tiersKey = applyMayorista ? 'precios_distribuidor' : 'precios_escalonados';
-      const baseKey = applyMayorista ? 'precioDistribuidorBase' : 'precioBaseOriginal';
-      const fallbackBaseKey = applyMayorista ? 'precio_distribuidor' : 'precio';
+      if (applyMayorista) {
+          // 1. Si es mayorista, busca precio distribuidor por cantidad o base
+          const tiersDist = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
+          const tierDist = tiersDist.find(t => qty >= t.cantidad);
+          if (tierDist && Number(tierDist.precio) > 0) return Number(tierDist.precio);
+          
+          const baseDist = Number(item.precioDistribuidorBase || item.precio_distribuidor || 0);
+          if (baseDist > 0) return baseDist;
+          
+          // Si el admin no le puso tarifa de mayorista a este producto, sigue de largo y usa el precio normal
+      }
 
-      const tiers = [...(item[tiersKey] || [])].sort((a,b) => b.cantidad - a.cantidad);
-      const tier = tiers.find(t => qty >= t.cantidad);
-      if (tier) return tier.precio;
+      // 2. Cálculo de tarifa Normal (y también sirve de respaldo si falló la mayorista)
+      const tiersNorm = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
+      const tierNorm = tiersNorm.find(t => qty >= t.cantidad);
+      if (tierNorm && Number(tierNorm.precio) > 0) return Number(tierNorm.precio);
       
-      return Number(item[baseKey] || item[fallbackBaseKey] || 0);
+      return Number(item.precioBaseOriginal || item.precio || 0);
   };
 
   const handleCatalogSelect = (item) => {
@@ -585,7 +594,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.includes(searchTerm)));
 
-  // 🔥 SOLUCIÓN: AL SELECCIONAR CLIENTE SE RECALCULAN LOS PRECIOS 🔥
   const handleSelectClient = (client) => {
     const isWholesale = client.es_mayorista || false;
     setFormData(prev => {
@@ -1099,6 +1107,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
                  {!isEffectivelyReadOnly && (
                      <div className="flex gap-2 items-center">
+                         {formData.esMayorista && <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-1 rounded shadow-sm border border-indigo-200">TARIFA MAYORISTA ACTIVA</span>}
                          <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
                              <ShoppingCart className="h-3 w-3" /> Catálogo
                          </Button>
