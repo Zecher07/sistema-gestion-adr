@@ -7,6 +7,9 @@ import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
+import { cn } from '@/lib/utils';
+import ClientForm from './ClientForm';
+import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 
 // --- 🔥 FUNCIÓN PARA COMPRIMIR IMÁGENES 🔥 ---
 const compressImage = async (file) => {
@@ -33,23 +36,23 @@ const compressImage = async (file) => {
     });
 };
 
-const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = null, nextProformaNumber, onCreateClient }) => {
+const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user, initialData = null, nextProformaNumber, onCreateClient, onReloadClients }) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
 
   const [titulo, setTitulo] = useState(''); 
   const [diasEntrega, setDiasEntrega] = useState(''); 
+  const [responsable, setResponsable] = useState(user?.name || '');
   
   const [clientSearch, setClientSearch] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClient, setSelectedClient] = useState({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' });
 
   const [products, setProducts] = useState([
-    { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }
+    { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }
   ]);
   
-  // 🔥 ESTADO PARA LAS IMÁGENES 🔥
   const [imagenes, setImagenes] = useState([]);
 
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
@@ -67,8 +70,13 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
   const [localDiscountVal, setLocalDiscountVal] = useState('');
   const [localDiscountPercent, setLocalDiscountPercent] = useState('');
   
-  // 🔥 TARIFA MAYORISTA INTERNA 🔥
   const [esMayorista, setEsMayorista] = useState(false);
+
+  const [showNewClientModal, setShowNewClientModal] = useState(false);
+  const newClientInitialData = useMemo(() => { return showNewClientModal ? { nombre: clientSearch } : null; }, [showNewClientModal]);
+
+  const isAdmin = user?.role === 'Administrador';
+  const validSellers = useMemo(() => removeDuplicateUsers(getValidSellers(staffUsers)), [staffUsers]);
 
   const findClientId = (c) => { if (!c) return ''; return c.ruc || c.cedula || c.identificacion || c.dni || c.empresa || ''; };
 
@@ -87,11 +95,19 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
     if (initialData) {
       setTitulo(initialData.titulo || initialData.tipo_trabajo || ''); setClientSearch(initialData.cliente_nombre || '');
       setSelectedClient({ nombre: initialData.cliente_nombre || '', identificacion: initialData.cliente_identificacion || '', telefono: initialData.cliente_telefono || '', direccion: initialData.cliente_direccion || '', email: initialData.cliente_email || '' });
-      const items = Array.isArray(initialData.items) ? initialData.items : [];
-      setProducts(items.length > 0 ? items : [{ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }]);
-      setNotes(initialData.notas || ''); setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
       
-      // Rescatar si es mayorista
+      const items = Array.isArray(initialData.items) ? initialData.items : [];
+      setProducts(items.length > 0 ? items.map(p => ({
+          ...p,
+          precioUnitario: p.precioUnitario !== undefined ? p.precioUnitario : p.precio || 0,
+          base: p.base || '',
+          altura: p.altura || '',
+          cantidad: p.cantidad !== undefined ? p.cantidad : 1
+      })) : [{ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }]);
+      
+      setNotes(initialData.notas || ''); setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
+      setResponsable(initialData.responsable_nombre || user?.name || '');
+      
       setEsMayorista(initialData.esMayorista || initialData.es_mayorista || false);
       setImagenes(initialData.imagenes || []);
 
@@ -106,7 +122,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
           setLocalDiscountVal(dMonto > 0 ? dMonto.toFixed(2) : '');
       }
     }
-  }, [initialData]);
+  }, [initialData, user]);
 
   useEffect(() => {
     const subtotalBruto = products.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
@@ -140,7 +156,6 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
     }
   }, [products, ivaPercentage, applyIva, financials.descuentoMonto, financials.anticipoPorc]);
 
-  // 🔥 HANDLERS PARA IMÁGENES 🔥
   const handleAddImages = async (e) => {
       const files = Array.from(e.target.files);
       if(!files.length) return;
@@ -162,26 +177,38 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
 
   const filteredClients = clients.filter(c => { const term = clientSearch.toLowerCase().trim(); if (!term) return false; const name = (c.nombre || c.razonSocial || c.full_name || '').toLowerCase(); const id = String(findClientId(c)); return name.includes(term) || id.includes(term); });
   
-  // 🔥 LÓGICA DE PRECIO MAYORISTA 🔥
   const getPriceForQty = (qty, item, applyMayorista = false) => {
-      const tiersKey = applyMayorista ? 'precios_distribuidor' : 'precios_escalonados';
-      const baseKey = applyMayorista ? 'precioDistribuidorBase' : 'precioBaseOriginal';
-      const fallbackBaseKey = applyMayorista ? 'precio_distribuidor' : 'precio';
+      if (applyMayorista) {
+          const tiersDist = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
+          const tierDist = tiersDist.find(t => qty >= t.cantidad);
+          if (tierDist && Number(tierDist.precio) > 0) return Number(tierDist.precio);
+          
+          const baseDist = Number(item.precioDistribuidorBase || item.precio_distribuidor || 0);
+          if (baseDist > 0) return baseDist;
+      }
 
-      const tiers = [...(item[tiersKey] || [])].sort((a,b) => b.cantidad - a.cantidad);
-      const tier = tiers.find(t => qty >= t.cantidad);
-      if (tier) return tier.precio;
+      const tiersNorm = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
+      const tierNorm = tiersNorm.find(t => qty >= t.cantidad);
+      if (tierNorm && Number(tierNorm.precio) > 0) return Number(tierNorm.precio);
       
-      return Number(item[baseKey] || item[fallbackBaseKey] || 0);
+      return Number(item.precioBaseOriginal || item.precio || 0);
   };
 
   const recalculatePrices = (itemsList, isWholesale) => {
       return itemsList.map(p => {
           if (!p.descripcion) return p;
-          if (p.es_por_metro) return p; 
-          const qty = parseInt(p.cantidad, 10) || 0;
-          const newPrice = getPriceForQty(qty, p, isWholesale);
-          return { ...p, precioUnitario: newPrice, total: qty * newPrice };
+          const qty = parseFloat(p.cantidad) || 0;
+          
+          if (p.es_por_metro) {
+              const b = parseFloat(p.base) || 0;
+              const a = parseFloat(p.altura) || 0;
+              const areaTotal = b * a * qty;
+              const newPrice = getPriceForQty(areaTotal, p, isWholesale);
+              return { ...p, precioUnitario: newPrice, total: areaTotal * newPrice };
+          } else {
+              const newPrice = getPriceForQty(qty, p, isWholesale);
+              return { ...p, precioUnitario: newPrice, total: qty * newPrice };
+          }
       });
   };
 
@@ -203,17 +230,39 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
       setProducts(prev => recalculatePrices(prev, isWholesale));
   };
 
+  const handleNewClientCreated = (newClient) => {
+    const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
+    if(clientData) {
+        const isWholesale = clientData.es_mayorista || false;
+        setSelectedClient({ 
+            nombre: clientData.nombre || clientData.razonSocial || clientData.full_name, 
+            identificacion: findClientId(clientData), 
+            telefono: clientData.telefono || clientData.celular || '', 
+            direccion: clientData.direccion || '', 
+            email: clientData.email || clientData.correo || '' 
+        });
+        setClientSearch(clientData.nombre || clientData.razonSocial || clientData.full_name);
+        setShowNewClientModal(false);
+
+        setEsMayorista(isWholesale);
+        setProducts(prev => recalculatePrices(prev, isWholesale));
+
+        if(onReloadClients) onReloadClients();
+    }
+  };
+
   const handleNewClient = () => { 
       if (onCreateClient) onCreateClient(); 
-      else { 
-          setSelectedClient({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' }); 
-          setClientSearch(''); 
-      } 
+      else setShowNewClientModal(true);
   };
 
   const handleCatalogSelect = (item) => {
-    const minQty = item.venta_minima || 1;
-    const computedPrice = item.es_por_metro ? '' : getPriceForQty(minQty, item, esMayorista);
+    const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
+    
+    let computedPrice = 0;
+    if (!item.es_por_metro) {
+        computedPrice = getPriceForQty(minQty, item, esMayorista);
+    }
 
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
@@ -223,18 +272,28 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
         const newProduct = {
-            cantidad: minQty, venta_minima: minQty, descripcion: finalDesc,
+            cantidad: minQty > 0 ? minQty : 1,
+            venta_minima: minQty > 0 ? minQty : 1,
+            base: '', altura: '',
+            descripcion: finalDesc,
             observaciones: item.observaciones || '', 
-            precioUnitario: computedPrice, precioBaseOriginal: Number(item.precio) || 0,
+            precioUnitario: computedPrice || '', 
+            precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
             precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
             precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
-            total: (item.es_por_metro || false) ? 0 : computedPrice * minQty
+            total: item.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1)
         };
 
-        if (emptyIndex !== -1) { newProducts[emptyIndex] = newProduct; if (emptyIndex === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false }); } 
-        else { newProducts.push(newProduct); newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false }); }
+        if (emptyIndex !== -1) { 
+            newProducts[emptyIndex] = newProduct; 
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false }); 
+        } 
+        else { 
+            newProducts.push(newProduct); 
+            newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false }); 
+        }
         return newProducts;
     });
     setIsCatalogOpen(false); toast({ title: "Añadido", description: `${item.nombre} agregado a la proforma.` });
@@ -254,8 +313,12 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
   };
 
   const handleSelectProductSuggestion = (index, product) => {
-      const minQty = product.venta_minima || 1;
-      const computedPrice = product.es_por_metro ? '' : getPriceForQty(minQty, product, esMayorista);
+      const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
+      
+      let computedPrice = 0;
+      if (!product.es_por_metro) {
+          computedPrice = getPriceForQty(minQty, product, esMayorista);
+      }
 
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
@@ -265,14 +328,17 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
           newProducts[index] = { 
               ...newProducts[index], descripcion: finalDesc, 
               observaciones: product.observaciones || '', 
-              precioUnitario: computedPrice, precioBaseOriginal: Number(product.precio) || 0,
+              precioUnitario: computedPrice || '', 
+              precioBaseOriginal: Number(product.precio) || 0,
               precios_escalonados: product.precios_escalonados || [],
               precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
               precios_distribuidor: product.precios_distribuidor || [],
-              venta_minima: minQty, cantidad: minQty, es_por_metro: product.es_por_metro || false,
-              total: (product.es_por_metro || false) ? 0 : minQty * computedPrice 
+              venta_minima: minQty > 0 ? minQty : 1, 
+              cantidad: minQty > 0 ? minQty : 1, 
+              base: '', altura: '', es_por_metro: product.es_por_metro || false,
+              total: product.es_por_metro ? 0 : (minQty > 0 ? minQty : 1) * computedPrice 
           };
-          if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false });
+          if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false });
           return newProducts;
       });
       setProductSuggestions([]); setActiveProductSearchRow(null);
@@ -283,17 +349,37 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
         const newProducts = [...prev];
         let item = { ...newProducts[index], [field]: value };
         
-        if (field === 'cantidad') {
-            const qty = Number(value) || 0;
-            if (!item.es_por_metro && item.precioBaseOriginal !== undefined) {
-               item.precioUnitario = getPriceForQty(qty, item, esMayorista);
+        const q = parseFloat(item.cantidad) || 0; 
+        const b = parseFloat(item.base) || 0;
+        const a = parseFloat(item.altura) || 0;
+
+        if (item.es_por_metro) {
+            const areaTotal = b * a * q; 
+            
+            if (['base', 'altura', 'cantidad'].includes(field) && item.precioBaseOriginal !== undefined) {
+                if (areaTotal > 0) {
+                    item.precioUnitario = getPriceForQty(areaTotal, item, esMayorista);
+                } else {
+                    item.precioUnitario = '';
+                }
             }
+            const price = parseFloat(item.precioUnitario) || 0;
+            item.total = areaTotal * price;
+        } else {
+            if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
+                item.precioUnitario = getPriceForQty(q, item, esMayorista);
+            }
+            const price = parseFloat(item.precioUnitario) || 0;
+            item.total = q * price;
         }
 
-        if (field === 'cantidad' || field === 'precioUnitario') {
-          const qty = Number(item.cantidad) || 0;
-          const price = Number(item.precioUnitario) || 0;
-          item.total = item.es_por_metro ? price : qty * price;
+        if (field === 'precioUnitario') {
+            const price = parseFloat(value) || 0;
+            item.total = item.es_por_metro ? (b * a * q * price) : (q * price);
+        }
+
+        if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
         }
         
         newProducts[index] = item; return newProducts;
@@ -302,11 +388,19 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
 
   const handleQuantityBlur = (index, value) => {
       const item = products[index]; if (!item.descripcion) return;
-      const min = item.venta_minima || 1; const qty = Number(value);
-      if (qty > 0 && qty < min) { toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" }); updateProduct(index, 'cantidad', min); }
+      const min = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
+      let qty = parseInt(value, 10);
+      if (isNaN(qty)) qty = 0;
+
+      if (qty > 0 && min > 0 && qty < min) { 
+          toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" }); 
+          updateProduct(index, 'cantidad', min); 
+      } else {
+          updateProduct(index, 'cantidad', qty);
+      }
   };
 
-  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, venta_minima: 1, es_por_metro: false }]);
+  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false }]);
   const removeProduct = (idx) => setProducts(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
 
   const handleSubmit = async () => {
@@ -315,6 +409,12 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
     if (!titulo.trim()) { toast({ title: "Falta Título", description: "Por favor, agregue un título o referencia a la cotización.", variant: "destructive" }); return; }
     const validProducts = products.filter(p => p.descripcion && p.descripcion.trim() !== '');
     if (validProducts.length === 0) { toast({ title: "Sin productos", description: "Añada al menos un producto a la cotización.", variant: "destructive" }); return; }
+
+    const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.base === '' || p.altura === ''));
+    if (invalidMetroProducts.length > 0) {
+      toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura para los productos que son por metro.", variant: "destructive" });
+      setLoading(false); return;
+    }
 
     setLoading(true);
     try {
@@ -327,7 +427,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
             descuento: financials.descuento, descuentoMonto: financials.descuentoMonto, 
             anticipoPorc: financials.anticipoPorc, anticipoValor: financials.anticipoValor, saldoPorc: financials.saldoPorc, saldoValor: financials.saldoValor
         },
-        notas: notes, responsable_nombre: user.name, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
+        notas: notes, responsable_nombre: responsable, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
         imagenes: imagenes 
       };
 
@@ -378,6 +478,16 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
                 <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Teléfono</label><Input value={selectedClient.telefono} onChange={(e) => setSelectedClient({...selectedClient, telefono: e.target.value})} /></div>
                 <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 flex items-center gap-1"><Mail className="h-3 w-3" /> Email</label><Input value={selectedClient.email} onChange={(e) => setSelectedClient({...selectedClient, email: e.target.value})} placeholder="correo@ejemplo.com" /></div>
                 <div><label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Dirección</label><Input value={selectedClient.direccion} onChange={(e) => setSelectedClient({...selectedClient, direccion: e.target.value})} /></div>
+                
+                <div className="col-span-2">
+                   <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Responsable:</label>
+                   {isAdmin ? (
+                      <select className="w-full border border-slate-300 rounded px-3 py-2 text-sm bg-white" value={responsable} onChange={(e) => setResponsable(e.target.value)}>
+                         <option value="">Seleccionar...</option>
+                         {validSellers.map(u => (<option key={u.id} value={u.name}>{formatResponsableName(u)}</option>))}
+                      </select>
+                   ) : (<Input value={responsable} readOnly className="bg-slate-100" />)}
+                </div>
               </div>
             </CardContent>
           </Card>
@@ -387,8 +497,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
               <div className="flex justify-between items-center mb-4 border-b pb-2">
                  <div className="flex items-center gap-2 text-blue-700 font-semibold"><Calculator className="h-5 w-5" /> Items a Cotizar</div>
                  <div className="flex gap-2 items-center">
-                    {/* Botón de mayorista oculto pero funcionalidad activa */}
-                    {esMayorista && <span className="text-xs font-bold bg-indigo-100 text-indigo-800 px-2 py-1 rounded shadow-sm">TARIFA MAYORISTA APLICADA</span>}
+                    {esMayorista && <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-1 rounded shadow-sm border border-indigo-200">TARIFA MAYORISTA APLICADA</span>}
                     <Button size="sm" type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2"><ShoppingCart className="h-4 w-4"/> Catálogo</Button>
                     <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50"><Plus className="h-4 w-4 mr-1" /> Item Manual</Button>
                  </div>
@@ -415,6 +524,35 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
                                       {row.observaciones}
                                   </div>
                               )}
+
+                              {/* 🔥 CALCULADORA DE ÁREA INCORPORADA 🔥 */}
+                              {row.es_por_metro && (
+                                  <div className="flex flex-wrap items-center gap-2 mt-2 bg-purple-50 p-2 rounded-md border border-purple-200">
+                                      <span className="text-xs font-bold text-purple-700">Medidas (m):</span>
+                                      <div className="flex items-center gap-1">
+                                          <Input 
+                                              type="number" step="0.01" min="0" placeholder="Base" 
+                                              className="h-7 w-16 text-xs text-center px-1 py-0" 
+                                              value={row.base !== undefined ? row.base : ''} 
+                                              onChange={e => updateProduct(idx, 'base', e.target.value)} 
+                                          />
+                                          <span className="text-xs text-purple-500 font-bold">x</span>
+                                          <Input 
+                                              type="number" step="0.01" min="0" placeholder="Altura" 
+                                              className="h-7 w-16 text-xs text-center px-1 py-0" 
+                                              value={row.altura !== undefined ? row.altura : ''} 
+                                              onChange={e => updateProduct(idx, 'altura', e.target.value)} 
+                                          />
+                                      </div>
+                                      <span className="text-xs font-black text-purple-800 ml-2">
+                                          = {Number((parseFloat(row.base) || 0) * (parseFloat(row.altura) || 0)).toFixed(2)} m² c/u
+                                      </span>
+                                      <span className="text-xs font-black text-indigo-800 ml-2 pl-2 border-l border-purple-300">
+                                          Total: {Number((parseFloat(row.base) || 0) * (parseFloat(row.altura) || 0) * (parseFloat(row.cantidad) || 0)).toFixed(2)} m²
+                                      </span>
+                                  </div>
+                              )}
+
                               {activeProductSearchRow === idx && productSuggestions.length > 0 && (
                                   <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-2xl max-h-60 overflow-y-auto left-0">
                                       {productSuggestions.map(prod => (
@@ -429,22 +567,21 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
                            <td className="p-2 relative align-top pt-3">
                                <Input 
                                   type="number" 
-                                  step={row.es_por_metro ? "0.01" : "1"}
-                                  className="text-center h-9 font-bold" 
-                                  min={row.venta_minima || 1} 
-                                  value={row.cantidad || ''} 
+                                  step="1" 
+                                  className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold h-9" 
+                                  min="1" 
+                                  value={row.cantidad !== undefined ? row.cantidad : ''} 
                                   onChange={(e) => updateProduct(idx, 'cantidad', e.target.value)} 
                                   onKeyDown={e => {
                                       if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
                                   }}
                                   onBlur={(e) => handleQuantityBlur(idx, e.target.value)} 
                                />
-                               {row.venta_minima > 1 && <span className="absolute bottom-0 left-0 w-full text-center text-[9px] text-red-500 font-bold leading-tight">Mín: {row.venta_minima}</span>}
+                               {row.es_por_metro && <span className="absolute bottom-[-2px] left-0 w-full text-center text-[9px] text-purple-600 font-bold leading-tight">Piezas</span>}
                            </td>
                            <td className="p-2 align-top pt-3"><Input type="number" className="text-right h-9 font-bold text-green-700" min="0" step="0.01" value={row.precioUnitario!==undefined?row.precioUnitario:''} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
                            <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">
                                ${Number(row.total || 0).toFixed(2)}
-                               {row.es_por_metro && <div className="text-[9px] text-purple-600 font-bold leading-none mt-1" title="Precio fijo por rango">(Fijo)</div>}
                            </td>
                            <td className="p-2 text-center align-top pt-4"><button type="button" onClick={() => removeProduct(idx)} className="text-slate-400 hover:text-red-500 transition-colors" disabled={products.length === 1}><Trash2 className="h-4 w-4" /></button></td>
                         </tr>
@@ -576,6 +713,13 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], user, initialData = n
                     </div>
                 ))}
             </div>
+        </div>
+      )}
+      
+      {showNewClientModal && (
+        <div className="absolute inset-0 z-50 bg-white flex flex-col animate-in fade-in duration-200 p-4">
+            <div className="flex justify-between items-center mb-4 border-b pb-2"><h3 className="font-bold text-lg">Nuevo Cliente</h3><Button size="sm" variant="ghost" onClick={()=>setShowNewClientModal(false)}><X/></Button></div>
+            <div className="flex-1 overflow-y-auto"><ClientForm user={user} onCancel={()=>setShowNewClientModal(false)} onSuccess={handleNewClientCreated} clienteAEditar={newClientInitialData} /></div>
         </div>
       )}
     </div>
