@@ -64,7 +64,7 @@ const compressImage = async (file) => {
 
 const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }) => {
     const onDrop = useCallback(acceptedFiles => { onAdd(acceptedFiles); }, [onAdd]);
-    const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing });
+    const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || isReadOnly });
   
     return (
       <div className="border border-slate-300 p-4 rounded-sm bg-slate-50/50">
@@ -130,12 +130,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
   
+  // 🔥 CANDADO AJUSTADO: SI ES ADMINISTRADOR, NUNCA SE BLOQUEA EL ACCESO 🔥
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
-  // Redefinimos los bloqueos. Incluso si pasó el Paso 1, permitiremos editar los saldos para cobrar al final.
-  const isEffectivelyReadOnly = mode === 'payment_only' || mode === 'read_only';
+  const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
   const isEditMode = !!(initialData && initialData.id);
-  
-  // Modificado: El vendedor siempre debe poder actualizar la forma de pago del saldo al momento de la entrega.
   const isBottomReadOnly = isEffectivelyReadOnly;
 
   const [loading, setLoading] = useState(false);
@@ -315,7 +313,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
-        descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
         esMayorista: initialData.esMayorista || initialData.es_mayorista || false
       }));
       
@@ -385,7 +382,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
-    const saldoPendiente = Math.max(total - anticipoCalculado - retencionValor - abonosTotal, 0); // Evitamos saldos negativos matemáticos
+    const saldoPendiente = Math.max(total - anticipoCalculado - retencionValor - abonosTotal, 0);
 
     setFinancials({ subtotal, descuentoVal: descuentoBase, baseImponible, iva, total, saldoPendiente });
     
@@ -426,7 +423,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
-  // 🔥 LÓGICA DE PRECIOS DETECTANDO AL CLIENTE 🔥
+  // 🔥 LÓGICA DE PRECIOS MAYORISTA / NORMAL 🔥
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       if (applyMayorista) {
           const tiersDist = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
@@ -442,6 +439,34 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       if (tierNorm && Number(tierNorm.precio) > 0) return Number(tierNorm.precio);
       
       return Number(item.precioBaseOriginal || item.precio || 0);
+  };
+
+  // 🔥 LÓGICA DE RECALCULO DE PRECIOS CON PRECIO MÍNIMO DINÁMICO 🔥
+  const recalculatePrices = (itemsList, isWholesale) => {
+      return itemsList.map(p => {
+          if (!p.descripcion) return p;
+          const q = parseFloat(p.cantidad) || 0;
+          const PRECIO_MINIMO_ITEM = getPriceForQty(1, p, isWholesale);
+          
+          if (p.es_por_metro) {
+              const b = parseFloat(p.base) || 0;
+              const a = parseFloat(p.altura) || 0;
+              const areaIndividual = (b/100) * (a/100);
+              const areaTotalCalculada = parseFloat((areaIndividual * q).toFixed(2));
+              
+              const newPrice = getPriceForQty(areaTotalCalculada, p, isWholesale);
+              
+              let precioPorPieza = areaIndividual * newPrice;
+              if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                  precioPorPieza = PRECIO_MINIMO_ITEM;
+              }
+              
+              return { ...p, precioUnitario: areaTotalCalculada > 0 ? newPrice : '', total: parseFloat((precioPorPieza * q).toFixed(2)) };
+          } else {
+              const newPrice = getPriceForQty(q, p, isWholesale);
+              return { ...p, precioUnitario: newPrice, total: parseFloat((q * newPrice).toFixed(2)) };
+          }
+      });
   };
 
   const handleCatalogSelect = (item) => {
@@ -471,15 +496,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
             precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
-            total: item.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1)
+            total: item.es_por_metro ? 0 : parseFloat((computedPrice * (minQty > 0 ? minQty : 1)).toFixed(2))
         };
 
         if (emptyIndex !== -1) {
             newProducts[emptyIndex] = newProduct;
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
         } else {
             newProducts.push(newProduct);
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
         }
         return { ...prev, productos: newProducts };
     });
@@ -533,9 +558,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               cantidad: minQty > 0 ? minQty : 1, 
               base: '', altura: '',
               es_por_metro: product.es_por_metro || false,
-              total: product.es_por_metro ? 0 : (minQty > 0 ? minQty : 1) * computedPrice
+              total: product.es_por_metro ? 0 : parseFloat(((minQty > 0 ? minQty : 1) * computedPrice).toFixed(2))
           };
-          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
@@ -547,38 +572,55 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         const newProducts = [...prev.productos];
         let item = { ...newProducts[index], [field]: value };
         
-        // 🔥 CÁLCULO DE ÁREA TOTAL Y PRECIOS 🔥
         const q = parseFloat(item.cantidad) || 0; 
-        const b = parseFloat(item.base) || 0;
-        const a = parseFloat(item.altura) || 0;
+        const b = parseFloat(item.base) || 0; 
+        const a = parseFloat(item.altura) || 0; 
+        const PRECIO_MINIMO_ITEM = getPriceForQty(1, item, prev.esMayorista);
 
         if (item.es_por_metro) {
-            const areaTotal = b * a * q; 
+            const areaIndividual = (b / 100) * (a / 100); 
+            const areaTotalCalculada = parseFloat((areaIndividual * q).toFixed(2));
             
             if (['base', 'altura', 'cantidad'].includes(field) && item.precioBaseOriginal !== undefined) {
-                if (areaTotal > 0) {
-                    item.precioUnitario = getPriceForQty(areaTotal, item, prev.esMayorista);
+                if (areaTotalCalculada > 0) {
+                    item.precioUnitario = getPriceForQty(areaTotalCalculada, item, prev.esMayorista);
                 } else {
                     item.precioUnitario = '';
                 }
             }
-            const price = parseFloat(item.precioUnitario) || 0;
-            item.total = areaTotal * price;
+
+            const pUnit = parseFloat(item.precioUnitario) || 0;
+            let precioPorPieza = areaIndividual * pUnit;
+
+            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                precioPorPieza = PRECIO_MINIMO_ITEM;
+            }
+
+            item.total = parseFloat((precioPorPieza * q).toFixed(2));
+
         } else {
             if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
                 item.precioUnitario = getPriceForQty(q, item, prev.esMayorista);
             }
             const price = parseFloat(item.precioUnitario) || 0;
-            item.total = q * price;
+            item.total = parseFloat((q * price).toFixed(2));
         }
 
-        if (field === 'precioUnitario') {
+        if (field === 'precioUnitario' && !item.es_por_metro) {
             const price = parseFloat(value) || 0;
-            item.total = item.es_por_metro ? (b * a * q * price) : (q * price);
+            item.total = parseFloat((q * price).toFixed(2));
+        } else if (field === 'precioUnitario' && item.es_por_metro) {
+            const price = parseFloat(value) || 0;
+            const areaIndividual = (b / 100) * (a / 100);
+            let precioPorPieza = areaIndividual * price;
+            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                precioPorPieza = PRECIO_MINIMO_ITEM;
+            }
+            item.total = parseFloat((precioPorPieza * q).toFixed(2));
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
         }
 
         newProducts[index] = item;
@@ -613,28 +655,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const addProduct = () => {
     setFormData(prev => ({
         ...prev,
-        productos: [...prev.productos, { descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false }]
+        productos: [...prev.productos, { descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false }]
     }));
   };
+
+  const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.toLowerCase().includes(searchTerm.toLowerCase())));
 
   const handleSelectClient = (client) => {
     const isWholesale = client.es_mayorista || false;
     setFormData(prev => {
-        const newProducts = prev.productos.map(p => {
-              if (!p.descripcion) return p;
-              const qty = parseFloat(p.cantidad) || 0;
-              
-              if (p.es_por_metro) {
-                  const b = parseFloat(p.base) || 0;
-                  const a = parseFloat(p.altura) || 0;
-                  const areaTotal = b * a * qty;
-                  const newPrice = getPriceForQty(areaTotal, p, isWholesale);
-                  return { ...p, precioUnitario: areaTotal > 0 ? newPrice : '', total: areaTotal * newPrice };
-              } else {
-                  const newPrice = getPriceForQty(qty, p, isWholesale);
-                  return { ...p, precioUnitario: newPrice, total: qty * newPrice };
-              }
-        });
+        const newProducts = recalculatePrices(prev.productos, isWholesale);
         return { 
             ...prev, 
             clienteId: client.id, 
@@ -756,7 +786,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   
   const { getRootProps: getRootPropsAbono, getInputProps: getInputPropsAbono } = useDropzone({ onDrop: onDropAbono, accept: {'image/*': []} });
 
-  // 🔥 NUEVO: Función para abrir modal y liquidar el saldo total si se pide 🔥
   const openAbonoModal = (isFullBalance = false) => {
       setAbonoFormData({ 
           monto: isFullBalance ? financials.saldoPendiente.toFixed(2) : '', 
@@ -866,7 +895,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
     const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.base === '' || p.altura === ''));
     if (invalidMetroProducts.length > 0) {
-      toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura para los productos que son por metro.", variant: "destructive" });
+      toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura en cm para los productos por metro.", variant: "destructive" });
       setLoading(false); return;
     }
 
@@ -920,6 +949,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         finalTitle = finalTitle.replace(/\(VC\)/gi, '').trim();
     }
 
+    const processedProducts = validProducts.map(p => {
+        if (p.es_por_metro && p.base && p.altura) {
+            let cleanDesc = p.descripcion.replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+            const medidaString = `(${p.base}x${p.altura}cm)`;
+            return { ...p, descripcion: `${cleanDesc} ${medidaString}` };
+        }
+        return p;
+    });
+
     try {
         const payload = {
             cliente_id: formData.clienteId,
@@ -931,7 +969,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             notas: formData.notas,
             prioridad: 'Normal',
             origenProformaInfo: formData.origenProformaInfo,
-            productos: validProducts,
+            productos: processedProducts, 
             abonos: abonos,
             comprobantes: comprobantesData,
             financials: { 
@@ -1028,7 +1066,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              <div className="grid grid-cols-12 gap-4 items-center">
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Titulo / Referencia:</label>
                 <div className="col-span-12 md:col-span-10 flex items-center gap-3">
-                   <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isEffectivelyReadOnly && !isEditMode} />
+                   <input type="text" className="w-full md:w-1/2 border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none" value={formData.tipoLetrero} onChange={e => setFormData({...formData, tipoLetrero: e.target.value})} required readOnly={isEffectivelyReadOnly} />
                    
                    {formData.origenProformaInfo && (
                        <span className="inline-flex items-center gap-1 px-2.5 py-1 rounded-full text-xs font-medium bg-blue-100 text-blue-800 border border-blue-200">
@@ -1039,14 +1077,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Tipo de Orden:</label>
                 <div className="col-span-12 md:col-span-4">
-                   <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white font-semibold text-purple-900 border-purple-200 bg-purple-50 focus:ring-purple-500 transition-colors" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isEffectivelyReadOnly && !isEditMode}>
+                   <select className="w-full border border-slate-300 rounded px-2 py-1 text-sm bg-white font-semibold text-purple-900 border-purple-200 bg-purple-50 focus:ring-purple-500 transition-colors" value={formData.tipoOrden} onChange={e => setFormData({...formData, tipoOrden: e.target.value})} disabled={isEffectivelyReadOnly}>
                      {ORDER_TYPES.map(t => <option key={t} value={t}>{t}</option>)}
                    </select>
                 </div>
 
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700 md:text-right px-4">Responsable(s):</label>
                 <div className="col-span-12 md:col-span-4 relative">
-                   {isAdmin && (!isEffectivelyReadOnly || isEditMode) ? (
+                   {isAdmin && !isEffectivelyReadOnly ? (
                        <div className="relative">
                            <div 
                                className="flex items-center justify-between cursor-pointer w-full border border-blue-300 bg-blue-50 rounded px-2 py-1.5 text-sm font-semibold text-blue-800 focus:outline-none appearance-none"
@@ -1092,11 +1130,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    <div className="flex flex-col gap-2 w-full md:w-1/2">
                        <div className="flex items-center gap-2 w-full">
                            <div className="relative w-full">
-                               <input type="text" className={`w-full border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none pl-8 ${formData.clienteId ? 'bg-green-50 border-green-400' : ''}`} placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearching(true); if(e.target.value==='') setFormData(p=>({...p, clienteId:''})); }} onFocus={() => setIsSearching(true)} readOnly={isEffectivelyReadOnly && !isEditMode} />
+                               <input type="text" className={`w-full border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 focus:outline-none pl-8 ${formData.clienteId ? 'bg-green-50 border-green-400' : ''}`} placeholder="Buscar cliente..." value={searchTerm} onChange={(e) => { setSearchTerm(e.target.value); setIsSearching(true); if(e.target.value==='') setFormData(p=>({...p, clienteId:''})); }} onFocus={() => setIsSearching(true)} readOnly={isEffectivelyReadOnly} />
                                <Search className="absolute left-2 top-1.5 h-4 w-4 text-slate-400" />
                                {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
                            </div>
-                           {(!isEffectivelyReadOnly || isEditMode) && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
+                           {!isEffectivelyReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
                        </div>
 
                        {formData.clienteId && (
@@ -1131,8 +1169,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 </div>
                 <label className="col-span-12 md:col-span-2 text-xs font-bold text-slate-700">Fecha entrega:</label>
                 <div className="col-span-12 md:col-span-4 flex items-center gap-2">
-                   <input type="date" className="border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 flex-1" value={currentDatePart} onChange={e => handleDateTimeChange(e.target.value, currentTimePart)} required readOnly={isEffectivelyReadOnly && !isEditMode} />
-                   <select className="border border-slate-300 rounded px-2 py-1 text-sm bg-white w-24" value={currentTimePart} onChange={e => handleDateTimeChange(currentDatePart, e.target.value)} disabled={isEffectivelyReadOnly && !isEditMode}>
+                   <input type="date" className="border border-slate-300 rounded px-2 py-1 text-sm focus:border-blue-500 flex-1" value={currentDatePart} onChange={e => handleDateTimeChange(e.target.value, currentTimePart)} required readOnly={isEffectivelyReadOnly} />
+                   <select className="border border-slate-300 rounded px-2 py-1 text-sm bg-white w-24" value={currentTimePart} onChange={e => handleDateTimeChange(currentDatePart, e.target.value)} disabled={isEffectivelyReadOnly}>
                      {TIME_SLOTS.map(t => <option key={t} value={t}>{t}</option>)}
                    </select>
                 </div>
@@ -1142,10 +1180,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           <div className="space-y-2">
              <div className="flex justify-between items-center mb-1">
                  <h3 className="text-xs text-slate-500 italic">Detalle de Producción</h3>
-                 {(!isEffectivelyReadOnly || isEditMode) && (
+                 {!isEffectivelyReadOnly && (
                      <div className="flex gap-2 items-center">
-                         {formData.esMayorista && <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-1 rounded shadow-sm border border-indigo-200">TARIFA MAYORISTA ACTIVA</span>}
-                         <Button type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
+                         {formData.esMayorista && <span className="text-[10px] font-bold bg-indigo-100 text-indigo-800 px-2 py-1 rounded shadow-sm border border-indigo-200">TARIFA MAYORISTA APLICADA</span>}
+                         <Button size="sm" type="button" onClick={() => setIsCatalogOpen(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 h-7 text-xs px-3">
                              <ShoppingCart className="h-3 w-3" /> Catálogo
                          </Button>
                          <Button size="sm" type="button" onClick={addProduct} variant="outline" className="border-green-500 text-green-700 hover:bg-green-50 h-7 text-xs px-3">
@@ -1169,6 +1207,20 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
+                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+
+                        const b = parseFloat(row.base) || 0;
+                        const a = parseFloat(row.altura) || 0;
+                        const q = parseFloat(row.cantidad) || 0;
+                        const pUnitario = parseFloat(row.precioUnitario) || 0;
+                        
+                        const areaIndividual = (b / 100) * (a / 100);
+                        const areaTotalCalculada = areaIndividual * q;
+                        const precioMinimoCatalogo = getPriceForQty(1, row, formData.esMayorista);
+                        const precioPorPieza = areaIndividual * pUnitario;
+                        
+                        const aplicaMinimo = row.es_por_metro && areaIndividual > 0 && precioPorPieza > 0 && precioPorPieza < precioMinimoCatalogo;
+
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
                              <td className="py-2 px-2 text-slate-400 text-xs text-center align-top pt-4">{idx + 1}</td>
@@ -1177,11 +1229,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                 <textarea 
                                     className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
                                     placeholder={idx === formData.productos.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
-                                    value={row.descripcion || row.nombre} 
+                                    value={cleanDescription} 
                                     onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
-                                    onFocus={() => { if((row.descripcion||row.nombre)?.length >= 2) handleProductSearchRequest(idx, row.descripcion||row.nombre); }}
+                                    onFocus={() => { if(cleanDescription && cleanDescription.length >= 2) handleProductSearchRequest(idx, cleanDescription); }}
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
-                                    readOnly={isEffectivelyReadOnly && !isEditMode}
+                                    readOnly={isEffectivelyReadOnly}
                                 />
                                 {row.observaciones && (
                                     <div className="text-[10px] text-slate-500 italic mt-1 leading-tight">
@@ -1189,37 +1241,42 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     </div>
                                 )}
                                 
-                                {/* 🔥 CALCULADORA DE ÁREA INCORPORADA 🔥 */}
                                 {row.es_por_metro && (
                                     <div className="flex flex-wrap items-center gap-2 mt-2 bg-purple-50 p-2 rounded-md border border-purple-200">
-                                        <span className="text-xs font-bold text-purple-700">Medidas (m):</span>
+                                        <span className="text-xs font-bold text-purple-700">Medidas (cm):</span>
                                         <div className="flex items-center gap-1">
                                             <Input 
-                                                type="number" step="0.01" min="0" placeholder="Base" 
+                                                type="number" step="1" min="0" placeholder="Ancho" 
                                                 className="h-7 w-16 text-xs text-center px-1 py-0" 
                                                 value={row.base !== undefined ? row.base : ''} 
                                                 onChange={e => updateProduct(idx, 'base', e.target.value)} 
-                                                readOnly={isEffectivelyReadOnly && !isEditMode} 
+                                                readOnly={isEffectivelyReadOnly} 
                                             />
                                             <span className="text-xs text-purple-500 font-bold">x</span>
                                             <Input 
-                                                type="number" step="0.01" min="0" placeholder="Altura" 
+                                                type="number" step="1" min="0" placeholder="Alto" 
                                                 className="h-7 w-16 text-xs text-center px-1 py-0" 
                                                 value={row.altura !== undefined ? row.altura : ''} 
                                                 onChange={e => updateProduct(idx, 'altura', e.target.value)} 
-                                                readOnly={isEffectivelyReadOnly && !isEditMode} 
+                                                readOnly={isEffectivelyReadOnly} 
                                             />
                                         </div>
-                                        <span className="text-xs font-black text-purple-800 ml-2">
-                                            = {Number((parseFloat(row.base) || 0) * (parseFloat(row.altura) || 0)).toFixed(2)} m² c/u
+                                        <span className="text-[10px] font-black text-purple-800 ml-2">
+                                            = {areaIndividual.toFixed(2)} m² c/u
                                         </span>
-                                        <span className="text-xs font-black text-indigo-800 ml-2 pl-2 border-l border-purple-300">
-                                            Total: {Number((parseFloat(row.base) || 0) * (parseFloat(row.altura) || 0) * (parseFloat(row.cantidad) || 0)).toFixed(2)} m²
+                                        <span className="text-[10px] font-black text-indigo-800 ml-2 pl-2 border-l border-purple-300">
+                                            Total: {areaTotalCalculada.toFixed(2)} m²
                                         </span>
+
+                                        {aplicaMinimo && (
+                                            <span className="text-[9px] font-bold text-red-600 ml-2 bg-red-100 px-1.5 py-0.5 rounded border border-red-200">
+                                                Mín. Aplicado (${precioMinimoCatalogo.toFixed(2)})
+                                            </span>
+                                        )}
                                     </div>
                                 )}
 
-                                {(!isEffectivelyReadOnly || isEditMode) && activeProductSearchRow === idx && productSuggestions.length > 0 && (
+                                {!isEffectivelyReadOnly && activeProductSearchRow === idx && productSuggestions.length > 0 && (
                                     <div className="absolute z-50 w-full min-w-[300px] mt-1 bg-white border border-slate-300 rounded shadow-xl max-h-60 overflow-y-auto left-0">
                                         {productSuggestions.map(prod => (
                                             <div 
@@ -1238,7 +1295,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                 )}
                              </td>
                              
-                             <td className="py-2 px-2 relative align-top pt-4">
+                             <td className="py-2 px-2 relative align-top pt-3">
                                  <input 
                                     type="number" 
                                     step="1" 
@@ -1247,10 +1304,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     value={row.cantidad !== undefined ? row.cantidad : ''} 
                                     onChange={e => updateProduct(idx, 'cantidad', e.target.value)} 
                                     onKeyDown={e => {
-                                        if (e.key === '.' || e.key === ',') e.preventDefault();
+                                        if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
                                     }}
                                     onBlur={e => handleQuantityBlur(idx, e.target.value)}
-                                    readOnly={isEffectivelyReadOnly && !isEditMode}
+                                    readOnly={isEffectivelyReadOnly}
                                  />
                                  {row.es_por_metro && <span className="absolute bottom-[-2px] left-0 w-full text-center text-[9px] text-purple-600 font-bold leading-tight">Piezas</span>}
                              </td>
@@ -1259,16 +1316,22 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                  <input 
                                      type="number" step="0.01" 
                                      className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0 text-green-700 font-bold h-9" 
-                                     value={row.precioUnitario !== undefined ? row.precioUnitario : (row.precio || '')} 
+                                     value={row.precioUnitario !== undefined ? row.precioUnitario : ''} 
                                      onChange={e => updateProduct(idx, 'precioUnitario', e.target.value)} 
-                                     readOnly={isEffectivelyReadOnly && !isEditMode}
+                                     readOnly={isEffectivelyReadOnly}
                                  />
                              </td>
                              
                              <td className="py-2 px-2 text-right font-bold text-slate-800 align-top pt-5 bg-slate-50/50">
                                  $ {Number(row.total || 0).toFixed(2)}
                              </td>
-                             <td className="py-2 px-1 text-center align-top pt-4">{(!isEffectivelyReadOnly || isEditMode) && (row.nombre || row.descripcion) && (<button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>)}</td>
+                             <td className="py-2 px-1 text-center align-top pt-4">
+                                 {!isEffectivelyReadOnly && (row.nombre || row.descripcion) && (
+                                     <button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity">
+                                         <Trash2 className="h-4 w-4" />
+                                     </button>
+                                 )}
+                             </td>
                           </tr>
                         );
                       })}
@@ -1278,7 +1341,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span className="text-slate-500 font-bold" title="Este valor se restará directamente del Total Final">Ajuste al Total ($)</span>
-                            {isBottomReadOnly && !isEditMode ? (
+                            {isEffectivelyReadOnly ? (
                                 <span className="font-bold text-red-600 ml-2">${Number(localDiscountVal || 0).toFixed(2)} ({Number(localDiscountPercent || 0).toFixed(2)}%)</span>
                             ) : (
                                 <>
@@ -1318,8 +1381,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       </tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isBottomReadOnly && !isEditMode}/>
-                            <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${(isBottomReadOnly && !isEditMode) ? 'opacity-50' : ''}`}>IVA {isAdmin && (!isBottomReadOnly || isEditMode) ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
+                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isEffectivelyReadOnly}/>
+                            <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${isEffectivelyReadOnly ? 'opacity-50' : ''}`}>IVA {isAdmin && !isEffectivelyReadOnly ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
@@ -1338,7 +1401,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                     {hasAbonosExtras && <span className="text-[9px] bg-amber-100 text-amber-700 px-2 py-0.5 rounded border border-amber-200 uppercase tracking-wider font-bold shadow-sm">Anticipo Bloqueado por Abonos</span>}
                 </div>
                 <div className="flex bg-slate-100 rounded-md p-1 gap-1 relative">
-                    {(hasAbonosExtras || (isBottomReadOnly && !isEditMode)) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
+                    {(hasAbonosExtras || isEffectivelyReadOnly) && <div className="absolute inset-0 z-10 cursor-not-allowed" title="No puede cambiar modalidad"></div>}
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('full')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'full' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Pago Completo</button>
                     <button type="button" onClick={() => !hasAbonosExtras && setPaymentMode('partial')} className={`text-xs px-3 py-1 rounded transition-colors ${paymentMode === 'partial' ? 'bg-white text-blue-700 shadow-sm font-bold' : 'text-slate-500 hover:bg-slate-200'} ${hasAbonosExtras ? 'opacity-50' : ''}`}>Anticipo</button>
                 </div>
@@ -1352,7 +1415,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       <label className="text-xs font-bold w-20">{paymentMode === 'full' ? 'Monto Total:' : 'Monto Anticipo:'}</label>
                       <div className="relative flex-1">
                           <span className="absolute left-2 top-1.5 text-xs text-slate-500">$</span>
-                          {(isBottomReadOnly && !isEditMode) || hasAbonosExtras || paymentMode === 'full' ? (
+                          {isEffectivelyReadOnly || hasAbonosExtras || paymentMode === 'full' ? (
                               <div className="w-full pl-6 pr-12 py-1 border border-slate-200 rounded text-sm font-bold bg-slate-100 text-slate-600 uppercase">{Number(localAnticipo || 0).toFixed(2)}</div>
                           ) : (
                               <input type="number" step="0.01" className="w-full pl-6 pr-12 py-1 border rounded text-sm font-bold bg-white border-slate-300" value={localAnticipo} onChange={handleAnticipoChange} onBlur={handleAnticipoBlur} placeholder="0.00" />
@@ -1363,7 +1426,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20">Forma Pago:</label>
-                      {(isBottomReadOnly && !isEditMode) || hasAbonosExtras ? (
+                      {isEffectivelyReadOnly || hasAbonosExtras ? (
                           <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold uppercase">{formData.formaPagoAnticipo || 'Efectivo'}</div>
                       ) : (
                           <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoAnticipo} onChange={e => setFormData({...formData, formaPagoAnticipo: e.target.value})}>
@@ -1379,7 +1442,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
-                           {(isBottomReadOnly && !isEditMode) || hasAbonosExtras ? (
+                           {isEffectivelyReadOnly || hasAbonosExtras ? (
                                <div className="w-full px-3 py-2 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.referenciaPago || '-'}</div>
                            ) : (
                                <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={formData.referenciaPago} onChange={e => setFormData({...formData, referenciaPago: e.target.value})} placeholder="Opcional..." />
@@ -1394,14 +1457,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            onAdd={handleAddComprobantes} 
                            onRemove={handleRemoveComprobante} 
                            isProcessing={isProcessingComprobantes} 
-                           disabled={(isBottomReadOnly && !isEditMode) || hasAbonosExtras}
+                           disabled={isEffectivelyReadOnly || hasAbonosExtras}
                        />
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
                        <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
                            <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                           {(isBottomReadOnly && !isEditMode) || hasAbonosExtras ? (
+                           {isEffectivelyReadOnly || hasAbonosExtras ? (
                                <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceAnticipo || '-'}</div>
                            ) : (
                                <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
@@ -1411,7 +1474,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
                    <div className="flex items-center gap-2">
                       <label className="text-xs font-bold w-20 text-slate-500">Notas Pago:</label>
-                      {(isBottomReadOnly && !isEditMode) || hasAbonosExtras ? (
+                      {isEffectivelyReadOnly || hasAbonosExtras ? (
                           <div className="flex-1 px-2 py-1 text-xs bg-slate-100 border border-slate-200 rounded text-slate-600 min-h-[28px]">{formData.notaAnticipo || '-'}</div>
                       ) : (
                           <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
@@ -1419,7 +1482,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </div>
 
                    <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
-                        {(isBottomReadOnly && !isEditMode) || hasAbonosExtras ? (
+                        {isEffectivelyReadOnly || hasAbonosExtras ? (
                             <>
                                 <Checkbox id="chk-ret" checked={applyRetention} disabled />
                                 <label htmlFor="chk-ret" className="text-xs select-none opacity-50 cursor-not-allowed">¿Aplica Retención?</label>
@@ -1460,7 +1523,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                 
                                 <div className="flex items-center gap-2">
                                    <label className="text-xs font-bold w-20">Condición Saldo:</label>
-                                   {/* 🔥 AQUÍ: Permitimos que el vendedor modifique SIEMPRE la condición del saldo (para poner que cobró en efectivo o a crédito) 🔥 */}
                                    <select className="flex-1 border border-slate-300 rounded px-2 py-1 text-sm bg-white" value={formData.formaPagoSaldo} onChange={e => setFormData({...formData, formaPagoSaldo: e.target.value})}>
                                        {PAYMENT_METHODS.map(m => (
                                             <option key={m} value={m} disabled={m === 'Crédito' && !selectedClientData?.permiteCredito}>
@@ -1505,7 +1567,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              <Button type="button" size="sm" variant="outline" onClick={() => openAbonoModal(false)} className="border-blue-400 text-blue-600 hover:bg-blue-50 h-7 text-xs px-2">
                                  <Plus className="h-3 w-3 mr-1" /> Añadir Abono Parcial
                              </Button>
-                             {/* 🔥 NUEVO BOTÓN DE LIQUIDAR SALDO DIRECTO 🔥 */}
                              <Button type="button" size="sm" onClick={() => openAbonoModal(true)} className="bg-green-600 hover:bg-green-700 text-white h-7 text-xs px-2 shadow-sm font-bold">
                                  <DollarSign className="h-3 w-3 mr-1" /> Liquidar Saldo Completo
                              </Button>
@@ -1551,12 +1612,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              <div className="text-xs text-slate-500 italic">Arte/Diseño</div>
              <ImageGallery 
                 images={formData.imagenes} 
-                isReadOnly={isBottomReadOnly && !isEditMode} 
+                isReadOnly={isEffectivelyReadOnly} 
                 onRemove={removeImage} 
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
              />
-             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isBottomReadOnly && !isEditMode} /></div>
+             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isEffectivelyReadOnly} /></div>
           </div>
         </form>
       </div>

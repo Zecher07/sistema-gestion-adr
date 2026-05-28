@@ -7,7 +7,6 @@ import { Switch } from '@/components/ui/switch';
 import { Checkbox } from '@/components/ui/checkbox';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
-import { cn } from '@/lib/utils';
 import ClientForm from './ClientForm';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 
@@ -45,6 +44,8 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const [diasEntrega, setDiasEntrega] = useState(''); 
   const [responsable, setResponsable] = useState(user?.name || '');
   
+  // 🔥 CORRECCIÓN: Estado local para manejar los clientes 🔥
+  const [localClients, setLocalClients] = useState(clients);
   const [clientSearch, setClientSearch] = useState('');
   const [showClientSuggestions, setShowClientSuggestions] = useState(false);
   const [selectedClient, setSelectedClient] = useState({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' });
@@ -79,6 +80,8 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const validSellers = useMemo(() => removeDuplicateUsers(getValidSellers(staffUsers)), [staffUsers]);
 
   const findClientId = (c) => { if (!c) return ''; return c.ruc || c.cedula || c.identificacion || c.dni || c.empresa || ''; };
+
+  useEffect(() => { setLocalClients(clients); }, [clients]);
 
   useEffect(() => { const fetchCatalog = async () => { const { data } = await supabase.from('catalogo_productos').select('*').order('nombre'); if (data) setCatalogItems(data); }; fetchCatalog(); }, []);
 
@@ -175,7 +178,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
       setImagenes(prev => prev.filter((_, i) => i !== index));
   };
 
-  const filteredClients = clients.filter(c => { const term = clientSearch.toLowerCase().trim(); if (!term) return false; const name = (c.nombre || c.razonSocial || c.full_name || '').toLowerCase(); const id = String(findClientId(c)); return name.includes(term) || id.includes(term); });
+  const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(clientSearch.toLowerCase()) || (c.empresa && c.empresa.toLowerCase().includes(clientSearch.toLowerCase())));
   
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       if (applyMayorista) {
@@ -197,17 +200,26 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const recalculatePrices = (itemsList, isWholesale) => {
       return itemsList.map(p => {
           if (!p.descripcion) return p;
-          const qty = parseFloat(p.cantidad) || 0;
+          const q = parseFloat(p.cantidad) || 0;
+          const PRECIO_MINIMO_ITEM = getPriceForQty(1, p, isWholesale);
           
           if (p.es_por_metro) {
               const b = parseFloat(p.base) || 0;
               const a = parseFloat(p.altura) || 0;
-              const areaTotal = b * a * qty;
+              const areaIndividual = (b/100) * (a/100);
+              const areaTotal = parseFloat((areaIndividual * q).toFixed(2));
+              
               const newPrice = getPriceForQty(areaTotal, p, isWholesale);
-              return { ...p, precioUnitario: newPrice, total: areaTotal * newPrice };
+              
+              let precioPorPieza = areaIndividual * newPrice;
+              if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                  precioPorPieza = PRECIO_MINIMO_ITEM;
+              }
+              
+              return { ...p, precioUnitario: areaTotal > 0 ? newPrice : '', total: parseFloat((precioPorPieza * q).toFixed(2)) };
           } else {
-              const newPrice = getPriceForQty(qty, p, isWholesale);
-              return { ...p, precioUnitario: newPrice, total: qty * newPrice };
+              const newPrice = getPriceForQty(q, p, isWholesale);
+              return { ...p, precioUnitario: newPrice, total: parseFloat((q * newPrice).toFixed(2)) };
           }
       });
   };
@@ -233,6 +245,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const handleNewClientCreated = (newClient) => {
     const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
     if(clientData) {
+        setLocalClients([clientData, ...localClients]);
         const isWholesale = clientData.es_mayorista || false;
         setSelectedClient({ 
             nombre: clientData.nombre || clientData.razonSocial || clientData.full_name, 
@@ -272,7 +285,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
         const newProduct = {
-            cantidad: minQty > 0 ? minQty : 1,
+            cantidad: minQty > 0 ? minQty : 1, 
             venta_minima: minQty > 0 ? minQty : 1,
             base: '', altura: '',
             descripcion: finalDesc,
@@ -283,7 +296,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
             precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
             precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
-            total: item.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1)
+            total: item.es_por_metro ? 0 : parseFloat((computedPrice * (minQty > 0 ? minQty : 1)).toFixed(2))
         };
 
         if (emptyIndex !== -1) { 
@@ -336,7 +349,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
               venta_minima: minQty > 0 ? minQty : 1, 
               cantidad: minQty > 0 ? minQty : 1, 
               base: '', altura: '', es_por_metro: product.es_por_metro || false,
-              total: product.es_por_metro ? 0 : (minQty > 0 ? minQty : 1) * computedPrice 
+              total: product.es_por_metro ? 0 : parseFloat(((minQty > 0 ? minQty : 1) * computedPrice).toFixed(2))
           };
           if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false });
           return newProducts;
@@ -350,11 +363,13 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
         let item = { ...newProducts[index], [field]: value };
         
         const q = parseFloat(item.cantidad) || 0; 
-        const b = parseFloat(item.base) || 0;
-        const a = parseFloat(item.altura) || 0;
+        const b = parseFloat(item.base) || 0; 
+        const a = parseFloat(item.altura) || 0; 
+        const PRECIO_MINIMO_ITEM = getPriceForQty(1, item, esMayorista);
 
         if (item.es_por_metro) {
-            const areaTotal = b * a * q; 
+            const areaIndividual = (b / 100) * (a / 100); 
+            const areaTotal = parseFloat((areaIndividual * q).toFixed(2));
             
             if (['base', 'altura', 'cantidad'].includes(field) && item.precioBaseOriginal !== undefined) {
                 if (areaTotal > 0) {
@@ -363,23 +378,39 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                     item.precioUnitario = '';
                 }
             }
-            const price = parseFloat(item.precioUnitario) || 0;
-            item.total = areaTotal * price;
+
+            const pUnit = parseFloat(item.precioUnitario) || 0;
+            let precioPorPieza = areaIndividual * pUnit;
+
+            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                precioPorPieza = PRECIO_MINIMO_ITEM;
+            }
+
+            item.total = parseFloat((precioPorPieza * q).toFixed(2));
+
         } else {
             if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
                 item.precioUnitario = getPriceForQty(q, item, esMayorista);
             }
             const price = parseFloat(item.precioUnitario) || 0;
-            item.total = q * price;
+            item.total = parseFloat((q * price).toFixed(2));
         }
 
-        if (field === 'precioUnitario') {
+        if (field === 'precioUnitario' && !item.es_por_metro) {
             const price = parseFloat(value) || 0;
-            item.total = item.es_por_metro ? (b * a * q * price) : (q * price);
+            item.total = parseFloat((q * price).toFixed(2));
+        } else if (field === 'precioUnitario' && item.es_por_metro) {
+            const price = parseFloat(value) || 0;
+            const areaIndividual = (b / 100) * (a / 100);
+            let precioPorPieza = areaIndividual * price;
+            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                precioPorPieza = PRECIO_MINIMO_ITEM;
+            }
+            item.total = parseFloat((precioPorPieza * q).toFixed(2));
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false });
+            newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false });
         }
         
         newProducts[index] = item; return newProducts;
@@ -407,20 +438,32 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
     const finalName = selectedClient.nombre || clientSearch;
     if (!finalName) { toast({ title: "Falta Cliente", description: "Ingrese el nombre del cliente.", variant: "destructive" }); return; }
     if (!titulo.trim()) { toast({ title: "Falta Título", description: "Por favor, agregue un título o referencia a la cotización.", variant: "destructive" }); return; }
+    
     const validProducts = products.filter(p => p.descripcion && p.descripcion.trim() !== '');
     if (validProducts.length === 0) { toast({ title: "Sin productos", description: "Añada al menos un producto a la cotización.", variant: "destructive" }); return; }
 
     const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.base === '' || p.altura === ''));
     if (invalidMetroProducts.length > 0) {
-      toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura para los productos que son por metro.", variant: "destructive" });
+      toast({ title: "Medidas Requeridas", description: "Debe colocar Ancho y Alto en centímetros para los productos por metro.", variant: "destructive" });
       setLoading(false); return;
     }
 
     setLoading(true);
+
+    const processedProducts = validProducts.map(p => {
+        if (p.es_por_metro && p.base && p.altura) {
+            let cleanDesc = p.descripcion.replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+            const medidaString = `(${p.base}x${p.altura}cm)`;
+            return { ...p, descripcion: `${cleanDesc} ${medidaString}` };
+        }
+        return p;
+    });
+
     try {
       const payload = {
         titulo: titulo, cliente_nombre: finalName, cliente_identificacion: selectedClient.identificacion, cliente_telefono: selectedClient.telefono,
-        cliente_direccion: selectedClient.direccion, cliente_email: selectedClient.email, items: validProducts, 
+        cliente_direccion: selectedClient.direccion, cliente_email: selectedClient.email, 
+        items: processedProducts, 
         subtotal: financials.subtotal, iva: financials.iva, total: financials.total, iva_percentage: applyIva ? ivaPercentage : 0, dias_entrega: Number(diasEntrega) || 0,
         financials: { 
             subtotal: financials.subtotal, iva: financials.iva, total: financials.total, ivaPercentage: applyIva ? ivaPercentage : 0, diasEntrega: Number(diasEntrega) || 0,
@@ -508,15 +551,30 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                       <tr><th className="px-3 py-2 text-left">Descripción</th><th className="px-3 py-2 text-center w-24">Cant.</th><th className="px-3 py-2 text-right w-32">P. Unit</th><th className="px-3 py-2 text-right w-32">Total</th><th className="px-3 py-2 w-10"></th></tr>
                    </thead>
                    <tbody className="divide-y divide-slate-100 bg-white">
-                      {products.map((row, idx) => (
+                      {products.map((row, idx) => {
+                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+
+                        const b = parseFloat(row.base) || 0;
+                        const a = parseFloat(row.altura) || 0;
+                        const q = parseFloat(row.cantidad) || 0;
+                        const pUnitario = parseFloat(row.precioUnitario) || 0;
+                        
+                        const areaIndividual = (b / 100) * (a / 100);
+                        const areaTotalCalculada = areaIndividual * q;
+                        const precioMinimoCatalogo = getPriceForQty(1, row, esMayorista);
+                        const precioPorPieza = areaIndividual * pUnitario;
+                        
+                        const aplicaMinimo = row.es_por_metro && areaIndividual > 0 && precioPorPieza > 0 && precioPorPieza < precioMinimoCatalogo;
+
+                        return (
                         <tr key={idx} className="hover:bg-slate-50 group">
                            <td className="p-2 relative align-top pt-3">
                               <textarea 
                                   className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
                                   placeholder={idx === products.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
-                                  value={row.descripcion} 
+                                  value={cleanDescription} 
                                   onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
-                                  onFocus={() => { if(row.descripcion && row.descripcion.length >= 2) handleProductSearchRequest(idx, row.descripcion); }}
+                                  onFocus={() => { if(cleanDescription && cleanDescription.length >= 2) handleProductSearchRequest(idx, cleanDescription); }}
                                   onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                               />
                               {row.observaciones && (
@@ -525,31 +583,36 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                                   </div>
                               )}
 
-                              {/* 🔥 CALCULADORA DE ÁREA INCORPORADA 🔥 */}
                               {row.es_por_metro && (
                                   <div className="flex flex-wrap items-center gap-2 mt-2 bg-purple-50 p-2 rounded-md border border-purple-200">
-                                      <span className="text-xs font-bold text-purple-700">Medidas (m):</span>
+                                      <span className="text-xs font-bold text-purple-700">Medidas (cm):</span>
                                       <div className="flex items-center gap-1">
                                           <Input 
-                                              type="number" step="0.01" min="0" placeholder="Base" 
+                                              type="number" step="1" min="0" placeholder="Ancho" 
                                               className="h-7 w-16 text-xs text-center px-1 py-0" 
                                               value={row.base !== undefined ? row.base : ''} 
                                               onChange={e => updateProduct(idx, 'base', e.target.value)} 
                                           />
                                           <span className="text-xs text-purple-500 font-bold">x</span>
                                           <Input 
-                                              type="number" step="0.01" min="0" placeholder="Altura" 
+                                              type="number" step="1" min="0" placeholder="Alto" 
                                               className="h-7 w-16 text-xs text-center px-1 py-0" 
                                               value={row.altura !== undefined ? row.altura : ''} 
                                               onChange={e => updateProduct(idx, 'altura', e.target.value)} 
                                           />
                                       </div>
-                                      <span className="text-xs font-black text-purple-800 ml-2">
-                                          = {Number((parseFloat(row.base) || 0) * (parseFloat(row.altura) || 0)).toFixed(2)} m² c/u
+                                      <span className="text-[10px] font-black text-purple-800 ml-2">
+                                          = {areaIndividual.toFixed(2)} m² c/u
                                       </span>
-                                      <span className="text-xs font-black text-indigo-800 ml-2 pl-2 border-l border-purple-300">
-                                          Total: {Number((parseFloat(row.base) || 0) * (parseFloat(row.altura) || 0) * (parseFloat(row.cantidad) || 0)).toFixed(2)} m²
+                                      <span className="text-[10px] font-black text-indigo-800 ml-2 pl-2 border-l border-purple-300">
+                                          Total: {areaTotalCalculada.toFixed(2)} m²
                                       </span>
+                                      
+                                      {aplicaMinimo && (
+                                          <span className="text-[9px] font-bold text-red-600 ml-2 bg-red-100 px-1.5 py-0.5 rounded border border-red-200">
+                                              Mín. Aplicado (${precioMinimoCatalogo.toFixed(2)})
+                                          </span>
+                                      )}
                                   </div>
                               )}
 
@@ -579,13 +642,26 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                                />
                                {row.es_por_metro && <span className="absolute bottom-[-2px] left-0 w-full text-center text-[9px] text-purple-600 font-bold leading-tight">Piezas</span>}
                            </td>
-                           <td className="p-2 align-top pt-3"><Input type="number" className="text-right h-9 font-bold text-green-700" min="0" step="0.01" value={row.precioUnitario!==undefined?row.precioUnitario:''} onChange={(e) => updateProduct(idx, 'precioUnitario', e.target.value)} /></td>
-                           <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">
-                               ${Number(row.total || 0).toFixed(2)}
+                           <td className="p-2 align-top pt-4">
+                               <input 
+                                   type="number" step="0.01" 
+                                   className="w-full text-right border-none bg-transparent focus:ring-0 text-sm p-0 text-green-700 font-bold h-9" 
+                                   value={row.precioUnitario !== undefined ? row.precioUnitario : ''} 
+                                   onChange={e => updateProduct(idx, 'precioUnitario', e.target.value)} 
+                               />
                            </td>
-                           <td className="p-2 text-center align-top pt-4"><button type="button" onClick={() => removeProduct(idx)} className="text-slate-400 hover:text-red-500 transition-colors" disabled={products.length === 1}><Trash2 className="h-4 w-4" /></button></td>
+                           <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">
+                               $ {Number(row.total || 0).toFixed(2)}
+                           </td>
+                           <td className="p-2 text-center align-top pt-4">
+                               {(row.nombre || row.descripcion) && (
+                                   <button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity">
+                                       <Trash2 className="h-4 w-4" />
+                                   </button>
+                               )}
+                           </td>
                         </tr>
-                      ))}
+                      )})}
                    </tbody>
                    <tfoot className="bg-slate-50 text-xs font-medium text-slate-700 border-t border-slate-300">
                       <tr>
@@ -712,6 +788,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                         </div>
                     </div>
                 ))}
+                {catalogItems.length === 0 && <div className="text-center py-10 text-slate-400">Catálogo vacío. Agrega productos en el módulo de Catálogo.</div>}
             </div>
         </div>
       )}
