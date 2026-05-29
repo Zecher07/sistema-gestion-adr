@@ -130,7 +130,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
   
-  // 🔥 CANDADO AJUSTADO: SI ES ADMINISTRADOR, NUNCA SE BLOQUEA EL ACCESO 🔥
+  // BLOQUEO ESTRICTO DE ORDEN
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
   const isEditMode = !!(initialData && initialData.id);
@@ -264,6 +264,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
       const savedAnticipo = initialData.anticipo || finData.anticipo || 0;
       const savedDescuentoMonto = initialData.descuentoMonto || finData.descuentoMonto || 0;
+      
+      // 🔥 CORRECCIÓN DEL IVA 🔥
+      const savedIva = initialData.iva || finData.iva || 0;
+      let shouldApplyIva = true;
+      if (initialData.aplicarIva !== undefined) {
+          shouldApplyIva = initialData.aplicarIva;
+      } else if (finData.aplicarIva !== undefined) {
+          shouldApplyIva = finData.aplicarIva;
+      } else {
+          shouldApplyIva = savedIva > 0; // Si no hay registro explícito, deduce por el monto
+      }
 
       let savedPaymentMethod = initialData.forma_pago_anticipo || initialData.formaPagoAnticipo || finData.formaPago || 'Efectivo';
       let savedReference = '';
@@ -308,11 +319,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         })),
         fechaEntrega: calculatedFechaEntrega,
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
-        aplicarIva: initialData.aplicarIva !== undefined ? initialData.aplicarIva : true,
+        aplicarIva: shouldApplyIva, // 🔥 Aplicamos la deducción correcta aquí 🔥
         anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
+        descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
         esMayorista: initialData.esMayorista || initialData.es_mayorista || false
       }));
       
@@ -423,7 +435,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
   };
 
-  // 🔥 LÓGICA DE PRECIOS MAYORISTA / NORMAL 🔥
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       if (applyMayorista) {
           const tiersDist = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
@@ -441,7 +452,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       return Number(item.precioBaseOriginal || item.precio || 0);
   };
 
-  // 🔥 LÓGICA DE RECALCULO DE PRECIOS CON PRECIO MÍNIMO DINÁMICO 🔥
   const recalculatePrices = (itemsList, isWholesale) => {
       return itemsList.map(p => {
           if (!p.descripcion) return p;
@@ -982,8 +992,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 retencion: formData.retencion,
                 formaPagoSaldo: formData.formaPagoSaldo,
                 creditoVenceSaldo: formData.creditoVenceSaldo,
-                notaSaldo: formData.notaSaldo
+                notaSaldo: formData.notaSaldo,
+                aplicarIva: formData.aplicarIva // 🔥 GUARDAMOS EL ESTADO DEL CHECKBOX EN LA BASE DE DATOS 🔥
             },
+            aplicarIva: formData.aplicarIva,
             anticipo: formData.anticipo,
             retencion: formData.retencion,
             forma_pago_anticipo: finalPaymentString,
@@ -1207,8 +1219,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
-                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
-
                         const b = parseFloat(row.base) || 0;
                         const a = parseFloat(row.altura) || 0;
                         const q = parseFloat(row.cantidad) || 0;
@@ -1220,11 +1230,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         const precioPorPieza = areaIndividual * pUnitario;
                         
                         const aplicaMinimo = row.es_por_metro && areaIndividual > 0 && precioPorPieza > 0 && precioPorPieza < precioMinimoCatalogo;
+                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
 
                         return (
                           <tr key={idx} className="hover:bg-slate-50 group">
                              <td className="py-2 px-2 text-slate-400 text-xs text-center align-top pt-4">{idx + 1}</td>
-                             
                              <td className="py-2 px-2 relative align-top pt-3">
                                 <textarea 
                                     className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
@@ -1294,7 +1304,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     </div>
                                 )}
                              </td>
-                             
                              <td className="py-2 px-2 relative align-top pt-3">
                                  <input 
                                     type="number" 
@@ -1311,7 +1320,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                  />
                                  {row.es_por_metro && <span className="absolute bottom-[-2px] left-0 w-full text-center text-[9px] text-purple-600 font-bold leading-tight">Piezas</span>}
                              </td>
-
                              <td className="py-2 px-2 align-top pt-4">
                                  <input 
                                      type="number" step="0.01" 
@@ -1321,16 +1329,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                      readOnly={isEffectivelyReadOnly}
                                  />
                              </td>
-                             
                              <td className="py-2 px-2 text-right font-bold text-slate-800 align-top pt-5 bg-slate-50/50">
                                  $ {Number(row.total || 0).toFixed(2)}
                              </td>
                              <td className="py-2 px-1 text-center align-top pt-4">
-                                 {!isEffectivelyReadOnly && (row.nombre || row.descripcion) && (
+                                 {!isEffectivelyReadOnly && (row.nombre || row.descripcion) ? (
                                      <button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity">
                                          <Trash2 className="h-4 w-4" />
                                      </button>
-                                 )}
+                                 ) : null}
                              </td>
                           </tr>
                         );
