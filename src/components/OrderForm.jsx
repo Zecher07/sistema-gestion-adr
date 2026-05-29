@@ -993,9 +993,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 formaPagoSaldo: formData.formaPagoSaldo,
                 creditoVenceSaldo: formData.creditoVenceSaldo,
                 notaSaldo: formData.notaSaldo,
-                aplicarIva: formData.aplicarIva // 🔥 GUARDAMOS EL ESTADO DEL CHECKBOX EN LA BASE DE DATOS 🔥
+                aplicarIva: formData.aplicarIva // 🔥 Lo dejamos dentro de financials
             },
-            aplicarIva: formData.aplicarIva,
             anticipo: formData.anticipo,
             retencion: formData.retencion,
             forma_pago_anticipo: finalPaymentString,
