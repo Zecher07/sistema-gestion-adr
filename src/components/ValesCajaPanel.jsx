@@ -25,7 +25,8 @@ const ValesCajaPanel = ({ user }) => {
     fecha: new Date().toISOString().split('T')[0],
     vendedor: user?.name || '',
     concepto: '',
-    monto: ''
+    monto: '',
+    recibido_por: '' // 🔥 Nuevo campo
   });
 
   useEffect(() => {
@@ -60,16 +61,13 @@ const ValesCajaPanel = ({ user }) => {
     }
   };
 
-  // 🔥 CANDADO MATEMÁTICO: Calcula la caja exacta en tiempo real 🔥
   const checkAvailableCash = async (vendedorNombre, fechaStr, montoRequerido, excludeValeId = null) => {
-      // 1. Obtener ID del vendedor para buscar su último cierre
       let vId = user.id;
       if (isAdmin && vendedorNombre !== user.name) {
           const { data: p } = await supabase.from('profiles').select('id').eq('full_name', vendedorNombre).maybeSingle();
           if (p) vId = p.id;
       }
 
-      // 2. Buscar último reporte guardado antes de esta fecha
       const { data: lastReport } = await supabase.from('daily_closings')
           .select('date, final_balance').eq('user_id', vId).lt('date', fechaStr)
           .order('date', { ascending: false }).limit(1).maybeSingle();
@@ -77,7 +75,6 @@ const ValesCajaPanel = ({ user }) => {
       const baseCash = lastReport ? Number(lastReport.final_balance) : 0;
       const lastDate = lastReport ? lastReport.date : '2000-01-01';
 
-      // 3. Buscar todas las órdenes donde este vendedor haya tocado dinero
       const { data: userOrders } = await supabase.from('ordenes')
           .select('*').or(`recibido_por_anticipo.eq.${vendedorNombre},recibido_por_saldo.eq.${vendedorNombre},vendedor.eq.${vendedorNombre}`);
 
@@ -103,7 +100,6 @@ const ValesCajaPanel = ({ user }) => {
               const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
               const saldoFinalReal = saldoCobrado - totalAbonado;
 
-              // Dinero Flotante (Ingresos de días anteriores no cerrados)
               if (createdDateStr > lastDate && createdDateStr < fechaStr && recibioAnticipo && o.status !== 'ANULADA') {
                   floatingSum += Number(o.anticipo || 0);
               }
@@ -111,7 +107,6 @@ const ValesCajaPanel = ({ user }) => {
                   floatingSum += saldoFinalReal;
               }
 
-              // Ingresos de la Fecha del Vale
               if (createdDateStr === fechaStr && recibioAnticipo && Number(o.anticipo) > 0 && o.status !== 'ANULADA') {
                   todayIncome += Number(o.anticipo);
               }
@@ -124,26 +119,29 @@ const ValesCajaPanel = ({ user }) => {
                   todayIncome += saldoFinalReal;
               }
 
-              // Egresos de la Fecha (Anulaciones)
               if (o.status === 'ANULADA' && updatedDateStr === fechaStr && recibioAnticipo && Number(o.anticipo) > 0) {
                   todayExpense += Number(o.anticipo);
               }
           });
       }
 
-      // 4. Sumar otros Vales APROBADOS de esa misma fecha
-      const { data: valesHoy } = await supabase.from('vales_caja')
-          .select('id, monto').eq('vendedor', vendedorNombre).eq('fecha', fechaStr).eq('status', 'APROBADO');
+      // 🔥 CORRECCIÓN: Restar vales aprobados que estaban flotantes 🔥
+      const { data: valesAprobados } = await supabase.from('vales_caja')
+          .select('id, monto, fecha').eq('vendedor', vendedorNombre).eq('status', 'APROBADO')
+          .gt('fecha', lastDate).lte('fecha', fechaStr);
       
-      if (valesHoy) {
-          valesHoy.forEach(v => {
-              if (v.id !== excludeValeId) { // No contamos el vale que estamos editando actualmente
-                  todayExpense += Number(v.monto);
+      if (valesAprobados) {
+          valesAprobados.forEach(v => {
+              if (v.id !== excludeValeId) { 
+                  if (v.fecha === fechaStr) {
+                      todayExpense += Number(v.monto);
+                  } else {
+                      floatingSum -= Number(v.monto); 
+                  }
               }
           });
       }
 
-      // 5. Cálculo Final
       const cashInHand = baseCash + floatingSum + todayIncome - todayExpense;
 
       if (montoRequerido > cashInHand) {
@@ -159,28 +157,30 @@ const ValesCajaPanel = ({ user }) => {
               fecha: vale.fecha,
               vendedor: vale.vendedor,
               concepto: vale.concepto,
-              monto: vale.monto
+              monto: vale.monto,
+              recibido_por: vale.recibido_por || '' // 🔥 Nuevo campo
           });
       } else {
           setEditingVale(null);
-          setFormData({ fecha: new Date().toISOString().split('T')[0], vendedor: user?.name || '', concepto: '', monto: '' });
+          setFormData({ fecha: new Date().toISOString().split('T')[0], vendedor: user?.name || '', concepto: '', monto: '', recibido_por: '' });
       }
       setIsModalOpen(true);
   };
 
   const handleSave = async () => {
+    if (!formData.recibido_por.trim()) {
+        return toast({ title: "Atención", description: "Debe indicar quién recibió el dinero.", variant: "destructive" });
+    }
     if (!formData.concepto.trim() || !formData.monto || formData.monto <= 0) {
         return toast({ title: "Atención", description: "Ingrese un concepto y un monto válido.", variant: "destructive" });
     }
     if (!formData.vendedor) {
-        return toast({ title: "Atención", description: "Debe asignar un vendedor.", variant: "destructive" });
+        return toast({ title: "Atención", description: "Debe asignar un vendedor de origen.", variant: "destructive" });
     }
 
     setSaving(true);
     try {
       const montoRequerido = parseFloat(formData.monto);
-
-      // 🔥 VALIDACIÓN DE CAJA (Evita números negativos) 🔥
       const excludeId = editingVale ? editingVale.id : null;
       const { isValid, cashInHand } = await checkAvailableCash(formData.vendedor, formData.fecha, montoRequerido, excludeId);
 
@@ -193,14 +193,14 @@ const ValesCajaPanel = ({ user }) => {
           setSaving(false);
           return;
       }
-      // ----------------------------------------------------
 
       const payload = {
           fecha: formData.fecha,
           vendedor: formData.vendedor,
           concepto: formData.concepto.trim(),
           monto: montoRequerido,
-          status: 'PENDIENTE' 
+          recibido_por: formData.recibido_por.trim(),
+          status: editingVale ? editingVale.status : 'PENDIENTE' 
       };
 
       if (editingVale) {
@@ -234,12 +234,10 @@ const ValesCajaPanel = ({ user }) => {
     }
   };
 
-  // 🔥 Aprobar o Rechazar Vale 🔥
   const handleUpdateStatus = async (vale, newStatus) => {
     setApprovingId(vale.id);
     try {
       if (newStatus === 'APROBADO') {
-          // Re-validar la caja por si el vendedor se gastó el dinero mientras el admin aprobaba
           const { isValid, cashInHand } = await checkAvailableCash(vale.vendedor, vale.fecha, vale.monto, vale.id);
           if (!isValid) {
               toast({ 
@@ -270,7 +268,8 @@ const ValesCajaPanel = ({ user }) => {
 
   const filteredVales = vales.filter(v => 
       v.vendedor.toLowerCase().includes(searchTerm.toLowerCase()) || 
-      v.concepto.toLowerCase().includes(searchTerm.toLowerCase())
+      v.concepto.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (v.recibido_por && v.recibido_por.toLowerCase().includes(searchTerm.toLowerCase()))
   );
 
   return (
@@ -295,7 +294,7 @@ const ValesCajaPanel = ({ user }) => {
                     <div className="p-4 border-b border-slate-200 bg-slate-50 flex items-center justify-between">
                         <div className="relative w-full max-w-md">
                             <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                            <Input placeholder="Buscar por vendedor o concepto..." className="pl-9 bg-white" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
+                            <Input placeholder="Buscar por origen, receptor o concepto..." className="pl-9 bg-white" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} />
                         </div>
                     </div>
                     <div className="overflow-x-auto">
@@ -303,7 +302,8 @@ const ValesCajaPanel = ({ user }) => {
                             <thead className="bg-slate-800 text-white">
                                 <tr>
                                     <th className="px-6 py-3 font-semibold">Fecha</th>
-                                    <th className="px-6 py-3 font-semibold">Vendedor</th>
+                                    <th className="px-6 py-3 font-semibold">Caja Origen</th>
+                                    <th className="px-6 py-3 font-semibold">Entregado a</th>
                                     <th className="px-6 py-3 font-semibold">Concepto</th>
                                     <th className="px-6 py-3 font-semibold text-center">Estado</th>
                                     <th className="px-6 py-3 font-semibold text-right">Monto</th>
@@ -312,9 +312,9 @@ const ValesCajaPanel = ({ user }) => {
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
                                 {loading ? (
-                                    <tr><td colSpan={isAdmin ? "6" : "5"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
+                                    <tr><td colSpan={isAdmin ? "7" : "6"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
                                 ) : filteredVales.length === 0 ? (
-                                    <tr><td colSpan={isAdmin ? "6" : "5"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
+                                    <tr><td colSpan={isAdmin ? "7" : "6"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
                                 ) : (
                                     filteredVales.map(vale => {
                                         const isAprobado = vale.status === 'APROBADO';
@@ -326,6 +326,7 @@ const ValesCajaPanel = ({ user }) => {
                                         <tr key={vale.id} className={cn("transition-colors group", isRechazado ? "bg-slate-50 opacity-60" : "hover:bg-red-50")}>
                                             <td className="px-6 py-3 text-slate-600 whitespace-nowrap"><Calendar className="inline h-3 w-3 mr-1 opacity-50"/>{vale.fecha}</td>
                                             <td className="px-6 py-3 font-medium text-slate-800">{vale.vendedor}</td>
+                                            <td className="px-6 py-3 font-bold text-blue-800">{vale.recibido_por || '-'}</td>
                                             <td className={cn("px-6 py-3 text-slate-600", isRechazado && "line-through")}>{vale.concepto}</td>
                                             <td className="px-6 py-3 text-center">
                                                 <span className={cn(
@@ -341,16 +342,13 @@ const ValesCajaPanel = ({ user }) => {
                                                 -$ {Number(vale.monto).toFixed(2)}
                                             </td>
                                             
-                                            {/* Panel de Acciones - Solo Admin puede Aprobar/Rechazar/Editar libremente */}
                                             {isAdmin && (
                                                 <td className="px-6 py-3 text-center">
                                                     <div className="flex items-center justify-center gap-2">
-                                                        
                                                         {isProcessingThis ? (
                                                             <Loader2 className="h-4 w-4 animate-spin text-slate-400" />
                                                         ) : (
                                                             <>
-                                                                {/* Botones de Aprobación Rápida (Solo si está pendiente) */}
                                                                 {isPendiente && (
                                                                     <>
                                                                         <button onClick={() => handleUpdateStatus(vale, 'APROBADO')} className="bg-green-100 p-1.5 rounded text-green-600 hover:bg-green-600 hover:text-white transition-colors" title="Aprobar Vale">
@@ -361,10 +359,7 @@ const ValesCajaPanel = ({ user }) => {
                                                                         </button>
                                                                     </>
                                                                 )}
-
                                                                 <div className="h-4 w-px bg-slate-200 mx-1"></div>
-
-                                                                {/* Editar y Borrar normal */}
                                                                 <button onClick={() => handleOpenModal(vale)} className="text-blue-400 hover:text-blue-600 transition-opacity" title="Editar">
                                                                     <Edit2 className="h-4 w-4" />
                                                                 </button>
@@ -386,7 +381,6 @@ const ValesCajaPanel = ({ user }) => {
             </Card>
         </div>
 
-        {/* MODAL DE CREACIÓN / EDICIÓN */}
         {isModalOpen && (
             <div className="fixed inset-0 bg-black/60 z-50 flex items-center justify-center p-4">
                 <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} className="bg-white rounded-xl shadow-2xl w-full max-w-sm overflow-hidden border border-slate-200">
@@ -407,14 +401,14 @@ const ValesCajaPanel = ({ user }) => {
                         </div>
                         
                         <div>
-                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Vendedor / Responsable</label>
+                            <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Caja de Origen (Vendedor)</label>
                             {isAdmin ? (
                                 <select 
                                     className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
                                     value={formData.vendedor}
                                     onChange={e => setFormData({...formData, vendedor: e.target.value})}
                                 >
-                                    <option value="">Seleccione un vendedor</option>
+                                    <option value="">Seleccione origen</option>
                                     {staffList.map(s => (
                                         <option key={s.full_name} value={s.full_name}>{s.full_name}</option>
                                     ))}
@@ -425,8 +419,13 @@ const ValesCajaPanel = ({ user }) => {
                         </div>
 
                         <div>
+                            <label className="text-xs font-bold text-blue-600 uppercase mb-1 block">Entregado a / Recibido por *</label>
+                            <Input value={formData.recibido_por} onChange={e => setFormData({...formData, recibido_por: e.target.value})} placeholder="Ej: Nombre de la persona o gasto..." className="border-blue-300 focus:border-blue-500 font-semibold text-slate-800"/>
+                        </div>
+
+                        <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Concepto / Motivo *</label>
-                            <Input value={formData.concepto} onChange={e => setFormData({...formData, concepto: e.target.value})} placeholder="Ej: Anticipo pasajes, Comida..." />
+                            <Input value={formData.concepto} onChange={e => setFormData({...formData, concepto: e.target.value})} placeholder="Ej: Anticipo de sueldo, Combustible..." />
                         </div>
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Monto a retirar ($) *</label>

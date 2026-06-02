@@ -6,6 +6,19 @@ import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
 
+// 🔥 BÚSQUEDA INTELIGENTE DE NOMBRES 🔥
+const normalizeName = (name) => {
+    if (!name) return "";
+    return String(name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
+};
+
+const isUserMatch = (name1, name2) => {
+    const n1 = normalizeName(name1);
+    const n2 = normalizeName(name2);
+    if (!n1 || !n2) return false;
+    return n1 === n2 || n1.includes(n2) || n2.includes(n1) || n1.substring(0, 4) === n2.substring(0, 4);
+};
+
 const DailyReport = ({ orders = [], user, onViewOrder }) => {
   if (!user) return <div className="p-10 text-center text-slate-500">Cargando perfil...</div>;
 
@@ -36,17 +49,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const [daysWithReport, setDaysWithReport] = useState(new Set()); 
   const [valesDelDia, setValesDelDia] = useState([]);
 
-  const [ledgerData, setLedgerData] = useState({
-    openingCash: 0,        
-    amountToAccounting: 0, 
-    manualTransactions: [] 
-  });
+  const [ledgerData, setLedgerData] = useState({ openingCash: 0, amountToAccounting: 0, manualTransactions: [] });
   
   const [debugInfo, setDebugInfo] = useState(null);
   const [editingOpening, setEditingOpening] = useState(false);
   const isEditable = selectedDate === todayStr || isAdmin;
 
-  // 🔥 FUNCIÓN PARA RESUMIR EL MÉTODO DE PAGO 🔥
+  // 🔥 DETECCIÓN DE MÉTODO DE PAGO 🔥
   const formatPaymentMethod = (method) => {
       if (!method) return 'EFECTIVO';
       const upper = String(method).toUpperCase();
@@ -95,74 +104,32 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       const valesFiltrados = (todosLosValesDB || []).filter(v => {
           const fechaValeLimpia = v.fecha ? v.fecha.split('T')[0] : "";
           const coincideFecha = fechaValeLimpia === date;
-          const vendedorDB = v.vendedor?.toLowerCase().trim() || "";
-          const vendedorBuscado = userName?.toLowerCase().trim() || "";
-          const coincideVendedor = vendedorDB === vendedorBuscado;
           const estaAprobado = v.status === 'APROBADO'; 
-          
-          return coincideFecha && coincideVendedor && estaAprobado;
+          return coincideFecha && isUserMatch(v.vendedor, userName) && estaAprobado;
       });
-      
       setValesDelDia(valesFiltrados);
 
-      const { data: currentReport, error } = await supabase
-        .from('daily_closings')
-        .select('*')
-        .eq('date', date)
-        .eq('user_id', userId)
-        .maybeSingle();
-
+      const { data: currentReport, error } = await supabase.from('daily_closings').select('*').eq('date', date).eq('user_id', userId).maybeSingle();
       if (error) throw error;
 
       if (currentReport && !isToday) {
         const opening = Number(currentReport.opening_cash) || 0;
-        setLedgerData({
-          openingCash: opening,
-          amountToAccounting: Number(currentReport.amount_to_accounting) || 0, 
-          manualTransactions: currentReport.manual_transactions || []
-        });
-        
-        setDebugInfo({
-            status: "Reporte Histórico Cerrado",
-            source: "DB (Estático)",
-            baseCash: opening,
-            floatingOrders: 0,
-            floatingSum: 0,
-            totalCalculated: opening,
-            searchWindow: "N/A",
-            isSaved: true
-        });
+        setLedgerData({ openingCash: opening, amountToAccounting: Number(currentReport.amount_to_accounting) || 0, manualTransactions: currentReport.manual_transactions || [] });
+        setDebugInfo({ status: "Reporte Histórico Cerrado", source: "DB (Estático)", baseCash: opening, floatingOrders: 0, floatingSum: 0, floatingVales: 0, totalCalculated: opening, searchWindow: "N/A", isSaved: true });
         return; 
       }
 
-      const { data: lastReport } = await supabase
-          .from('daily_closings')
-          .select('date, final_balance') 
-          .eq('user_id', userId)
-          .lt('date', date)
-          .order('date', { ascending: false })
-          .limit(1)
-          .maybeSingle();
+      const { data: lastReport } = await supabase.from('daily_closings').select('date, final_balance').eq('user_id', userId).lt('date', date).order('date', { ascending: false }).limit(1).maybeSingle();
 
-      let baseCash = 0;
-      let lastReportDateStr = '2000-01-01'; 
-      let foundPrevious = false;
-      
-      if (lastReport) {
-          baseCash = Number(lastReport.final_balance);
-          lastReportDateStr = lastReport.date;
-          foundPrevious = true;
-      }
+      let baseCash = 0; let lastReportDateStr = '2000-01-01'; let foundPrevious = false;
+      if (lastReport) { baseCash = Number(lastReport.final_balance); lastReportDateStr = lastReport.date; foundPrevious = true; }
 
-      const { data: userOrders } = await supabase
-          .from('ordenes')
-          .select('*')
-          .or(`recibido_por_anticipo.eq.${userName},recibido_por_saldo.eq.${userName},vendedor.eq.${userName}`) 
-          .order('created_at', { ascending: false })
-          .limit(1000);
+      const shortName = (userName || '').substring(0, 4);
+      const { data: userOrders } = await supabase.from('ordenes').select('*')
+          .or(`recibido_por_anticipo.ilike.%${shortName}%,recibido_por_saldo.ilike.%${shortName}%,vendedor.ilike.%${shortName}%`) 
+          .order('created_at', { ascending: false }).limit(1000);
 
-      let floatingSum = 0;
-      let floatingCount = 0;
+      let floatingSum = 0; let floatingCount = 0;
 
       if (userOrders) {
           userOrders.forEach(o => {
@@ -172,82 +139,58 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
               const isAfterLastReport = createdDateStr > lastReportDateStr;
               const isBeforeToday = createdDateStr < date;
-
-              const recibioAnticipo = o.recibido_por_anticipo === userName || (!o.recibido_por_anticipo && o.vendedor === userName);
+              const recibioAnticipo = isUserMatch(o.recibido_por_anticipo, userName) || (!o.recibido_por_anticipo && isUserMatch(o.vendedor, userName));
               
-              if (isAfterLastReport && isBeforeToday && recibioAnticipo) {
-                  if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') {
-                      floatingSum += Number(o.anticipo);
-                      floatingCount++;
-                  }
+              // Solo el Efectivo entra al recálculo histórico flotante
+              const formaAnticipo = formatPaymentMethod(o.formaPagoAnticipo || o.forma_pago_anticipo);
+              if (isAfterLastReport && isBeforeToday && recibioAnticipo && formaAnticipo === 'EFECTIVO') {
+                  if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') { floatingSum += Number(o.anticipo); floatingCount++; }
               }
 
               const isUpdatedAfterLastReport = balanceDateStr > lastReportDateStr;
               const isUpdatedBeforeToday = balanceDateStr < date;
               const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
-              
-              const recibioSaldo = o.recibido_por_saldo === userName || (!o.recibido_por_saldo && o.vendedor === userName);
+              const recibioSaldo = isUserMatch(o.recibido_por_saldo, userName) || (!o.recibido_por_saldo && isUserMatch(o.vendedor, userName));
               const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
-
-              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && saldoCobrado > 0 && recibioSaldo) {
-                  floatingSum += saldoCobrado;
-                  floatingCount++;
+              
+              const formaSaldo = formatPaymentMethod(o.formaPagoSaldo || o.forma_pago_saldo);
+              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && saldoCobrado > 0 && recibioSaldo && formaSaldo === 'EFECTIVO') {
+                  floatingSum += saldoCobrado; floatingCount++;
               }
           });
       }
 
-      const totalCalculatedOpening = baseCash + floatingSum;
-
-      setLedgerData({
-          openingCash: totalCalculatedOpening, 
-          amountToAccounting: currentReport ? Number(currentReport.amount_to_accounting) : 0, 
-          manualTransactions: currentReport ? (currentReport.manual_transactions || []) : []
+      let floatingValesSum = 0;
+      const valesFlotantes = (todosLosValesDB || []).filter(v => {
+          const fechaVale = v.fecha ? v.fecha.split('T')[0] : "";
+          return isUserMatch(v.vendedor, userName) && v.status === 'APROBADO' && fechaVale > lastReportDateStr && fechaVale < date;
       });
+      floatingValesSum = valesFlotantes.reduce((sum, v) => sum + Number(v.monto), 0);
 
-      setDebugInfo({
-          status: isToday ? "Modo VIVO (Hoy)" : "Calculado por falta de reporte",
-          source: foundPrevious ? `Cierre del ${lastReportDateStr}` : "Inicio de los tiempos",
-          baseCash: baseCash,
-          floatingOrders: floatingCount,
-          floatingSum: floatingSum,
-          totalCalculated: totalCalculatedOpening,
-          searchWindow: `> ${lastReportDateStr} y < ${date}`,
-          isSaved: !!currentReport
-      });
+      const totalCalculatedOpening = baseCash + floatingSum - floatingValesSum;
+      setLedgerData({ openingCash: totalCalculatedOpening, amountToAccounting: currentReport ? Number(currentReport.amount_to_accounting) : 0, manualTransactions: currentReport ? (currentReport.manual_transactions || []) : [] });
 
-    } catch (error) {
-      console.error(error);
-      toast({ title: "Error", description: "Fallo cálculo.", variant: "destructive" });
-    } finally {
-      setLoading(false);
-    }
+      setDebugInfo({ status: isToday ? "Modo VIVO (Hoy)" : "Calculado por falta de reporte", source: foundPrevious ? `Cierre del ${lastReportDateStr}` : "Inicio de los tiempos", baseCash: baseCash, floatingOrders: floatingCount, floatingSum: floatingSum, floatingVales: floatingValesSum, totalCalculated: totalCalculatedOpening, searchWindow: `> ${lastReportDateStr} y < ${date}`, isSaved: !!currentReport });
+
+    } catch (error) { toast({ title: "Error", description: "Fallo cálculo.", variant: "destructive" }); } finally { setLoading(false); }
   };
 
   const handleForceRecalculate = async () => {
       if (!confirm("¿Estás seguro? Esto borrará el cierre guardado de este día y forzará al sistema a recalcular el saldo acumulado histórico.")) return;
-      
       setRecalculating(true);
       try {
           const { error } = await supabase.from('daily_closings').delete().match({ date: selectedDate, user_id: targetUserId });
           if (error) throw error;
           toast({ title: "Reporte Reiniciado", description: "Recalculando saldos..." });
           await loadDailyData(selectedDate, targetUserId, targetUserName);
-      } catch (error) {
-          toast({ title: "Error", description: "No se pudo reiniciar el reporte.", variant: "destructive" });
-      } finally {
-          setRecalculating(false);
-      }
+      } catch (error) { toast({ title: "Error", description: "No se pudo reiniciar el reporte.", variant: "destructive" }); } finally { setRecalculating(false); }
   };
 
-  useEffect(() => {
-    if (targetUserId && targetUserName) fetchCalendarDots();
-  }, [viewMode, currentMonth, targetUserId, targetUserName, orders]);
+  useEffect(() => { if (targetUserId && targetUserName) fetchCalendarDots(); }, [viewMode, currentMonth, targetUserId, targetUserName, orders]);
 
   const fetchCalendarDots = async () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    const firstDay = new Date(year, month, 1).toISOString().split('T')[0];
-    const lastDay = new Date(year, month + 1, 0).toISOString().split('T')[0];
+    const year = currentMonth.getFullYear(); const month = currentMonth.getMonth();
+    const firstDay = new Date(year, month, 1).toISOString().split('T')[0]; const lastDay = new Date(year, month + 1, 0).toISOString().split('T')[0];
     const activityDates = new Set();
 
     try {
@@ -256,49 +199,30 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
         
         const { data: vales } = await supabase.from('vales_caja').select('fecha, vendedor, status').gte('fecha', firstDay).lte('fecha', lastDay);
         if (vales) {
-            vales.forEach(v => {
-                if (v.vendedor?.toLowerCase().trim() === targetUserName?.toLowerCase().trim() && v.status === 'APROBADO') {
-                    activityDates.add(v.fecha);
-                }
-            });
+            vales.forEach(v => { if (isUserMatch(v.vendedor, targetUserName) && v.status === 'APROBADO') { activityDates.add(v.fecha); } });
         }
     } catch (e) {}
 
     orders.forEach(o => {
-        const tocoDinero = o.vendedor === targetUserName || o.recibido_por_anticipo === targetUserName || o.recibido_por_saldo === targetUserName;
-        if (tocoDinero) {
-            const dateStr = toLocalDateStr(o.created_at || o.createdAt);
-            if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr);
-        }
+        const tocoDinero = isUserMatch(o.vendedor, targetUserName) || isUserMatch(o.recibido_por_anticipo, targetUserName) || isUserMatch(o.recibido_por_saldo, targetUserName);
+        if (tocoDinero) { const dateStr = toLocalDateStr(o.created_at || o.createdAt); if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr); }
     });
-
     setDaysWithReport(activityDates);
   };
 
-  const handleMonthChange = (inc) => {
-      const d = new Date(currentMonth); d.setMonth(d.getMonth() + inc); setCurrentMonth(d);
-  };
+  const handleMonthChange = (inc) => { const d = new Date(currentMonth); d.setMonth(d.getMonth() + inc); setCurrentMonth(d); };
 
   const renderCalendar = () => {
-    const year = currentMonth.getFullYear();
-    const month = currentMonth.getMonth();
-    const daysInMonth = new Date(year, month + 1, 0).getDate();
-    const startDayOfWeek = new Date(year, month, 1).getDay();
+    const year = currentMonth.getFullYear(); const month = currentMonth.getMonth(); const daysInMonth = new Date(year, month + 1, 0).getDate(); const startDayOfWeek = new Date(year, month, 1).getDay();
     const days = [];
     for (let i = 0; i < startDayOfWeek; i++) days.push(<div key={`e-${i}`} className="h-24 bg-slate-50/50 border border-slate-100"></div>);
     for (let d = 1; d <= daysInMonth; d++) {
         const dateStr = `${year}-${String(month + 1).padStart(2, '0')}-${String(d).padStart(2, '0')}`;
-        const hasReport = daysWithReport.has(dateStr);
-        const isSelected = selectedDate === dateStr;
-        const isToday = dateStr === todayStr;
+        const hasReport = daysWithReport.has(dateStr); const isSelected = selectedDate === dateStr; const isToday = dateStr === todayStr;
         const dayClass = cn("h-24 border border-slate-200 p-2 cursor-pointer transition-all hover:bg-blue-50 relative flex flex-col justify-between group", isSelected ? "bg-blue-100 border-blue-300 shadow-inner" : "bg-white");
-        
         days.push(
             <div key={dateStr} onClick={() => { setSelectedDate(dateStr); setViewMode('report'); }} className={dayClass}>
-                <div className="flex justify-between items-start">
-                    <span className={cn("text-sm font-bold w-6 h-6 flex items-center justify-center rounded-full", isToday ? "bg-blue-600 text-white" : "text-slate-700")}>{d}</span>
-                    {hasReport && <div className="h-3 w-3 rounded-full bg-green-500 shadow-sm animate-pulse"></div>}
-                </div>
+                <div className="flex justify-between items-start"><span className={cn("text-sm font-bold w-6 h-6 flex items-center justify-center rounded-full", isToday ? "bg-blue-600 text-white" : "text-slate-700")}>{d}</span>{hasReport && <div className="h-3 w-3 rounded-full bg-green-500 shadow-sm animate-pulse"></div>}</div>
                 {hasReport && <span className="text-[10px] text-green-700 font-medium bg-green-100 px-1 rounded self-start mt-1">Ver Reporte</span>}
                 {!hasReport && isSelected && !isAdmin && <span className="text-[10px] text-blue-600 font-medium self-end opacity-0 group-hover:opacity-100">Crear</span>}
             </div>
@@ -309,39 +233,26 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
   const automaticTransactions = useMemo(() => {
     const txs = [];
-    
-    const relevantOrders = orders.filter(o => 
-        o.vendedor === targetUserName || o.recibido_por_anticipo === targetUserName || o.recibido_por_saldo === targetUserName
-    );
+    const relevantOrders = orders.filter(o => isUserMatch(o.vendedor, targetUserName) || isUserMatch(o.recibido_por_anticipo, targetUserName) || isUserMatch(o.recibido_por_saldo, targetUserName));
 
     relevantOrders.forEach(o => {
       const creationDate = toLocalDateStr(o.createdAt || o.created_at);
       if (creationDate === selectedDate) {
           const quienCobro = o.recibido_por_anticipo || o.vendedor;
-          if (quienCobro === targetUserName && Number(o.anticipo) > 0) {
+          if (isUserMatch(quienCobro, targetUserName) && Number(o.anticipo) > 0) {
               const numOrden = o.order_number || o.orderNumber || o.id;
               txs.push({
-                id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`,
-                orderNumber: numOrden, income: Number(o.anticipo), expense: 0, 
-                balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false,
-                originalOrder: o,
-                paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' 
+                id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`, orderNumber: numOrden, income: Number(o.anticipo), expense: 0, balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' 
               });
           }
       }
       
-      // ABONOS
       (o.abonos || []).forEach(abono => {
           const abonoDateStr = toLocalDateStr(abono.fecha);
-          if (abonoDateStr === selectedDate && abono.cobrador === targetUserName) {
+          if (abonoDateStr === selectedDate && isUserMatch(abono.cobrador, targetUserName)) {
                const numOrden = o.order_number || o.orderNumber || o.id;
                txs.push({
-                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, 
-                  details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`,
-                  orderNumber: numOrden, income: Number(abono.monto), expense: 0, 
-                  balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false,
-                  originalOrder: o,
-                  paymentMethod: abono.forma_pago || abono.formaPago || 'EFECTIVO' 
+                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`, orderNumber: numOrden, income: Number(abono.monto), expense: 0, balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: abono.metodoPago || abono.metodo_pago || abono.forma_pago || abono.formaPago || 'EFECTIVO' 
                });
           }
       });
@@ -352,20 +263,14 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       const paymentDate = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDate;
       const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
-
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
       const saldoFinalReal = saldoCobrado - totalAbonado;
 
       if (paymentDate === selectedDate && isRelevantStatus && saldoFinalReal > 0) {
           const quienCobroSaldo = o.recibido_por_saldo || o.vendedor;
-          if (quienCobroSaldo === targetUserName) {
+          if (isUserMatch(quienCobroSaldo, targetUserName)) {
               const numOrden = o.order_number || o.orderNumber || o.id;
-              txs.push({
-                id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`,
-                orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false,
-                originalOrder: o,
-                paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' 
-              });
+              txs.push({ id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`, orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' });
           }
       }
     });
@@ -374,33 +279,15 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
         const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
         if (o.status === 'ANULADA' && updatedDate === selectedDate) {
             const quienCobroOriginalmente = o.recibido_por_anticipo || o.vendedor;
-            if (quienCobroOriginalmente === targetUserName && Number(o.anticipo) > 0) {
+            if (isUserMatch(quienCobroOriginalmente, targetUserName) && Number(o.anticipo) > 0) {
                 const numOrden = o.order_number || o.orderNumber || o.id;
-                txs.push({
-                    id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Anulación #${numOrden}`,
-                    orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true,
-                    originalOrder: o,
-                    paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO'
-                });
+                txs.push({ id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Anulación #${numOrden}`, orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' });
             }
         }
     });
     
     valesDelDia.forEach(vale => {
-        txs.push({
-            id: `vale-${vale.id}`, 
-            type: 'VALE CAJA', 
-            description: vale.concepto, 
-            details: '(Aprobado)',
-            orderNumber: 'VALE', 
-            income: 0, 
-            expense: Number(vale.monto), 
-            balanceNote: 'EGRESO', 
-            isManual: false, 
-            isAnulada: false,
-            isVale: true,
-            paymentMethod: 'EFECTIVO' 
-        });
+        txs.push({ id: `vale-${vale.id}`, type: 'VALE CAJA', description: vale.concepto, details: vale.recibido_por ? `A: ${vale.recibido_por} (Aprobado)` : '(Aprobado)', orderNumber: 'VALE', income: 0, expense: Number(vale.monto), balanceNote: 'EGRESO', isManual: false, isAnulada: false, isVale: true, paymentMethod: 'EFECTIVO' });
     });
 
     return txs;
@@ -408,44 +295,45 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
   const allTransactions = useMemo(() => [...automaticTransactions, ...ledgerData.manualTransactions], [automaticTransactions, ledgerData]);
 
+  // 🔥 TOTATLIZADOR CORREGIDO: SOLO EFECTIVO SUMA A LA CAJA FÍSICA 🔥
   const totals = useMemo(() => {
-    const totalIncome = allTransactions.reduce((sum, tx) => sum + Number(tx.income || 0), 0);
-    const totalExpense = allTransactions.reduce((sum, tx) => sum + Number(tx.expense || 0), 0);
+    let totalIncome = 0;
+    let totalExpense = 0;
+    let totalOtrosMedios = 0;
+
+    allTransactions.forEach(tx => {
+        const isEfectivo = formatPaymentMethod(tx.paymentMethod) === 'EFECTIVO';
+        if (isEfectivo) {
+            totalIncome += Number(tx.income || 0);
+            totalExpense += Number(tx.expense || 0);
+        } else {
+            // Lo que se pagó por transferencia/tarjeta no afecta la caja, 
+            // pero lo calculamos para mostrarlo en el panel informativo.
+            totalOtrosMedios += Number(tx.income || 0) - Number(tx.expense || 0);
+        }
+    });
+
     const cashInHand = Number(ledgerData.openingCash) + totalIncome - totalExpense;
     const nextDayBalance = cashInHand - Number(ledgerData.amountToAccounting);
-    return { totalIncome, totalExpense, cashInHand, nextDayBalance };
+    return { totalIncome, totalExpense, cashInHand, nextDayBalance, totalOtrosMedios };
   }, [allTransactions, ledgerData]);
 
   const saveToCloud = async () => {
     setSaving(true);
     try {
-      const payload = {
-          date: selectedDate,
-          user_id: targetUserId,
-          opening_cash: Number(ledgerData.openingCash),
-          amount_to_accounting: Number(ledgerData.amountToAccounting), 
-          final_balance: Number(totals.nextDayBalance), 
-          manual_transactions: ledgerData.manualTransactions,
-          updated_at: new Date().toISOString()
-      };
+      const payload = { date: selectedDate, user_id: targetUserId, opening_cash: Number(ledgerData.openingCash), amount_to_accounting: Number(ledgerData.amountToAccounting), final_balance: Number(totals.nextDayBalance), manual_transactions: ledgerData.manualTransactions, updated_at: new Date().toISOString() };
       const { error } = await supabase.from('daily_closings').upsert(payload, { onConflict: 'date, user_id' });
       if (error) throw error;
       toast({ title: "Guardado Correctamente", description: "El saldo ha sido registrado para mañana." });
-      fetchCalendarDots();
-      setDebugInfo(prev => ({ ...prev, status: "Guardado ahora mismo", isSaved: true }));
-    } catch (error) {
-      toast({ title: "Error", description: "No se pudo guardar.", variant: "destructive" });
-    } finally { setSaving(false); }
+      fetchCalendarDots(); setDebugInfo(prev => ({ ...prev, status: "Guardado ahora mismo", isSaved: true }));
+    } catch (error) { toast({ title: "Error", description: "No se pudo guardar.", variant: "destructive" }); } finally { setSaving(false); }
   };
 
   const updateLedger = (newData) => { setLedgerData(newData); };
   const updateField = (field, value) => updateLedger({ ...ledgerData, [field]: value });
   
   const addManualTransaction = (type) => {
-    const newTx = { 
-        id: Date.now(), type, description: '', orderNumber: '', 
-        income: 0, expense: 0, balanceNote: '', paymentMethod: 'EFECTIVO', isManual: true 
-    };
+    const newTx = { id: Date.now(), type, description: '', orderNumber: '', income: 0, expense: 0, balanceNote: '', paymentMethod: 'EFECTIVO', isManual: true };
     updateLedger({ ...ledgerData, manualTransactions: [...ledgerData.manualTransactions, newTx] });
   };
   const updateManualTransaction = (id, field, value) => {
@@ -539,7 +427,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                         <div className="py-2">#</div>
                         <div className="py-2">DESCRIPCION</div>
                         <div className="py-2 text-[10px] leading-tight flex items-center justify-center">ORDEN DE<br/>PRODUCCION</div>
-                        {/* 🔥 TÍTULO DE LA COLUMNA EN NEGRO 🔥 */}
                         <div className="py-2 text-[10px] leading-tight flex items-center justify-center text-slate-900">MÉTODO PAGO</div>
                         <div className="py-2">INGRESO</div>
                         <div className="py-2">EGRESO</div>
@@ -548,20 +435,20 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                     </div>
 
                     <div className="flex-1 overflow-auto">
-                        {allTransactions.map((tx, idx) => (
+                        {allTransactions.map((tx, idx) => {
+                            const isEfectivo = formatPaymentMethod(tx.paymentMethod) === 'EFECTIVO';
+                            
+                            return (
                             <div 
                                 key={tx.id} 
-                                onClick={() => { 
-                                    if (!tx.isManual && tx.originalOrder && onViewOrder) {
-                                        onViewOrder(tx.originalOrder); 
-                                    }
-                                }}
+                                onClick={() => { if (!tx.isManual && tx.originalOrder && onViewOrder) { onViewOrder(tx.originalOrder); } }} 
                                 className={cn(
                                     "grid grid-cols-[40px_1fr_80px_115px_90px_90px_140px_40px] border-b border-slate-300 divide-x divide-slate-300 transition-colors group", 
-                                    idx % 2 === 0 ? "bg-white" : "bg-slate-50", 
-                                    tx.isAnulada ? "bg-red-50" : "",
+                                    !isEfectivo ? "bg-indigo-50/70 text-indigo-900" : (idx % 2 === 0 ? "bg-white" : "bg-slate-50"), 
+                                    tx.isAnulada ? "bg-red-50" : "", 
                                     tx.isVale ? "bg-red-50/50" : "", 
-                                    !tx.isManual && !tx.isVale ? "cursor-pointer hover:bg-blue-100" : "hover:bg-yellow-50" 
+                                    !tx.isManual && !tx.isVale && isEfectivo ? "cursor-pointer hover:bg-blue-100" : "",
+                                    !isEfectivo && !tx.isManual ? "cursor-pointer hover:bg-indigo-100" : ""
                                 )}
                             >
                                 <div className="py-2 font-bold text-center text-slate-500 flex items-center justify-center">{idx + 1}</div>
@@ -579,30 +466,32 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                    {tx.isManual && isEditable ? <input className="w-full text-center bg-transparent outline-none" value={tx.orderNumber} onChange={(e) => updateManualTransaction(tx.id, 'orderNumber', e.target.value)} /> : tx.orderNumber}
                                 </div>
 
-                                {/* 🔥 TEXTO NEGRO Y EN NEGRITA PARA EL MÉTODO DE PAGO 🔥 */}
                                 <div className="py-2 px-1 text-center text-xs font-bold text-black uppercase flex items-center justify-center">
                                     {tx.isManual && isEditable ? (
-                                        <select 
-                                            className="w-full bg-transparent outline-none uppercase text-center font-black text-black cursor-pointer"
-                                            value={tx.paymentMethod || 'EFECTIVO'}
-                                            onChange={(e) => updateManualTransaction(tx.id, 'paymentMethod', e.target.value)}
-                                        >
-                                            <option value="EFECTIVO">EFECTIVO</option>
-                                            <option value="TRANSFERENCIA">TRANSFERENCIA</option>
-                                            <option value="TARJETA">TARJETA</option>
-                                            <option value="CHEQUE">CHEQUE</option>
+                                        <select className="w-full bg-transparent outline-none uppercase text-center font-black text-black cursor-pointer" value={tx.paymentMethod || 'EFECTIVO'} onChange={(e) => updateManualTransaction(tx.id, 'paymentMethod', e.target.value)}>
+                                            <option value="EFECTIVO">EFECTIVO</option><option value="TRANSFERENCIA">TRANSFERENCIA</option><option value="TARJETA">TARJETA</option><option value="CHEQUE">CHEQUE</option>
                                         </select>
                                     ) : (
-                                        <span className="w-full text-center break-words leading-tight">{formatPaymentMethod(tx.paymentMethod)}</span>
+                                        <span className={cn("w-full text-center break-words leading-tight", !isEfectivo && "text-indigo-800 font-black")}>{formatPaymentMethod(tx.paymentMethod)}</span>
                                     )}
                                 </div>
                                 
-                                <div className="py-2 px-2 text-right font-bold text-green-700 flex items-center justify-end">
-                                   {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.income} onChange={(e) => updateManualTransaction(tx.id, 'income', e.target.value)} /> : (Number(tx.income) > 0 ? `$${Number(tx.income).toFixed(2)}` : '-')}
+                                <div className={cn("py-2 px-2 text-right font-bold flex flex-col justify-center items-end", isEfectivo ? "text-green-700" : "text-indigo-600 opacity-80")}>
+                                   {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.income} onChange={(e) => updateManualTransaction(tx.id, 'income', e.target.value)} /> : (Number(tx.income) > 0 ? (
+                                       <>
+                                           <span>${Number(tx.income).toFixed(2)}</span>
+                                           {!isEfectivo && <span className="text-[7.5px] leading-none uppercase text-indigo-500 mt-1">No suma a caja</span>}
+                                       </>
+                                   ) : '-')}
                                 </div>
                                 
-                                <div className="py-2 px-2 text-right font-bold text-red-700 flex items-center justify-end">
-                                   {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? `$${Number(tx.expense).toFixed(2)}` : '-')}
+                                <div className={cn("py-2 px-2 text-right font-bold flex flex-col justify-center items-end", isEfectivo ? "text-red-700" : "text-indigo-600 opacity-80")}>
+                                   {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? (
+                                       <>
+                                           <span>${Number(tx.expense).toFixed(2)}</span>
+                                           {!isEfectivo && <span className="text-[7.5px] leading-none uppercase text-indigo-500 mt-1">No suma a caja</span>}
+                                       </>
+                                   ) : '-')}
                                 </div>
                                 
                                 <div className="py-2 px-2 text-xs text-slate-600 truncate flex items-center justify-center">
@@ -610,26 +499,24 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                 </div>
                                 
                                 <div className="flex items-center justify-center bg-slate-50 print:hidden">
-                                    {tx.isManual && isEditable ? (
-                                        <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button>
-                                    ) : (
-                                        !tx.isManual && !tx.isVale && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />
-                                    )}
+                                    {tx.isManual && isEditable ? ( <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button> ) : ( !tx.isManual && !tx.isVale && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" /> )}
                                 </div>
                             </div>
-                        ))}
+                        )})}
                         {isEditable && isAdmin && (
                            <div className="p-4 flex gap-4 bg-slate-100 print:hidden border-t border-slate-300">
-                               <Button variant="outline" onClick={() => addManualTransaction('GASTO')} className="border-red-300 text-red-700 hover:bg-red-50">+ Gasto</Button>
+                               <Button variant="outline" onClick={() => addManualTransaction('GASTO')} className="border-red-300 text-red-700 hover:bg-red-50">+ Gasto Manual</Button>
                                <Button variant="outline" onClick={() => addManualTransaction('INGRESO')} className="border-green-300 text-green-700 hover:bg-green-50">+ Ingreso Extra</Button>
                            </div>
                         )}
                     </div>
 
                     <div className="border-t-2 border-slate-900">
-                        <div className="bg-slate-800 text-white p-2 grid grid-cols-2 gap-4 text-center print:print-color-adjust-exact">
-                            <div><div className="text-[10px] text-slate-400">TOTAL INGRESOS</div><div className="text-lg font-bold text-green-400">${totals.totalIncome.toFixed(2)}</div></div>
-                            <div><div className="text-[10px] text-slate-400">TOTAL EGRESOS (INCL. VALES)</div><div className="text-lg font-bold text-red-400">${totals.totalExpense.toFixed(2)}</div></div>
+                        {/* 🔥 3 COLUMNAS: INGRESOS CAJA | EGRESOS CAJA | OTROS MEDIOS 🔥 */}
+                        <div className="bg-slate-800 text-white p-2 grid grid-cols-3 gap-4 text-center print:print-color-adjust-exact">
+                            <div><div className="text-[10px] text-slate-400">INGRESOS FÍSICOS (CAJA)</div><div className="text-lg font-bold text-green-400">${totals.totalIncome.toFixed(2)}</div></div>
+                            <div><div className="text-[10px] text-slate-400">EGRESOS FÍSICOS (CAJA)</div><div className="text-lg font-bold text-red-400">${totals.totalExpense.toFixed(2)}</div></div>
+                            <div className="border-l border-slate-600"><div className="text-[10px] text-slate-400">OTROS MEDIOS (BANCOS)</div><div className="text-lg font-bold text-indigo-300">${totals.totalOtrosMedios.toFixed(2)}</div></div>
                         </div>
                         <div className="flex flex-col md:flex-row border-t-2 border-slate-900 h-auto md:h-24 text-sm">
                             <div className="flex-1 border-r-2 border-slate-900 bg-blue-50 p-4 flex flex-col justify-center items-center">
@@ -665,7 +552,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                         <div className="space-y-1">
                             <div><span className="text-slate-500">Ventana de Búsqueda:</span> {debugInfo.searchWindow}</div>
                             <div><span className="text-slate-500">Órdenes Flotantes:</span> {debugInfo.floatingOrders}</div>
-                            <div><span className="text-slate-500">Suma Flotante ($):</span> <span className="text-yellow-400">${(debugInfo.floatingSum || 0).toFixed(2)}</span></div>
+                            <div><span className="text-slate-500">Vales Flotantes ($):</span> <span className="text-red-400">-${(debugInfo.floatingVales || 0).toFixed(2)}</span></div>
+                            <div><span className="text-slate-500">Suma Flotante Efectivo ($):</span> <span className="text-yellow-400">${(debugInfo.floatingSum || 0).toFixed(2)}</span></div>
                             <div className="pt-2 border-t border-slate-700 mt-1"><span className="text-slate-500">TOTAL CALCULADO:</span> <span className="text-white font-bold text-sm">${(debugInfo.totalCalculated || 0).toFixed(2)}</span></div>
                         </div>
                     </div>
