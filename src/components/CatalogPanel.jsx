@@ -30,6 +30,7 @@ const CatalogPanel = ({ user }) => {
   const [formData, setFormData] = useState({ 
       codigo: '', categoria: '', nombre: '', descripcion: '', observaciones: '', 
       venta_minima: '0', 
+      precio_minimo: '', // 🔥 NUEVO CAMPO
       precios_escalonados: [{ cantidad: '0', precio: '', es_base: true }],
       tienePrecioDistribuidor: false, 
       precios_distribuidor: [],
@@ -161,6 +162,7 @@ const CatalogPanel = ({ user }) => {
             codigo: item.codigo || '', categoria: item.categoria || '', nombre: item.nombre, 
             descripcion: item.descripcion || '', observaciones: item.observaciones || '',
             venta_minima: item.venta_minima !== null && item.venta_minima !== undefined ? Math.floor(item.venta_minima) : 0, 
+            precio_minimo: item.precio_minimo || '',
             precios_escalonados: loadedTiers,
             tienePrecioDistribuidor: hasDistribuidorConfig,
             precios_distribuidor: loadedDistTiers,
@@ -171,6 +173,7 @@ const CatalogPanel = ({ user }) => {
         setFormData({ 
             codigo: '', categoria: '', nombre: '', descripcion: '', observaciones: '', 
             venta_minima: '0', 
+            precio_minimo: '',
             precios_escalonados: [{ cantidad: '0', precio: '', es_base: true }],
             tienePrecioDistribuidor: false, 
             precios_distribuidor: [],
@@ -245,8 +248,9 @@ const CatalogPanel = ({ user }) => {
           const finalData = { 
               codigo: formData.codigo, categoria: formData.categoria, nombre: formData.nombre, 
               descripcion: formData.descripcion, observaciones: formData.observaciones,
-              precio: baseTier.precio, // Restaurado: todos los productos tienen precio base
+              precio: baseTier.precio, 
               venta_minima: formData.venta_minima !== '' ? parseInt(formData.venta_minima, 10) : 0, 
+              precio_minimo: formData.precio_minimo !== '' ? parseFloat(formData.precio_minimo) : 0, // 🔥 GUARDAMOS
               precios_escalonados: cleanedTiers.map(t => ({cantidad: t.cantidad, precio: t.precio})),
               precio_distribuidor: (formData.tienePrecioDistribuidor && baseDistTier) ? baseDistTier.precio : 0,
               precios_distribuidor: formData.tienePrecioDistribuidor ? cleanedDistTiers.map(t => ({cantidad: t.cantidad, precio: t.precio})) : [],
@@ -298,7 +302,7 @@ const CatalogPanel = ({ user }) => {
       for (const [cat, catItems] of Object.entries(grouped)) {
           csvContent += `"CATEGORÍA: ${cat}"\n`;
           
-          let headers = ['ID', 'CÓDIGO PRODUCTO', 'NOMBRE DE PRODUCTO', 'DESCRIPCIÓN', 'OBSERVACIONES', 'POR METRO'];
+          let headers = ['ID', 'CÓDIGO PRODUCTO', 'NOMBRE DE PRODUCTO', 'DESCRIPCIÓN', 'OBSERVACIONES', 'POR METRO', 'PRECIO MÍNIMO ($)'];
           for (let i = 0; i < maxTiers; i++) {
               headers.push('CANT');
               headers.push('PRECIO PÚBLICO');
@@ -316,7 +320,8 @@ const CatalogPanel = ({ user }) => {
                   item.nombre || '',
                   item.descripcion || '',
                   item.observaciones || '',
-                  item.es_por_metro ? 'SI' : 'NO'
+                  item.es_por_metro ? 'SI' : 'NO',
+                  item.precio_minimo !== undefined && item.precio_minimo !== null ? item.precio_minimo : ''
               ];
               
               const tiers = item.precios_escalonados || [];
@@ -377,7 +382,7 @@ const CatalogPanel = ({ user }) => {
               if (currentRow.length > 0 || currentVal !== '') { currentRow.push(currentVal.trim()); lines.push(currentRow); }
 
               let currentCategory = 'General';
-              let idxId = -1, idxNombre = -1, idxCodigo = -1, idxDesc = -1, idxObs = -1, idxMetro = -1;
+              let idxId = -1, idxNombre = -1, idxCodigo = -1, idxDesc = -1, idxObs = -1, idxMetro = -1, idxPrecioMin = -1;
               let cantIndexes = []; let cantDistIndexes = [];
               const productsToInsert = [];
 
@@ -395,6 +400,7 @@ const CatalogPanel = ({ user }) => {
                       idxDesc = row.findIndex(c => c && c.toUpperCase().includes('DESCRIPCI'));
                       idxObs = row.findIndex(c => c && c.toUpperCase().includes('OBSERVACIONES'));
                       idxMetro = row.findIndex(c => c && c.toUpperCase().includes('METRO'));
+                      idxPrecioMin = row.findIndex(c => c && c.toUpperCase().includes('PRECIO MÍNIMO'));
                       cantIndexes = []; cantDistIndexes = [];
                       row.forEach((col, index) => { 
                           if (col) {
@@ -411,6 +417,7 @@ const CatalogPanel = ({ user }) => {
                       if (!nombre || nombre.trim() === '' || nombre.toUpperCase().includes('NOMBRE DE PRODUCTO')) continue;
                       
                       const esMetro = idxMetro !== -1 && row[idxMetro] && row[idxMetro].toUpperCase().includes('SI');
+                      const precioMinimoVal = idxPrecioMin !== -1 && row[idxPrecioMin] ? parseFloat(String(row[idxPrecioMin]).replace(/\$/g, '').replace(/,/g, '.')) : 0;
 
                       let precios_escalonados = [];
                       cantIndexes.forEach(cantIdx => {
@@ -462,7 +469,8 @@ const CatalogPanel = ({ user }) => {
                           precios_escalonados: precios_escalonados.map(t => ({cantidad: t.cantidad, precio: t.precio})),
                           precio_distribuidor: basePrecioDist,
                           precios_distribuidor: precios_distribuidor.map(t => ({cantidad: t.cantidad, precio: t.precio})),
-                          es_por_metro: esMetro
+                          es_por_metro: esMetro,
+                          precio_minimo: !isNaN(precioMinimoVal) ? precioMinimoVal : 0
                       };
 
                       if (idxId !== -1 && row[idxId] && row[idxId].trim() !== '') {
@@ -557,7 +565,7 @@ const CatalogPanel = ({ user }) => {
                             <tr>
                                 <SortableHeader label="Código" sortKey="codigo" width="w-24" />
                                 <SortableHeader label="Categoría / Producto" sortKey="nombre" />
-                                <SortableHeader label="V. Mínima" sortKey="venta_minima" align="center" width="w-28" />
+                                <SortableHeader label="V. Mín / P. Mín" sortKey="venta_minima" align="center" width="w-28" />
                                 <SortableHeader label="Precios Público" sortKey="precio" align="right" width="w-48" />
                                 <SortableHeader label="Precios Distribuidor" sortKey="precio_distribuidor" align="right" width="w-48" />
                                 {!isReadOnly && <th className="px-4 py-3 font-semibold text-center w-24">Acciones</th>}
@@ -579,7 +587,10 @@ const CatalogPanel = ({ user }) => {
                                             </div>
                                         </td>
                                         <td className="px-4 py-3 align-top text-center">
-                                            <span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100">{item.venta_minima !== null && item.venta_minima !== undefined ? Math.floor(item.venta_minima) : 0}</span>
+                                            <span className="font-bold text-red-600 bg-red-50 px-2 py-1 rounded border border-red-100 block">{item.venta_minima !== null && item.venta_minima !== undefined ? Math.floor(item.venta_minima) : 0} unds</span>
+                                            {Number(item.precio_minimo) > 0 && (
+                                                <span className="font-bold text-orange-600 bg-orange-50 px-2 py-1 rounded border border-orange-100 block mt-1">Mín: ${Number(item.precio_minimo).toFixed(2)}</span>
+                                            )}
                                         </td>
                                         
                                         <td className="px-4 py-3 text-right align-top bg-slate-50/50">
@@ -662,17 +673,18 @@ const CatalogPanel = ({ user }) => {
                                 
                                 <div className="flex flex-wrap items-center gap-4">
                                     <div className="flex items-center gap-2 bg-red-50 px-3 py-1.5 rounded-md border border-red-100">
-                                        <label className="text-xs font-bold text-red-700 flex items-center gap-1"><ShieldAlert className="h-3 w-3"/> Venta Mínima:</label>
+                                        <label className="text-xs font-bold text-red-700 flex items-center gap-1"><ShieldAlert className="h-3 w-3"/> Cant. Mínima:</label>
                                         <Input 
-                                           type="number" 
-                                           step="1" 
-                                           min="0" 
-                                           value={formData.venta_minima} 
-                                           onChange={e => setFormData({...formData, venta_minima: e.target.value})} 
-                                           onKeyDown={e => {
-                                               if (e.key === '.' || e.key === ',') e.preventDefault();
-                                           }}
-                                           className="border-red-300 font-bold text-center w-20 h-7 text-xs bg-white" 
+                                           type="number" step="1" min="0" value={formData.venta_minima} onChange={e => setFormData({...formData, venta_minima: e.target.value})} 
+                                           onKeyDown={e => { if (e.key === '.' || e.key === ',') e.preventDefault(); }}
+                                           className="border-red-300 font-bold text-center w-16 h-7 text-xs bg-white" 
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-2 bg-orange-50 px-3 py-1.5 rounded-md border border-orange-200">
+                                        <label className="text-xs font-bold text-orange-800 flex items-center gap-1"><DollarSign className="h-3 w-3"/> Precio Mín. ($):</label>
+                                        <Input 
+                                           type="number" step="0.01" min="0" value={formData.precio_minimo} onChange={e => setFormData({...formData, precio_minimo: e.target.value})} 
+                                           className="border-orange-300 font-bold text-center w-16 h-7 text-xs bg-white" placeholder="0.00"
                                         />
                                     </div>
                                     
