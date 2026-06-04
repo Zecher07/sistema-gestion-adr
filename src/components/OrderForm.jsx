@@ -126,7 +126,6 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
     );
 };
 
-// 🔥 AQUÍ AGREGAMOS onCreateClient EN LAS PROPIEDADES 🔥
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients, onCreateClient }) => {
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
@@ -178,6 +177,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
+  // 🔥 FUNCIÓN DE REDONDEO ESTRICTO A 0.50 HACIA ARRIBA 🔥
   const roundUpToHalf = (num) => Math.ceil(num * 2) / 2;
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
@@ -608,7 +608,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         const newProducts = [...prev.productos];
         let item = { ...newProducts[index], [field]: value };
         
-        // 🔥 Si el usuario escribe manualmente en el Total, respetamos su escritura 🔥
         if (field === 'total') {
             item.total = value; 
             newProducts[index] = item; 
@@ -732,7 +731,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     setIsSearching(false);
   };
 
-  // 🔥 EVENTO PARA CREACIÓN CORRECTA DE CLIENTE 🔥
   const handleNewClientCreated = (newClient) => {
     setShowNewClientModal(false);
     if(onReloadClients) onReloadClients();
@@ -1195,7 +1193,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
                            </div>
                            
-                           {/* 🔥 BOTON + CLIENTE CONECTADO GLOBALMENTE 🔥 */}
                            {!isEffectivelyReadOnly && (
                                <Button 
                                    type="button" 
@@ -1768,6 +1765,97 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       )}
 
+      {/* 🔥 MODAL DE ABONOS (RESTAURADO) 🔥 */}
+      {isAbonoModalOpen && (
+        <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4">
+          <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
+            <div className="bg-green-600 text-white px-6 py-4 flex justify-between items-center">
+                <h2 className="text-xl font-bold flex items-center gap-2"><DollarSign className="h-6 w-6"/> {abonoFormData.nota === 'Liquidación de saldo final' ? 'Liquidar Saldo' : 'Añadir Abono'}</h2>
+                <button type="button" onClick={() => setIsAbonoModalOpen(false)} className="hover:bg-green-700 p-1 rounded-full transition-colors"><X className="h-5 w-5"/></button>
+            </div>
+
+            <div className="p-6 bg-slate-50 border-b border-slate-200 flex justify-between items-center">
+                <div>
+                    <div className="text-sm font-bold text-slate-500 uppercase">Cliente</div>
+                    <div className="font-bold text-slate-800 uppercase">{formData.cliente || 'Cliente General'}</div>
+                </div>
+                <div className="text-right">
+                    <div className="text-xs font-bold text-slate-500 uppercase">Saldo Pendiente</div>
+                    <div className="text-2xl font-black text-red-600">${financials.saldoPendiente.toFixed(2)}</div>
+                </div>
+            </div>
+
+            <div className="p-6 space-y-5 bg-white">
+                <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><DollarSign className="h-3 w-3"/> Monto a Cobrar</label>
+                        <div className="relative">
+                            <span className="absolute left-3 top-2.5 font-bold text-slate-400">$</span>
+                            <input type="number" step="0.01" min="0.01" max={financials.saldoPendiente.toFixed(2)} className="w-full pl-7 pr-3 py-2 border border-green-300 rounded-md focus:ring-2 focus:ring-green-500 outline-none font-bold text-green-700 bg-green-50 text-lg" value={abonoFormData.monto} onChange={e => setAbonoFormData({...abonoFormData, monto: e.target.value})} placeholder="0.00" />
+                        </div>
+                    </div>
+
+                    <div className="space-y-1.5">
+                        <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><CalendarIcon className="h-3 w-3"/> Fecha</label>
+                        <input type="date" className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm font-medium" value={abonoFormData.fecha} onChange={e => setAbonoFormData({...abonoFormData, fecha: e.target.value})} />
+                    </div>
+                </div>
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><CreditCard className="h-3 w-3"/> Método de Pago</label>
+                    <select className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm bg-white font-medium" value={abonoFormData.metodoPago} onChange={e => setAbonoFormData({...abonoFormData, metodoPago: e.target.value})}>
+                        {PAYMENT_METHODS.map(m => <option key={m} value={m}>{m}</option>)}
+                    </select>
+                </div>
+
+                {requiresComprobante(abonoFormData.metodoPago) && (
+                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                        <label className="text-xs font-bold text-blue-600 uppercase">N° Referencia / Lote</label>
+                        <input type="text" className="w-full px-3 py-2 border border-blue-200 bg-blue-50 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={abonoFormData.referencia} onChange={e => setAbonoFormData({...abonoFormData, referencia: e.target.value})} placeholder="Opcional..." />
+                    </div>
+                )}
+
+                {requiresComprobante(abonoFormData.metodoPago) && (
+                    <div className="space-y-1.5 animate-in fade-in slide-in-from-top-1">
+                        <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1">
+                            <ImageIcon className="h-3 w-3"/> Comprobante (Opcional)
+                        </label>
+                        <div className="border border-slate-300 p-2 rounded-md bg-slate-50 flex flex-wrap gap-2 items-center">
+                            {abonoComprobantes.map((img, i) => (
+                                <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm">
+                                    <img src={img.url} className="w-full h-full object-cover" alt="Comprobante" />
+                                    <button type="button" onClick={() => setAbonoComprobantes(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                        <X className="h-3 w-3" />
+                                    </button>
+                                </div>
+                            ))}
+                            {isProcessingAbonoImages && <Loader2 className="w-4 h-4 animate-spin text-blue-500 mx-2" />}
+                            {!isProcessingAbonoImages && (
+                                <div {...getRootPropsAbono()} className="cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded px-2 flex items-center justify-center gap-1 text-[10px] font-bold border border-emerald-200 transition-colors h-12 shadow-sm">
+                                    <input {...getInputPropsAbono()} />
+                                    <Plus className="h-3 w-3" /> {abonoComprobantes.length === 0 ? 'Adjuntar' : 'Añadir'}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                <div className="space-y-1.5">
+                    <label className="text-xs font-bold text-slate-600 uppercase flex items-center gap-1"><FileText className="h-3 w-3"/> Nota / Observación</label>
+                    <input type="text" className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none text-sm" value={abonoFormData.nota} onChange={e => setAbonoFormData({...abonoFormData, nota: e.target.value})} placeholder="Ej: Pago final..." />
+                </div>
+
+                <div className="pt-4 border-t border-slate-200 flex justify-end gap-3">
+                    <Button type="button" variant="outline" onClick={() => setIsAbonoModalOpen(false)}>Cancelar</Button>
+                    <Button type="button" onClick={handleSaveLocalAbono} disabled={!abonoFormData.monto} className="bg-green-600 hover:bg-green-700 text-white font-bold gap-2">
+                        <Save className="h-4 w-4"/> Confirmar Cobro
+                    </Button>
+                </div>
+            </div>
+          </div>
+        </div>
+      )}
+
       {isCatalogOpen && (
         <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
             <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
@@ -1805,6 +1893,44 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             </div>
         </div>
       )}
+
+      {/* 🔥 MODAL DE ANULACIÓN (RESTAURADO) 🔥 */}
+      <AlertDialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="text-red-600 flex items-center gap-2">
+               <Ban className="h-5 w-5" /> Anular Orden #{getDisplayedOrderNumber()}
+            </AlertDialogTitle>
+            <AlertDialogDescription>
+              ¿Está seguro de que desea anular esta orden? Una vez anulada no se podrá recuperar ni procesar.
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          
+          <div className="my-4">
+             <label className="text-sm font-bold text-slate-700 mb-2 block">Motivo de la anulación *</label>
+             <textarea 
+                className="w-full border border-slate-300 rounded-md p-3 text-sm focus:border-red-500 focus:ring-1 focus:ring-red-500 outline-none resize-none"
+                rows="3"
+                placeholder="Ej: El cliente canceló el proyecto, error en datos..."
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                autoFocus
+             />
+          </div>
+
+          <AlertDialogFooter>
+            <AlertDialogCancel onClick={() => { setIsCancelModalOpen(false); setCancelReason(''); }}>Volver</AlertDialogCancel>
+            <AlertDialogAction 
+                onClick={handleCancelOrder} 
+                disabled={loading || !cancelReason.trim()}
+                className="bg-red-600 hover:bg-red-700 text-white disabled:opacity-50"
+            >
+                {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : 'Confirmar Anulación'}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
+
     </motion.div>
   );
 };
