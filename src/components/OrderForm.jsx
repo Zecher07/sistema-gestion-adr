@@ -126,7 +126,8 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
     );
 };
 
-const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients }) => {
+// 🔥 AQUÍ AGREGAMOS onCreateClient EN LAS PROPIEDADES 🔥
+const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients, onCreateClient }) => {
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
   
@@ -147,7 +148,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const newClientInitialData = useMemo(() => {
       return showNewClientModal ? { nombre: searchTerm } : null;
-  }, [showNewClientModal]);
+  }, [showNewClientModal, searchTerm]);
 
   const [isCatalogOpen, setIsCatalogOpen] = useState(false);
   const [catalogItems, setCatalogItems] = useState([]);
@@ -177,7 +178,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
-  // 🔥 FUNCIÓN DE REDONDEO ESTRICTO A 0.50 HACIA ARRIBA 🔥
   const roundUpToHalf = (num) => Math.ceil(num * 2) / 2;
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
@@ -732,13 +732,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     setIsSearching(false);
   };
 
+  // 🔥 EVENTO PARA CREACIÓN CORRECTA DE CLIENTE 🔥
   const handleNewClientCreated = (newClient) => {
-    const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
-    if(clientData) {
-        setLocalClients([clientData, ...localClients]);
-        handleSelectClient(clientData);
-        setShowNewClientModal(false);
-        if(onReloadClients) onReloadClients();
+    setShowNewClientModal(false);
+    if(onReloadClients) onReloadClients();
+    
+    if (newClient) {
+        const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
+        if(clientData && clientData.id) {
+            setLocalClients([clientData, ...localClients]);
+            handleSelectClient(clientData);
+        }
     }
   };
 
@@ -1190,7 +1194,23 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                <Search className="absolute left-2 top-1.5 h-4 w-4 text-slate-400" />
                                {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
                            </div>
-                           {!isEffectivelyReadOnly && <Button type="button" size="sm" variant="outline" onClick={()=>setShowNewClientModal(true)} className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap">+ Cliente</Button>}
+                           
+                           {/* 🔥 BOTON + CLIENTE CONECTADO GLOBALMENTE 🔥 */}
+                           {!isEffectivelyReadOnly && (
+                               <Button 
+                                   type="button" 
+                                   size="sm" 
+                                   variant="outline" 
+                                   onClick={(e) => {
+                                       e.preventDefault();
+                                       if (onCreateClient) onCreateClient();
+                                       else setShowNewClientModal(true);
+                                   }} 
+                                   className="h-7 text-xs px-2 border-blue-400 text-blue-600 hover:bg-blue-50 whitespace-nowrap"
+                               >
+                                   + Cliente
+                               </Button>
+                           )}
                        </div>
 
                        {formData.clienteId && (
@@ -1273,7 +1293,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         const areaIndividual = (b / 100) * (a / 100);
                         const areaTotalCalculada = areaIndividual * q;
                         
-                        // Obtenemos el precio mínimo (ya sea el del catálogo o el modificado a mano)
                         const minCatalogo = Number(row.precio_minimo) > 0 ? Number(row.precio_minimo) : getPriceForQty(1, row, formData.esMayorista);
                         const PRECIO_MINIMO_ITEM = row.precioMinimoManual !== undefined && row.precioMinimoManual !== '' 
                             ? parseFloat(row.precioMinimoManual) 
@@ -1727,7 +1746,28 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
       </div>
 
-      {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}
+      {/* 🔥 MODALES INTERNOS 🔥 */}
+      {showNewClientModal && (
+        <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
+            <div className="bg-white w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95">
+                <div className="flex justify-between items-center p-4 border-b bg-slate-50">
+                    <h3 className="font-bold text-lg text-slate-800">Registrar Nuevo Cliente</h3>
+                    <Button type="button" size="icon" variant="ghost" onClick={() => setShowNewClientModal(false)}>
+                        <X className="h-5 w-5 text-slate-500" />
+                    </Button>
+                </div>
+                <div className="flex-1 overflow-y-auto p-4 bg-white">
+                    <ClientForm 
+                        user={currentUser} 
+                        onCancel={() => setShowNewClientModal(false)} 
+                        onSuccess={handleNewClientCreated} 
+                        clienteAEditar={newClientInitialData} 
+                    />
+                </div>
+            </div>
+        </div>
+      )}
+
       {isCatalogOpen && (
         <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
             <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
