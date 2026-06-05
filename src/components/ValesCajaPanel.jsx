@@ -8,6 +8,12 @@ import { Card, CardContent } from '@/components/ui/card';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
 
+// 🔥 FUNCIÓN QUE OBLIGA AL SISTEMA A USAR LA HORA LOCAL DE ECUADOR 🔥
+const getLocalDate = () => {
+    const d = new Date();
+    return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+};
+
 const ValesCajaPanel = ({ user }) => {
   const { toast } = useToast();
   const [vales, setVales] = useState([]);
@@ -22,11 +28,11 @@ const ValesCajaPanel = ({ user }) => {
   const isAdmin = user?.role === 'Administrador';
 
   const [formData, setFormData] = useState({
-    fecha: new Date().toISOString().split('T')[0],
+    fecha: getLocalDate(), // Aplicado aquí
     vendedor: user?.name || '',
     concepto: '',
     monto: '',
-    recibido_por: '' // 🔥 Nuevo campo
+    recibido_por: '' 
   });
 
   useEffect(() => {
@@ -125,7 +131,6 @@ const ValesCajaPanel = ({ user }) => {
           });
       }
 
-      // 🔥 CORRECCIÓN: Restar vales aprobados que estaban flotantes 🔥
       const { data: valesAprobados } = await supabase.from('vales_caja')
           .select('id, monto, fecha').eq('vendedor', vendedorNombre).eq('status', 'APROBADO')
           .gt('fecha', lastDate).lte('fecha', fechaStr);
@@ -158,11 +163,11 @@ const ValesCajaPanel = ({ user }) => {
               vendedor: vale.vendedor,
               concepto: vale.concepto,
               monto: vale.monto,
-              recibido_por: vale.recibido_por || '' // 🔥 Nuevo campo
+              recibido_por: vale.recibido_por || '' 
           });
       } else {
           setEditingVale(null);
-          setFormData({ fecha: new Date().toISOString().split('T')[0], vendedor: user?.name || '', concepto: '', monto: '', recibido_por: '' });
+          setFormData({ fecha: getLocalDate(), vendedor: user?.name || '', concepto: '', monto: '', recibido_por: '' }); // Aplicado aquí
       }
       setIsModalOpen(true);
   };
@@ -397,7 +402,7 @@ const ValesCajaPanel = ({ user }) => {
                     <div className="p-6 space-y-4">
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Fecha</label>
-                            <Input type="date" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} disabled={!isAdmin} className="bg-slate-50" />
+                            <Input type="date" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} disabled={!isAdmin} className={!isAdmin ? "bg-slate-50 cursor-not-allowed" : ""} />
                         </div>
                         
                         <div>

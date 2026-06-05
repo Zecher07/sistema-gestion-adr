@@ -24,6 +24,12 @@ import {
 } from "@/components/ui/alert-dialog";
 import { getValidSellers } from '@/lib/utils';
 
+// 🔥 FUNCIÓN QUE OBLIGA AL SISTEMA A USAR LA HORA LOCAL DE ECUADOR 🔥
+const getLocalDate = () => {
+    const d = new Date();
+    return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+};
+
 const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Cheque', 'Depósito', 'Tarjeta', 'Crédito', 'No aplica'];
 
 const ORDER_TYPES = [
@@ -170,14 +176,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   
   const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
   const [abonoFormData, setAbonoFormData] = useState({
-      monto: '', metodoPago: 'Efectivo', referencia: '', nota: '', fecha: new Date().toISOString().split('T')[0]
+      monto: '', metodoPago: 'Efectivo', referencia: '', nota: '', fecha: getLocalDate() // Aplicado aquí
   });
   const [abonoComprobantes, setAbonoComprobantes] = useState([]);
   const [isProcessingAbonoImages, setIsProcessingAbonoImages] = useState(false);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
-  // 🔥 FUNCIÓN DE REDONDEO ESTRICTO A 0.50 HACIA ARRIBA 🔥
   const roundUpToHalf = (num) => Math.ceil(num * 2) / 2;
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
@@ -608,6 +613,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         const newProducts = [...prev.productos];
         let item = { ...newProducts[index], [field]: value };
         
+        // 🔥 Si el usuario escribe manualmente en el Total, respetamos su escritura 🔥
         if (field === 'total') {
             item.total = value; 
             newProducts[index] = item; 
@@ -849,7 +855,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           metodoPago: 'Efectivo', 
           referencia: '', 
           nota: isFullBalance ? 'Liquidación de saldo final' : '', 
-          fecha: new Date().toISOString().split('T')[0] 
+          fecha: getLocalDate() // Aplicado aquí
       });
       setAbonoComprobantes([]);
       setIsAbonoModalOpen(true);
@@ -1193,6 +1199,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
                            </div>
                            
+                           {/* 🔥 BOTON + CLIENTE CONECTADO GLOBALMENTE 🔥 */}
                            {!isEffectivelyReadOnly && (
                                <Button 
                                    type="button" 
@@ -1290,6 +1297,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         const areaIndividual = (b / 100) * (a / 100);
                         const areaTotalCalculada = areaIndividual * q;
                         
+                        // Obtenemos el precio mínimo (ya sea el del catálogo o el modificado a mano)
                         const minCatalogo = Number(row.precio_minimo) > 0 ? Number(row.precio_minimo) : getPriceForQty(1, row, formData.esMayorista);
                         const PRECIO_MINIMO_ITEM = row.precioMinimoManual !== undefined && row.precioMinimoManual !== '' 
                             ? parseFloat(row.precioMinimoManual) 
@@ -1743,7 +1751,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
       </div>
 
-      {/* 🔥 MODALES INTERNOS 🔥 */}
+      {/* 🔥 MODALES INTERNOS (RESTAURADOS) 🔥 */}
+      
       {showNewClientModal && (
         <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
             <div className="bg-white w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95">
@@ -1765,7 +1774,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       )}
 
-      {/* 🔥 MODAL DE ABONOS (RESTAURADO) 🔥 */}
       {isAbonoModalOpen && (
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/60 p-4">
           <div className="bg-white rounded-xl shadow-2xl w-full max-w-md overflow-hidden animate-in zoom-in-95 duration-200">
@@ -1894,7 +1902,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       )}
 
-      {/* 🔥 MODAL DE ANULACIÓN (RESTAURADO) 🔥 */}
       <AlertDialog open={isCancelModalOpen} onOpenChange={setIsCancelModalOpen}>
         <AlertDialogContent>
           <AlertDialogHeader>
