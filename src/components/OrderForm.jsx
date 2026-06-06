@@ -24,7 +24,6 @@ import {
 } from "@/components/ui/alert-dialog";
 import { getValidSellers } from '@/lib/utils';
 
-// 🔥 FUNCIÓN QUE OBLIGA AL SISTEMA A USAR LA HORA LOCAL DE ECUADOR 🔥
 const getLocalDate = () => {
     const d = new Date();
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
@@ -73,7 +72,7 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || isReadOnly });
   
     return (
-      <div className="border border-slate-300 p-4 rounded-sm bg-slate-50/50">
+      <div className="border border-slate-300 p-4 rounded-sm bg-slate-50/50 mt-2">
          <div className="min-h-[100px] mb-3 flex flex-wrap gap-4">
             {images.map((img, i) => (
                <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all">
@@ -136,7 +135,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
   
-  // BLOQUEO ESTRICTO DE ORDEN
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
   const isEditMode = !!(initialData && initialData.id);
@@ -176,7 +174,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   
   const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
   const [abonoFormData, setAbonoFormData] = useState({
-      monto: '', metodoPago: 'Efectivo', referencia: '', nota: '', fecha: getLocalDate() // Aplicado aquí
+      monto: '', metodoPago: 'Efectivo', referencia: '', nota: '', fecha: getLocalDate()
   });
   const [abonoComprobantes, setAbonoComprobantes] = useState([]);
   const [isProcessingAbonoImages, setIsProcessingAbonoImages] = useState(false);
@@ -201,10 +199,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }), 
+    productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
-    descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '',
+    descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
     esMayorista: false
   });
 
@@ -333,6 +331,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
+        observaciones: initialData.observaciones || finData.observaciones || '', 
         descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
         esMayorista: initialData.esMayorista || initialData.es_mayorista || false
       }));
@@ -379,7 +378,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }) }));
     }
   }, []);
 
@@ -506,6 +505,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         computedPrice = getPriceForQty(minQty, item, formData.esMayorista);
     }
 
+    // 🔥 LAS OBSERVACIONES DEL CATÁLOGO YA NO SE PEGAN A LA DESCRIPCIÓN 🔥
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
 
@@ -521,7 +521,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             venta_minima: minQty > 0 ? minQty : 1,
             base: '', altura: '',
             descripcion: finalDesc,
-            observaciones: item.observaciones || '', 
             precioUnitario: computedPrice || '', 
             precioBaseOriginal: Number(item.precio) || 0,
             precios_escalonados: item.precios_escalonados || [],
@@ -535,10 +534,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
         if (emptyIndex !== -1) {
             newProducts[emptyIndex] = newProduct;
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
         } else {
             newProducts.push(newProduct);
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+            newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
         }
         return { ...prev, productos: newProducts };
     });
@@ -575,6 +574,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           computedPrice = getPriceForQty(minQty, product, formData.esMayorista);
       }
 
+      // 🔥 LAS OBSERVACIONES DEL CATÁLOGO YA NO SE PEGAN A LA DESCRIPCIÓN 🔥
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
 
@@ -587,7 +587,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           newProducts[index] = { 
               ...newProducts[index], 
               descripcion: finalDesc,
-              observaciones: product.observaciones || '', 
               precioUnitario: computedPrice || '',
               precioBaseOriginal: Number(product.precio) || 0,
               precios_escalonados: product.precios_escalonados || [],
@@ -601,7 +600,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               precioMinimoManual: product.es_por_metro ? minP : '',
               total: initialTotal
           };
-          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
@@ -613,7 +612,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         const newProducts = [...prev.productos];
         let item = { ...newProducts[index], [field]: value };
         
-        // 🔥 Si el usuario escribe manualmente en el Total, respetamos su escritura 🔥
         if (field === 'total') {
             item.total = value; 
             newProducts[index] = item; 
@@ -680,7 +678,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+            newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
         }
 
         newProducts[index] = item;
@@ -715,7 +713,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const addProduct = () => {
     setFormData(prev => ({
         ...prev,
-        productos: [...prev.productos, { descripcion: '', observaciones: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }]
+        productos: [...prev.productos, { descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }]
     }));
   };
 
@@ -855,7 +853,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           metodoPago: 'Efectivo', 
           referencia: '', 
           nota: isFullBalance ? 'Liquidación de saldo final' : '', 
-          fecha: getLocalDate() // Aplicado aquí
+          fecha: getLocalDate() 
       });
       setAbonoComprobantes([]);
       setIsAbonoModalOpen(true);
@@ -1029,7 +1027,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             tipoOrden: formData.tipoOrden, 
             fecha_entrega: formData.fechaEntrega || null,
             vendedor: formData.vendedor, 
-            notas: formData.notas,
+            notas: formData.notas, 
             prioridad: 'Normal',
             origenProformaInfo: formData.origenProformaInfo,
             productos: processedProducts, 
@@ -1046,7 +1044,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 formaPagoSaldo: formData.formaPagoSaldo,
                 creditoVenceSaldo: formData.creditoVenceSaldo,
                 notaSaldo: formData.notaSaldo,
-                aplicarIva: formData.aplicarIva
+                aplicarIva: formData.aplicarIva,
+                observaciones: formData.observaciones 
             },
             anticipo: formData.anticipo,
             retencion: formData.retencion,
@@ -1297,7 +1296,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         const areaIndividual = (b / 100) * (a / 100);
                         const areaTotalCalculada = areaIndividual * q;
                         
-                        // Obtenemos el precio mínimo (ya sea el del catálogo o el modificado a mano)
                         const minCatalogo = Number(row.precio_minimo) > 0 ? Number(row.precio_minimo) : getPriceForQty(1, row, formData.esMayorista);
                         const PRECIO_MINIMO_ITEM = row.precioMinimoManual !== undefined && row.precioMinimoManual !== '' 
                             ? parseFloat(row.precioMinimoManual) 
@@ -1311,6 +1309,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              <td className="py-2 px-2 text-slate-400 text-xs text-center align-top pt-4">{idx + 1}</td>
                              
                              <td className="py-2 px-2 relative align-top pt-3">
+                                {/* 🔥 QUITAMOS EL RECUADRO DE OBSERVACIONES AQUÍ 🔥 */}
                                 <textarea 
                                     className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
                                     placeholder={idx === formData.productos.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
@@ -1320,17 +1319,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                                     readOnly={isEffectivelyReadOnly}
                                 />
-                                
-                                <div className="mt-2">
-                                    <label className="text-[10px] font-bold text-slate-500 block mb-1">Observaciones (Sale en impresión):</label>
-                                    <textarea 
-                                        className="w-full border border-slate-200 rounded p-2 text-[11px] outline-none focus:border-blue-500 resize-y min-h-[40px] bg-slate-50" 
-                                        placeholder="Ej: Solo diseño, ojales cada metro..." 
-                                        value={row.observaciones || ''} 
-                                        onChange={(e) => updateProduct(idx, 'observaciones', e.target.value)}
-                                        readOnly={isEffectivelyReadOnly}
-                                    />
-                                </div>
                                 
                                 {row.es_por_metro && (
                                     <div className="flex flex-wrap items-center gap-2 mt-2 bg-purple-50 p-2 rounded-md border border-purple-200">
@@ -1428,15 +1416,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                      <span className="mr-1">$</span>
                                      <Input 
                                          type="number" step="0.01" 
-                                         className="w-20 text-right border border-slate-300 rounded focus:ring-0 text-sm p-1 font-bold h-8 text-slate-800 bg-white" 
+                                         className={`w-20 text-right focus:ring-0 text-sm p-1 font-bold h-8 text-slate-800 ${row.es_por_metro && !isEffectivelyReadOnly ? 'border border-slate-300 rounded bg-white' : 'border-none bg-transparent cursor-not-allowed'}`} 
                                          value={row.total !== undefined ? row.total : ''} 
                                          onChange={e => updateProduct(idx, 'total', e.target.value)} 
-                                         readOnly={isEffectivelyReadOnly}
+                                         readOnly={isEffectivelyReadOnly || !row.es_por_metro}
                                      />
                                  </div>
-                                 <div className="text-[9px] text-slate-400 font-medium mt-1 text-right italic" title="Puedes modificar este valor a mano">
-                                     Editable
-                                 </div>
+                                 {row.es_por_metro && !isEffectivelyReadOnly && (
+                                     <div className="text-[9px] text-slate-400 font-medium mt-1 text-right italic" title="Puedes modificar este valor a mano">
+                                         Editable
+                                     </div>
+                                 )}
                              </td>
                              <td className="py-2 px-1 text-center align-top pt-4">
                                  {!isEffectivelyReadOnly && (row.nombre || row.descripcion) && (
@@ -1721,8 +1711,35 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              </div>
           </div>
 
-          <div className="space-y-2 pt-2 border-t border-slate-200">
-             <div className="text-xs text-slate-500 italic">Arte/Diseño</div>
+          {/* 🔥 ZONA DE OBSERVACIONES Y DISEÑO 🔥 */}
+          <div className="space-y-4 pt-4 border-t border-slate-200">
+             <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Arte/Diseño y Anotaciones Finales</div>
+             
+             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                 <div>
+                     <label className="text-xs font-bold text-slate-700 block mb-1">Observaciones Generales (Visible para el Cliente):</label>
+                     <textarea 
+                        className="w-full border border-slate-300 rounded p-2 text-sm h-24 resize-none focus:border-blue-500 outline-none bg-blue-50/30" 
+                        value={formData.observaciones} 
+                        onChange={e => setFormData({...formData, observaciones: e.target.value})} 
+                        placeholder="Condiciones de entrega, aclaraciones del diseño, detalles para el cliente..." 
+                        readOnly={isEffectivelyReadOnly} 
+                     />
+                 </div>
+                 <div>
+                     <label className="text-xs font-bold text-slate-700 mb-1 flex items-center gap-1">
+                        <Lock className="h-3 w-3 text-slate-500"/> Notas Internas (Solo Sistema):
+                     </label>
+                     <textarea 
+                        className="w-full border border-slate-300 bg-amber-50 rounded p-2 text-sm h-24 resize-none focus:border-blue-500 outline-none" 
+                        value={formData.notas} 
+                        onChange={e => setFormData({...formData, notas: e.target.value})} 
+                        placeholder="Instrucciones para producción, márgenes de ganancia..." 
+                        readOnly={isEffectivelyReadOnly} 
+                     />
+                 </div>
+             </div>
+
              <ImageGallery 
                 images={formData.imagenes} 
                 isReadOnly={isEffectivelyReadOnly} 
@@ -1730,7 +1747,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
              />
-             <div className="pt-2"><label className="text-xs font-bold text-slate-700 block mb-1">Notas Internas (No salen en impresión):</label><textarea className="w-full border border-slate-300 rounded p-2 text-sm h-20 resize-none focus:border-blue-500 outline-none" value={formData.notas} onChange={e => setFormData({...formData, notas: e.target.value})} readOnly={isEffectivelyReadOnly} /></div>
           </div>
         </form>
       </div>
@@ -1751,7 +1767,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
       </div>
 
-      {/* 🔥 MODALES INTERNOS (RESTAURADOS) 🔥 */}
+      {/* 🔥 MODALES INTERNOS 🔥 */}
       
       {showNewClientModal && (
         <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
