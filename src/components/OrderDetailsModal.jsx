@@ -1,11 +1,15 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
-import { motion, AnimatePresence } from 'framer-motion';
-import { X, Printer, Image as ImageIcon, ArrowRightCircle, ArrowLeftCircle, Archive, Edit2, FileText, Ban, Play, CheckCircle2, Search, Loader2, DollarSign, Plus, Trash2 } from 'lucide-react';
-import { Button } from '@/components/ui/button';
-import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
-import { useToast } from '@/components/ui/use-toast';
+import React, { useRef, useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { useDropzone } from 'react-dropzone';
+import { format } from 'date-fns';
+import { motion, AnimatePresence } from 'framer-motion';
+import { 
+  X, Printer, CheckCircle, FileText, Image as ImageIcon, CreditCard, DollarSign, Calendar as CalendarIcon, 
+  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2
+} from 'lucide-react';
+import { Button } from '@/components/ui/button';
+import { useToast } from '@/components/ui/use-toast';
+import { Checkbox } from '@/components/ui/checkbox';
+import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -16,30 +20,6 @@ const getPrintDesc = (prod) => {
         return text.split('[Nota:')[0].trim();
     }
     return text.trim();
-};
-
-const compressImage = async (file) => {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (event) => {
-            const img = new Image();
-            img.src = event.target.result;
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 1024; 
-                let width = img.width;
-                let height = img.height;
-                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                resolve({ name: file.name, url: dataUrl });
-            };
-        };
-    });
 };
 
 const InlineComprobante = ({ items = [], onClickImage }) => {
@@ -119,8 +99,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
         
         try {
             if (!noMaterials && usedMaterials.length > 0) {
-                
-                // 🔥 FASE 1: LECTURA DE SEGURIDAD 🔥
                 const stockUpdates = [];
                 for (const mat of usedMaterials) {
                     const qtyToDeduct = Number(mat.cant_usada);
@@ -149,7 +127,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                     }
                 }
 
-                // 🔥 FASE 2: EJECUCIÓN SEGURA 🔥
                 for (const update of stockUpdates) {
                     const { error: updateErr } = await supabase.from('inventario').update({ cantidad: update.newQty }).eq('id', update.id);
                     if (updateErr) throw updateErr;
@@ -218,7 +195,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                           className="w-full text-xs pl-8 pr-2 py-1.5 border border-blue-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500 outline-none shadow-inner bg-white"
                                           value={searchTerm} onChange={e => handleSearch(e.target.value)} disabled={noMaterials}
                                        />
-                                       {/* 🔥 AQUÍ SE IMPLEMENTA EL BLOQUEO VISUAL Y DE CLIC PARA STOCK <= 0 🔥 */}
                                        {suggestions.length > 0 && (
                                            <div className="absolute z-20 w-full bg-white border border-slate-300 shadow-xl max-h-40 overflow-y-auto mt-1 rounded-md text-xs">
                                                {suggestions.map(s => {
@@ -296,7 +272,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
 
 const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductToggle, isTaskView, onAdvanceWorkflow, onRegressWorkflow, onArchiveOrder, onUpdateOrder, onGenerateInvoice, canEdit, onAbonoOrder }) => {
   const [previewImage, setPreviewImage] = useState(null);
-  const [printType, setPrintType] = useState('sri'); 
   const { toast } = useToast();
   const [localProducts, setLocalProducts] = useState([]);
   const [localVendedor, setLocalVendedor] = useState('');
@@ -308,8 +283,15 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
   const [loadingComprobantes, setLoadingComprobantes] = useState(false);
   
+  const printRef = useRef();
+
   const showFinancials = user?.role !== 'Producción'; 
   const isAdmin = user?.role === 'Administrador';
+  const isVendedor = user?.role === 'Vendedor';
+  const isProduccion = user?.role === 'Producción';
+  const canEditProductionStatus = isAdmin || isProduccion;
+  const isCancelled = order?.status === 'ANULADA';
+  const isArchived = order?.status === 'ARCHIVADA';
 
   useEffect(() => {
     if (order) {
@@ -364,13 +346,29 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
       return localProducts.every(p => p.estado_prod === 'FINALIZADO');
   }, [localProducts]);
 
-  const fin = order?.financials || { subtotal: 0, iva: 0, total: 0, saldo: 0, descuentoVal: 0 };
-  const totalVal = Number(fin.total) || 0;
-  const anticipoVal = Number(order?.anticipo) || 0;
-  const retencionVal = Number(order?.retencion) || 0;
-  const abonosTotal = (order?.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+  const rawFinancials = order?.financials || {};
+  let parsedFinancials = rawFinancials;
+  if (typeof rawFinancials === 'string') {
+      try { parsedFinancials = JSON.parse(rawFinancials); } catch (e) { parsedFinancials = {}; }
+  }
+
+  const fin = {
+      subtotal: Number(parsedFinancials.subtotal || 0),
+      iva: Number(parsedFinancials.iva || 0),
+      total: Number(parsedFinancials.total || order?.financials?.total || 0),
+      descuentoVal: Number(parsedFinancials.descuentoMonto || parsedFinancials.descuentoVal || parsedFinancials.descuento || 0),
+      ivaPercentage: Number(parsedFinancials.ivaPercentage || 15)
+  };
+
+  const anticipoVal = Number(order?.anticipo || 0);
+  const retencion = Number(order?.retencion || parsedFinancials.retencion || 0);
   
-  const saldoCalculado = Math.max(totalVal - anticipoVal - retencionVal - abonosTotal, 0);
+  const abonosArray = Array.isArray(order?.abonos) ? order.abonos : [];
+  const totalAbonos = abonosArray.reduce((acc, a) => acc + Number(a.monto), 0);
+  
+  const saldoCalculado = Math.max(fin.total - anticipoVal - retencion - totalAbonos, 0);
+  const saldoFinalReal = saldoCalculado;
+
   const isCredito = (order?.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order?.formaPagoSaldo || '').toLowerCase().includes('credito') || (order?.formaPagoAnticipo || '').toLowerCase().includes('crédito');
 
   const lockToContabilidad = order?.status === 'VENTAS POR RETIRAR' && !isCredito && saldoCalculado > 0 && !isAdmin;
@@ -389,8 +387,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
   if (!order) return null; 
 
-  const handlePrint = (type) => { 
-      setPrintType(type); 
+  const handlePrint = () => { 
       setTimeout(() => { window.print(); }, 100); 
   };
 
@@ -439,8 +436,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
   const formatOrderId = (id) => (order.orderNumber || order.order_number || id).toString().padStart(7, '0');
   
-  const isAnulada = order.status === 'ANULADA';
-  const isArchivada = order.status === 'ARCHIVADA';
   const isFinalizada = order.status === 'FINALIZADA';
   const canArchive = isAdmin && isFinalizada;
   
@@ -467,13 +462,28 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   };
   
   const workflowConfig = getWorkflowButtonConfig();
-  
-  const showWorkflowButton = !isAnulada && !isArchivada && (workflowConfig.nextStatus || (isAdmin && workflowConfig.prevStatus));
+  const showWorkflowButton = !isCancelled && !isArchived && (workflowConfig.nextStatus || (isAdmin && workflowConfig.prevStatus));
+
+  const getOrderStatusColor = (status) => {
+    switch (status) {
+      case 'VENTAS': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
+      case 'PRODUCCION': return 'bg-blue-100 text-blue-800 border-blue-300';
+      case 'VENTAS POR RETIRAR': return 'bg-purple-100 text-purple-800 border-purple-300';
+      case 'CONTABILIDAD': return 'bg-indigo-100 text-indigo-800 border-indigo-300';
+      case 'FINALIZADA': return 'bg-green-100 text-green-800 border-green-300';
+      case 'ENTREGADO': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
+      case 'ANULADA': return 'bg-red-100 text-red-800 border-red-300';
+      case 'ARCHIVADA': return 'bg-slate-200 text-slate-800 border-slate-300';
+      default: return 'bg-slate-100 text-slate-800 border-slate-300';
+    }
+  };
+
+  const observacionesPublicas = parsedFinancials.observaciones || order.observaciones || '';
 
   return (
     <>
         <div className="fixed inset-0 z-50 bg-white overflow-y-auto animate-in fade-in duration-200 flex flex-col print:hidden">
-            {isAnulada && (
+            {isCancelled && (
               <div className="fixed inset-0 z-0 flex items-center justify-center pointer-events-none overflow-hidden">
                 <div className="text-red-500/10 font-bold text-[15vw] rotate-[-30deg] border-[12px] border-red-500/10 px-20 py-10 uppercase whitespace-nowrap select-none">
                   ANULADA
@@ -495,11 +505,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 <div className="flex items-center gap-2 flex-wrap justify-end">
                     {canEdit && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2" onClick={() => onUpdateOrder && onUpdateOrder()}><Edit2 className="h-4 w-4" /> Editar Orden</Button>}
                     
-                    <div className="flex bg-slate-100 rounded-md p-1 border border-slate-200">
-                        <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-200 hover:text-amber-800 gap-2 font-bold" onClick={() => handlePrint('produccion')}>
-                            <Printer className="h-4 w-4" /> Prod
-                        </Button>
-                    </div>
+                    <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-100 bg-amber-50 gap-2 font-bold border border-amber-200" onClick={handlePrint}>
+                        <Printer className="h-4 w-4" /> Imprimir Orden
+                    </Button>
                     <Button size="sm" variant="outline" className="border-gray-300 text-gray-700 hover:bg-gray-50 gap-2 ml-1" onClick={onClose}><X className="h-4 w-4" /> Cerrar</Button>
                 </div>
             </div>
@@ -530,13 +538,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     </div>
 
                     <div className="space-y-4">
+                        <div className="flex items-center gap-2 mt-1 mb-4">
+                            <span className={`text-xs font-bold px-3 py-1 rounded-full border uppercase tracking-wider ${getOrderStatusColor(order.status)}`}>
+                                {order.status}
+                            </span>
+                        </div>
+
                         <div className="space-y-1">
                             <span className="font-bold text-slate-600 text-sm">Observaciones:</span>
-                            <div className="border border-green-200 rounded-md p-3 min-h-[60px] bg-white text-sm text-slate-700 w-full shadow-sm">{order.notas || <span className="text-slate-400 italic">Ninguna observación registrada.</span>}</div>
+                            <div className="border border-green-200 rounded-md p-3 min-h-[60px] bg-white text-sm text-slate-700 w-full shadow-sm whitespace-pre-wrap">{observacionesPublicas || <span className="text-slate-400 italic font-normal">Ninguna observación registrada.</span>}</div>
                         </div>
                         <div className="space-y-1">
                             <span className="font-bold text-slate-600 text-sm">Motivo Anulada:</span>
-                            <div className="border border-red-200 rounded-md p-3 min-h-[40px] bg-white text-sm text-red-600 font-medium w-full shadow-sm">{isAnulada ? (order.motivoAnulacion || "Orden Anulada") : <span className="text-slate-400 italic font-normal">-</span>}</div>
+                            <div className="border border-red-200 rounded-md p-3 min-h-[40px] bg-white text-sm text-red-600 font-medium w-full shadow-sm">{isCancelled ? (order.motivoAnulacion || "Orden Anulada") : <span className="text-slate-400 italic font-normal">-</span>}</div>
                         </div>
                     </div>
                 </div>
@@ -639,6 +653,16 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                         )}
                     </div>
                 )}
+                
+                {/* 🔥 NOTAS INTERNAS SISTEMA 🔥 */}
+                {order.notas && (
+                    <div className="mb-6">
+                        <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">Notas Internas (Solo Sistema)</h3>
+                        <div className="bg-amber-50 border border-amber-200 rounded-lg p-4 shadow-sm">
+                            <p className="text-sm text-amber-800 whitespace-pre-wrap font-medium leading-relaxed">{order.notas}</p>
+                        </div>
+                    </div>
+                )}
 
                 <hr className="border-gray-200 mb-8" />
 
@@ -651,14 +675,14 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                         </div>
                     ) : (
                         <div className="border-2 border-dashed border-slate-300 rounded-lg p-6 min-h-[200px] flex flex-wrap gap-4 items-center justify-center bg-slate-50">
-                           {localImages.length > 0 ? (
-                               localImages.map((img, index) => (
-                                   <div key={index} className="relative group cursor-pointer" onClick={() => setPreviewImage(img.url)}>
-                                       <img src={img.url} alt={img.name || `Arte ${index + 1}`} className="h-40 w-40 object-cover shadow-md rounded border border-slate-300 transition-transform hover:scale-105" />
-                                       <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center"><Search className="text-white h-6 w-6" /></div>
-                                   </div>
-                               ))
-                           ) : (<div className="flex flex-col items-center text-slate-400"><ImageIcon className="h-12 w-12 mb-2 opacity-50" /><span className="italic">Sin imágenes de referencia adjuntas en la orden.</span></div>)}
+                            {localImages.length > 0 ? (
+                                localImages.map((img, index) => (
+                                    <div key={index} className="relative group cursor-pointer" onClick={() => setPreviewImage(img.url)}>
+                                        <img src={img.url} alt={img.name || `Arte ${index + 1}`} className="h-40 w-40 object-cover shadow-md rounded border border-slate-300 transition-transform hover:scale-105" />
+                                        <div className="absolute inset-0 bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity rounded flex items-center justify-center"><Search className="text-white h-6 w-6" /></div>
+                                    </div>
+                                ))
+                            ) : (<div className="flex flex-col items-center text-slate-400"><ImageIcon className="h-12 w-12 mb-2 opacity-50" /><span className="italic">Sin imágenes de referencia adjuntas en la orden.</span></div>)}
                         </div>
                     )}
                 </div>
@@ -712,7 +736,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                                    if (!isTransfer && order.abonos) {
                                                        isTransfer = order.abonos.some(a => checkTransfer(a.metodoPago || a.metodo_pago));
                                                    }
-                                                                      
+                                                                                                     
                                                    if (isTransfer && (!comprobantesData.anticipo || comprobantesData.anticipo.length === 0) && (!comprobantesData.saldo || comprobantesData.saldo.length === 0) && Object.keys(comprobantesData.abonos || {}).length === 0) {
                                                        toast({title: "Comprobante Requerido", description: "Faltan subir fotos de transferencias, depósitos o cheques. Haga clic en Editar Orden para adjuntarlos.", variant: "destructive"});
                                                        setIsAdvancing(false);
@@ -754,6 +778,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
             </AnimatePresence>
         </div>
 
+        {/* 🔥 CONTENEDOR INVISIBLE DE IMPRESIÓN 🔥 */}
         <div id="modal-print-container" className="hidden print:block absolute top-0 left-0 w-full bg-white z-[10000] text-black" style={{ minHeight: '100vh', WebkitPrintColorAdjust: 'exact', printColorAdjust: 'exact' }}>
             <style>{`
                 @media print {
@@ -763,275 +788,129 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 }
             `}</style>
 
-            {printType === 'sri' && (
-                <div className="w-full max-w-[850px] mx-auto p-4 font-sans text-[11px] leading-snug text-black">
-                      <div className="grid grid-cols-2 gap-4 mb-4 w-full">
-                          <div className="w-full flex flex-col gap-2">
-                              <div className="h-28 w-full flex items-center justify-center rounded-xl mb-1 bg-white overflow-hidden p-2">
-                                  <img src="/logo.png" alt="Rótulos ADR" className="max-h-full max-w-full object-contain" />
-                              </div>
-                              <div className="border border-black rounded-xl p-3">
-                                  <div className="font-bold text-[13px] mb-1 uppercase">ADRCOMPANY SAS</div>
-                                  <div className="mb-1"><span className="font-bold">Dirección Matriz:</span> AV. ZENON MACIAS 306 Y CALLE LA MERCED • PLAYAS - GUAYAS - ECUADOR</div>
-                              </div>
-                          </div>
-
-                          <div className="w-full border border-black rounded-xl p-3">
-                              <div className="text-sm mb-1"><span className="font-bold">R.U.C.:</span> 0993397285001</div>
-                              <div className="text-lg font-bold my-2 tracking-widest">COMPROBANTE ORDEN</div>
-                              <div className="mb-2 text-[13px]"><span className="font-bold">No.</span> {formatOrderId(order.id)}</div>
-                              
-                              <div className="flex justify-between mb-4 mt-4">
-                                  <span className="font-bold">FECHA Y HORA DE EMISIÓN:</span>
-                                  <span>{formatDateFull(order.createdAt || order.created_at)}</span>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="border border-black rounded-xl p-3 mb-4 w-full">
-                          <div className="grid grid-cols-[2fr_1fr] gap-4 w-full">
-                              <div className="space-y-1">
-                                  <div><span className="font-bold">Razón Social / Nombres:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                                  <div><span className="font-bold">Identificación:</span> {order.ruc || order.cedula || order.cliente_identificacion || '9999999999999'}</div>
-                                  <div><span className="font-bold">Fecha:</span> {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
-                                  <div><span className="font-bold">Dirección:</span> {order.direccion || 'S/N'}</div>
-                              </div>
-                              <div className="space-y-1">
-                                  <div><span className="font-bold">Guía Remisión:</span></div>
-                                  <div><span className="font-bold">Ref/Proyecto:</span> <span className="uppercase">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                              </div>
-                          </div>
-                      </div>
-
-                      <div className="mb-4 w-full min-h-[150px]">
-                          <table className="w-full border-collapse border border-black">
-                              <thead>
-                                  <tr className="border-b border-black bg-gray-100">
-                                      <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
-                                      <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
-                                      <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
-                                  </tr>
-                              </thead>
-                              <tbody>
-                                  {(order.productos || []).map((prod, idx) => (
-                                      <tr key={idx} className="border-b border-black">
-                                          <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
-                                          <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
-                                          <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">{getPrintDesc(prod)}</td>
-                                          <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precio || prod.precioUnitario)}</td>
-                                          <td className="border-r border-black p-1.5 text-right">$0.00</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario)))}</td>
-                                      </tr>
-                                  ))}
-                              </tbody>
-                          </table>
-                      </div>
-
-                      <div className="grid grid-cols-3 gap-4 w-full items-start">
-                          <div className="col-span-2 flex flex-col gap-4 w-full">
-                              <div className="border border-black rounded-xl p-0 overflow-hidden w-full">
-                                  <div className="border-b border-black p-2 bg-gray-100 font-bold">Información Adicional</div>
-                                  <div className="p-3 grid grid-cols-[90px_1fr] gap-x-2 gap-y-1.5">
-                                      <span className="font-bold">Email:</span> <span>imprenta_milena@hotmail.com</span>
-                                      <span className="font-bold">Teléfono:</span> <span>+593 98 265 7066</span>
-                                      <span className="font-bold">Vendedor:</span> <span className="uppercase">{order.vendedor || 'Sistema'}</span>
-                                      <span className="font-bold">F. Entrega:</span> <span>{order.fechaEntrega || order.fecha_entrega ? (order.fechaEntrega || order.fecha_entrega).split('T')[0] : 'Por Definir'}</span>
-                                      <span className="font-bold">N° Proforma:</span> <span>{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span>
-                                      <span className="font-bold">N° Factura:</span> <span>{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span>
-                                      <span className="font-bold">F. Finalizada:</span> <span>{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PROCESO'}</span>
-
-                                      {order.notas && (
-                                          <>
-                                              <span className="font-bold mt-1">Notas:</span>
-                                              <span className="whitespace-pre-line mt-1">{order.notas}</span>
-                                          </>
-                                      )}
-                                  </div>
-                              </div>
-
-                              <div className="border border-black rounded-xl overflow-hidden w-full">
-                                  <table className="w-full text-left border-collapse">
-                                      <thead>
-                                          <tr className="border-b border-black bg-gray-100">
-                                              <th className="p-2 font-bold border-r border-black w-[70%]">Formas de Pago</th>
-                                              <th className="p-2 font-bold text-right w-[30%]">Valor</th>
-                                      </tr>
-                                      </thead>
-                                      <tbody>
-                                          <tr className="border-b border-black">
-                                              <td className="p-2 border-r border-black uppercase text-[10px]">ANTICIPO - {order.formaPagoAnticipo || order.forma_pago_anticipo || 'EFECTIVO'}</td>
-                                              <td className="p-2 text-right font-bold">{formatCurrency(order.anticipo || 0)}</td>
-                                          </tr>
-                                          {order.abonos && order.abonos.map((a, i) => (
-                                              <tr key={i} className="border-b border-black text-red-700">
-                                                  <td className="p-2 border-r border-black uppercase text-[10px]">ABONO {i+1} - {a.metodoPago || a.metodo_pago}</td>
-                                                  <td className="p-2 text-right font-bold">{formatCurrency(a.monto)}</td>
-                                              </tr>
-                                          ))}
-                                          <tr>
-                                              <td className="p-2 border-r border-black uppercase text-[10px] text-red-700">SALDO PENDIENTE - {order.formaPagoSaldo || 'EFECTIVO'}</td>
-                                              <td className="p-2 text-right font-bold text-red-600">{formatCurrency(saldoCalculado)}</td>
-                                          </tr>
-                                      </tbody>
-                                  </table>
-                              </div>
-                          </div>
-
-                          <div className="col-span-1 w-full">
-                              <table className="w-full border-collapse border border-black text-[11px]">
-                                  <tbody>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">SUBTOTAL {fin.ivaPercentage || 15}%</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
-                                      </tr>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">SUBTOTAL 0%</td>
-                                          <td className="p-1.5 text-right">$0.00</td>
-                                      </tr>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(fin.subtotal || 0)}</td>
-                                      </tr>
-                                      <tr className="border-b border-black">
-                                          <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
-                                          <td className="p-1.5 text-right">{formatCurrency(fin.descuentoVal || 0)}</td>
-                                      </tr>
-                                      <tr className="border-b border-black bg-gray-50">
-                                          <td className="p-1.5 border-r border-black font-bold">IVA {fin.ivaPercentage || 15}%</td>
-                                          <td className="p-1.5 text-right font-bold">{formatCurrency(fin.iva || 0)}</td>
-                                      </tr>
-                                      <tr>
-                                          <td className="p-1.5 border-r border-black font-bold text-sm">VALOR TOTAL</td>
-                                          <td className="p-1.5 text-right font-bold text-sm">{formatCurrency(fin.total || 0)}</td>
-                                      </tr>
-                                  </tbody>
-                              </table>
-                          </div>
-                      </div>
+            <div className="w-full max-w-[850px] mx-auto p-4 md:p-6 font-sans text-black">
+                <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-4">
+                    <div className="w-40">
+                         <img src="/logo.png" alt="Logo" className="max-w-full h-auto object-contain" />
+                    </div>
+                    <div className="text-right">
+                         <h1 className="text-xl font-black tracking-widest text-slate-900 mb-1 uppercase">Orden de Producción</h1>
+                         <div className="text-lg font-bold text-slate-800">N° ORDEN: {formatOrderId(order.id)}</div>
+                         <div className="text-[11px] font-bold text-slate-700 mt-1">FECHA INGRESO: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
+                    </div>
                 </div>
-            )}
 
-            {printType === 'produccion' && (
-                <div className="w-full max-w-[850px] mx-auto p-4 md:p-6 font-sans text-black">
-                    <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-4">
-                        <div className="w-40">
-                             <img src="/logo.png" alt="Logo" className="max-w-full h-auto object-contain" />
-                        </div>
-                        <div className="text-right">
-                             <h1 className="text-xl font-black tracking-widest text-slate-900 mb-1 uppercase">Orden de Producción</h1>
-                             <div className="text-lg font-bold text-slate-800">N° ORDEN: {formatOrderId(order.id)}</div>
-                             <div className="text-[11px] font-bold text-slate-700 mt-1">FECHA INGRESO: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
-                        </div>
+                <div className="border-2 border-black rounded-lg p-3 mb-6 bg-gray-50">
+                    <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
+                         <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
+                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
+                         
+                         <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
+                         <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
+                         
+                         <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
+                         <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
                     </div>
+                </div>
 
-                    <div className="border-2 border-black rounded-lg p-3 mb-6 bg-gray-50">
-                        <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                             <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                             <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
-                             
-                             <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                             <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
-                             
-                             <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
-                             <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
-                             
-                             <div><span className="font-bold">FECHA FINALIZACIÓN:</span> <span className="uppercase">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : 'EN PRODUCCIÓN'}</span></div>
-                             <div></div>
-                        </div>
-                    </div>
-
-                    <div className="mb-8">
-                        <table className="w-full border-collapse border-2 border-black text-sm mb-0">
-                            <thead>
-                                <tr className="bg-gray-200 border-b-2 border-black text-[11px]">
-                                    <th className="border-r-2 border-black p-2 w-12 text-center uppercase">CANT.</th>
-                                    <th className="border-r-2 border-black p-2 text-left uppercase">DESCRIPCIÓN</th>
-                                    <th className="border-r-2 border-black p-2 text-right w-24 uppercase">V. UNITARIO</th>
-                                    <th className="p-2 text-right w-24 uppercase">V. TOTAL</th>
+                <div className="mb-8">
+                    <table className="w-full border-collapse border-2 border-black text-sm mb-0">
+                        <thead>
+                            <tr className="bg-gray-200 border-b-2 border-black text-[11px]">
+                                <th className="border-r-2 border-black p-2 w-12 text-center uppercase">CANT.</th>
+                                <th className="border-r-2 border-black p-2 text-left uppercase">DESCRIPCIÓN</th>
+                                <th className="border-r-2 border-black p-2 text-right w-24 uppercase">V. UNITARIO</th>
+                                <th className="p-2 text-right w-24 uppercase">V. TOTAL</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {(order.productos || []).map((prod, idx) => (
+                                <tr key={idx} className="border-b border-black">
+                                    <td className="border-r-2 border-black p-2 text-center font-bold text-base align-middle">{prod.cantidad}</td>
+                                    <td className="border-r-2 border-black p-2 uppercase font-medium whitespace-pre-wrap text-xs align-top">
+                                        {getPrintDesc(prod)}
+                                    </td>
+                                    <td className="border-r-2 border-black p-2 font-medium align-middle text-right">
+                                        {formatCurrency(prod.precio || prod.precioUnitario)}
+                                    </td>
+                                    <td className="p-2 font-bold align-middle text-right">
+                                        {formatCurrency(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario)))}
+                                    </td>
                                 </tr>
-                            </thead>
-                            <tbody>
-                                {(order.productos || []).map((prod, idx) => (
-                                    <tr key={idx} className="border-b border-black">
-                                        <td className="border-r-2 border-black p-2 text-center font-bold text-base align-middle">{prod.cantidad}</td>
-                                        <td className="border-r-2 border-black p-2 uppercase font-medium whitespace-pre-wrap text-xs align-top">
-                                            {getPrintDesc(prod)}
-                                        </td>
-                                        <td className="border-r-2 border-black p-2 font-medium align-middle">
-                                            <div className="flex justify-between w-full"><span>$</span> <span>{Number(prod.precio || prod.precioUnitario).toFixed(2)}</span></div>
-                                        </td>
-                                        <td className="p-2 font-bold align-middle">
-                                            <div className="flex justify-between w-full"><span>$</span> <span>{Number(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario))).toFixed(2)}</span></div>
-                                        </td>
-                                    </tr>
-                                ))}
-                            </tbody>
-                        </table>
-                    </div>
-
-                    <div className="flex border-2 border-black text-xs bg-white mb-8" style={{ pageBreakInside: 'avoid' }}>
-                        
-                        <div className="flex-1 border-r-2 border-black p-4 flex flex-col justify-center gap-3">
-                            <div className="flex justify-between items-center border-b border-dashed border-gray-400 pb-1">
-                                <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
-                                <span className="font-bold text-sm text-slate-800">{formatCurrency(anticipoVal)}</span>
-                            </div>
-                            
-                            {order.abonos && order.abonos.map((a, i) => (
-                                <div key={i} className="flex justify-between items-center border-b border-dashed border-red-300 pb-1 text-red-700">
-                                    <span className="font-bold">ABONO {i+1} ({a.fecha ? a.fecha.split('T')[0] : ''}):</span>
-                                    <span className="font-bold">{formatCurrency(a.monto)}</span>
-                                </div>
                             ))}
+                        </tbody>
+                    </table>
+                </div>
 
-                            <div className="flex justify-between items-center pt-2">
-                                <span className="font-black text-base text-red-600">SALDO PENDIENTE:</span>
-                                <span className="font-black text-base text-red-600">{formatCurrency(saldoCalculado)}</span>
-                            </div>
+                {/* 🔥 OBSERVACIONES GENERALES EN EL PDF PRODUCCIÓN 🔥 */}
+                {observacionesPublicas && (
+                    <div className="border-2 border-black rounded-lg p-3 mb-6 bg-white" style={{ pageBreakInside: 'avoid' }}>
+                        <div className="font-bold text-[11px] mb-1 uppercase tracking-wider">Observaciones y Condiciones del Proyecto:</div>
+                        <div className="text-xs whitespace-pre-line text-slate-800 font-medium">
+                            {observacionesPublicas}
                         </div>
+                    </div>
+                )}
 
-                        <div className="w-[40%] flex flex-col">
-                            <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
-                                <span className="font-bold">SUBTOTAL</span>
-                                <span className="font-medium">{formatCurrency(fin.subtotal)}</span>
+                <div className="flex border-2 border-black text-xs bg-white mb-8" style={{ pageBreakInside: 'avoid' }}>
+                    
+                    <div className="flex-1 border-r-2 border-black p-4 flex flex-col justify-center gap-3">
+                        <div className="flex justify-between items-center border-b border-dashed border-gray-400 pb-1">
+                            <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
+                            <span className="font-bold text-sm text-slate-800">{formatCurrency(anticipoVal)}</span>
+                        </div>
+                        
+                        {order.abonos && order.abonos.map((a, i) => (
+                            <div key={i} className="flex justify-between items-center border-b border-dashed border-red-300 pb-1 text-red-700">
+                                <span className="font-bold">ABONO {i+1} ({a.fecha ? a.fecha.split('T')[0] : ''}):</span>
+                                <span className="font-bold">{formatCurrency(a.monto)}</span>
                             </div>
-                            {Number(fin.descuentoVal) > 0 && (
-                                <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
-                                    <span className="font-bold">DESCUENTO</span>
-                                    <span className="font-medium">-{formatCurrency(fin.descuentoVal)}</span>
-                                </div>
-                            )}
-                            <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
-                                <span className="font-bold">IVA {fin.ivaPercentage || 15}%</span>
-                                <span className="font-medium">{formatCurrency(fin.iva)}</span>
-                            </div>
-                            <div className="flex justify-between items-center p-2 bg-gray-200 h-full">
-                                <span className="font-black text-sm">TOTAL</span>
-                                <span className="font-black text-sm">{formatCurrency(fin.total)}</span>
-                            </div>
+                        ))}
+
+                        <div className="flex justify-between items-center pt-2">
+                            <span className="font-black text-base text-red-600">SALDO PENDIENTE:</span>
+                            <span className="font-black text-base text-red-600">{formatCurrency(saldoCalculado)}</span>
                         </div>
                     </div>
 
-                    {localImages.length > 0 && (
-                        <div className="border-2 border-black rounded-lg p-3" style={{ pageBreakInside: 'avoid' }}>
-                            <div className="font-bold text-xs mb-3 uppercase">Artes y Diseños Adjuntos:</div>
-                            <div className="flex flex-wrap gap-2 items-start justify-center">
-                               {localImages.map((img, index) => (
-                                   <img 
-                                     key={index}
-                                     src={img.url} 
-                                     alt={img.name || `Arte ${index + 1}`} 
-                                     className="max-w-[48%] max-h-[220px] object-contain border border-gray-300 rounded shadow-sm"
-                                   />
-                               ))}
-                            </div>
+                    <div className="w-[40%] flex flex-col">
+                        <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                            <span className="font-bold">SUBTOTAL</span>
+                            <span className="font-medium">{formatCurrency(fin.subtotal)}</span>
                         </div>
-                    )}
+                        {Number(fin.descuentoVal) > 0 && (
+                            <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                                <span className="font-bold">DESCUENTO</span>
+                                <span className="font-medium">-{formatCurrency(fin.descuentoVal)}</span>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                            <span className="font-bold">IVA {fin.ivaPercentage || 15}%</span>
+                            <span className="font-medium">{formatCurrency(fin.iva)}</span>
+                        </div>
+                        <div className="flex justify-between items-center p-2 bg-gray-200 h-full">
+                            <span className="font-black text-sm">TOTAL</span>
+                            <span className="font-black text-sm">{formatCurrency(fin.total)}</span>
+                        </div>
+                    </div>
                 </div>
-            )}
+
+                {localImages.length > 0 && (
+                    <div className="border-2 border-black rounded-lg p-3" style={{ pageBreakInside: 'avoid' }}>
+                        <div className="font-bold text-xs mb-3 uppercase">Artes y Diseños Adjuntos:</div>
+                        <div className="flex flex-wrap gap-2 items-start justify-center">
+                           {localImages.map((img, index) => (
+                               <img 
+                                 key={index}
+                                 src={img.url} 
+                                 alt={img.name || `Arte ${index + 1}`} 
+                                 className="max-w-[48%] max-h-[220px] object-contain border border-gray-300 rounded shadow-sm"
+                               />
+                           ))}
+                        </div>
+                    </div>
+                )}
+            </div>
         </div>
     </>
   );
