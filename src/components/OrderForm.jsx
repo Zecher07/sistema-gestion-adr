@@ -199,7 +199,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }), 
+    productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
     descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
@@ -322,7 +322,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             altura: p.altura || '',
             cantidad: p.cantidad !== undefined ? p.cantidad : 1,
             precio_minimo: p.precio_minimo || 0,
-            precioMinimoManual: p.precioMinimoManual !== undefined ? p.precioMinimoManual : (p.es_por_metro ? (Number(p.precio_minimo) > 0 ? p.precio_minimo : getPriceForQty(1, p, initialData.esMayorista)) : '')
+            precioMinimoManual: p.precioMinimoManual !== undefined ? p.precioMinimoManual : (p.es_por_metro ? (Number(p.precio_minimo) > 0 ? p.precio_minimo : getPriceForQty(1, p, initialData.esMayorista)) : ''),
+            observaciones: p.observaciones || '' // 🔥 Cargar observaciones de los productos de la BD
         })),
         fechaEntrega: calculatedFechaEntrega,
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
@@ -378,7 +379,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }) }));
     }
   }, []);
 
@@ -505,7 +506,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         computedPrice = getPriceForQty(minQty, item, formData.esMayorista);
     }
 
-    // 🔥 LAS OBSERVACIONES DEL CATÁLOGO YA NO SE PEGAN A LA DESCRIPCIÓN 🔥
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
 
@@ -529,15 +529,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             es_por_metro: item.es_por_metro || false,
             precio_minimo: Number(item.precio_minimo) || 0,
             precioMinimoManual: item.es_por_metro ? minP : '',
+            observaciones: item.observaciones || '', // 🔥 SE RECUPERA LA OBS DEL CATÁLOGO
             total: initialTotal
         };
 
         if (emptyIndex !== -1) {
             newProducts[emptyIndex] = newProduct;
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
         } else {
             newProducts.push(newProduct);
-            newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+            newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
         }
         return { ...prev, productos: newProducts };
     });
@@ -574,7 +575,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           computedPrice = getPriceForQty(minQty, product, formData.esMayorista);
       }
 
-      // 🔥 LAS OBSERVACIONES DEL CATÁLOGO YA NO SE PEGAN A LA DESCRIPCIÓN 🔥
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
 
@@ -598,9 +598,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               es_por_metro: product.es_por_metro || false,
               precio_minimo: Number(product.precio_minimo) || 0,
               precioMinimoManual: product.es_por_metro ? minP : '',
+              observaciones: product.observaciones || '', // 🔥 SE RECUPERA LA OBS DEL CATÁLOGO
               total: initialTotal
           };
-          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+          if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
           return { ...prev, productos: newProducts };
       });
       setProductSuggestions([]);
@@ -678,7 +679,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
+            newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
         }
 
         newProducts[index] = item;
@@ -713,7 +714,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const addProduct = () => {
     setFormData(prev => ({
         ...prev,
-        productos: [...prev.productos, { descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }]
+        productos: [...prev.productos, { descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }]
     }));
   };
 
@@ -1198,7 +1199,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                {formData.clienteId && <Check className="absolute right-2 top-1.5 h-4 w-4 text-green-600" />}
                            </div>
                            
-                           {/* 🔥 BOTON + CLIENTE CONECTADO GLOBALMENTE 🔥 */}
                            {!isEffectivelyReadOnly && (
                                <Button 
                                    type="button" 
@@ -1309,9 +1309,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              <td className="py-2 px-2 text-slate-400 text-xs text-center align-top pt-4">{idx + 1}</td>
                              
                              <td className="py-2 px-2 relative align-top pt-3">
-                                {/* 🔥 QUITAMOS EL RECUADRO DE OBSERVACIONES AQUÍ 🔥 */}
                                 <textarea 
-                                    className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
+                                    className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[40px]" 
                                     placeholder={idx === formData.productos.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
                                     value={cleanDescription} 
                                     onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
@@ -1319,6 +1318,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
                                     readOnly={isEffectivelyReadOnly}
                                 />
+                                
+                                {/* 🔥 CUADRO DE OBSERVACIONES EXCLUSIVO DEL PRODUCTO (SOLO LECTURA) 🔥 */}
+                                {row.observaciones && (
+                                    <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 select-none cursor-not-allowed shadow-inner">
+                                        <span className="font-bold text-slate-400 block uppercase text-[9px] mb-0.5">Ficha Técnica Catálogo:</span>
+                                        <p className="whitespace-pre-wrap">{row.observaciones}</p>
+                                    </div>
+                                )}
                                 
                                 {row.es_por_metro && (
                                     <div className="flex flex-wrap items-center gap-2 mt-2 bg-purple-50 p-2 rounded-md border border-purple-200">
@@ -1711,7 +1718,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
              </div>
           </div>
 
-          {/* 🔥 ZONA DE OBSERVACIONES Y DISEÑO 🔥 */}
           <div className="space-y-4 pt-4 border-t border-slate-200">
              <div className="text-xs text-slate-500 font-bold uppercase tracking-wider">Arte/Diseño y Anotaciones Finales</div>
              
@@ -1767,8 +1773,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
          </div>
       </div>
 
-      {/* 🔥 MODALES INTERNOS 🔥 */}
-      
       {showNewClientModal && (
         <div className="fixed inset-0 z-[9999] bg-black/60 flex items-center justify-center p-4">
             <div className="bg-white w-full max-w-4xl max-h-[90vh] flex flex-col rounded-xl shadow-2xl overflow-hidden animate-in zoom-in-95">
