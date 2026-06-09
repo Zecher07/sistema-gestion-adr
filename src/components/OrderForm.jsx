@@ -199,7 +199,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [formData, setFormData] = useState({
     orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
-    productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }), 
+    productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
     descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
@@ -323,7 +323,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             cantidad: p.cantidad !== undefined ? p.cantidad : 1,
             precio_minimo: p.precio_minimo || 0,
             precioMinimoManual: p.precioMinimoManual !== undefined ? p.precioMinimoManual : (p.es_por_metro ? (Number(p.precio_minimo) > 0 ? p.precio_minimo : getPriceForQty(1, p, initialData.esMayorista)) : ''),
-            observaciones: p.observaciones || '' // 🔥 Cargar observaciones de los productos de la BD
+            observaciones: p.observaciones || '' 
         })),
         fechaEntrega: calculatedFechaEntrega,
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
@@ -379,31 +379,34 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   useEffect(() => {
     if (!formData.productos || formData.productos.length === 0) {
-      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }) }));
+      setFormData(prev => ({ ...prev, productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }) }));
     }
   }, []);
 
   useEffect(() => {
+    // 🔥 TODOS LOS CÁLCULOS FINANCIEROS SE RECORTAN A 2 DECIMALES 🔥
     const subtotal = formData.productos.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
     const descuentoDirectoTotal = Number(formData.descuentoMonto) || 0;
+    
+    // 🔥 CORRECCIÓN DEL BUG: Usamos formData.aplicarIva 🔥
     const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
     
     const descuentoBase = formData.aplicarIva ? (descuentoDirectoTotal / (1 + tasaIva)) : descuentoDirectoTotal;
-    const baseImponible = Math.max(0, subtotal - descuentoBase);
-    const iva = formData.aplicarIva ? baseImponible * tasaIva : 0;
-    const total = baseImponible + iva;
+    const baseImponible = Number(Math.max(0, subtotal - descuentoBase).toFixed(2));
+    const iva = Number((formData.aplicarIva ? baseImponible * tasaIva : 0).toFixed(2));
+    const total = Number((baseImponible + iva).toFixed(2));
 
     let retencionValor = 0;
-    if (applyRetention) { retencionValor = baseImponible * (formData.retentionPercent / 100); }
+    if (applyRetention) { retencionValor = Number((baseImponible * (formData.retentionPercent / 100)).toFixed(2)); }
 
     let anticipoCalculado = parseFloat(formData.anticipo) || 0;
     if (paymentMode === 'full') {
-        anticipoCalculado = total - retencionValor;
+        anticipoCalculado = Number((total - retencionValor).toFixed(2));
         if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : ''); }
     }
 
     const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
-    const saldoPendiente = Math.max(total - anticipoCalculado - retencionValor - abonosTotal, 0);
+    const saldoPendiente = Number(Math.max(total - anticipoCalculado - retencionValor - abonosTotal, 0).toFixed(2));
 
     setFinancials({ subtotal, descuentoVal: descuentoBase, baseImponible, iva, total, saldoPendiente });
     
@@ -490,9 +493,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           } else {
               const newPrice = getPriceForQty(q, p, isWholesale);
               let calcTotal = q * newPrice;
-              if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
-
-              return { ...p, precioUnitario: newPrice, total: calcTotal };
+              return { ...p, precioUnitario: Number(newPrice.toFixed(2)), total: Number(calcTotal.toFixed(2)) };
           }
       });
   };
@@ -514,7 +515,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
 
         let initialTotal = item.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1);
-        if (initialTotal > 0) initialTotal = roundUpToHalf(initialTotal);
+        if (item.es_por_metro && initialTotal > 0) initialTotal = roundUpToHalf(initialTotal);
 
         const newProduct = {
             cantidad: minQty > 0 ? minQty : 1, 
@@ -529,7 +530,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             es_por_metro: item.es_por_metro || false,
             precio_minimo: Number(item.precio_minimo) || 0,
             precioMinimoManual: item.es_por_metro ? minP : '',
-            observaciones: item.observaciones || '', // 🔥 SE RECUPERA LA OBS DEL CATÁLOGO
+            observaciones: item.observaciones || '', 
             total: initialTotal
         };
 
@@ -582,7 +583,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           const newProducts = [...prev.productos];
 
           let initialTotal = product.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1);
-          if (initialTotal > 0) initialTotal = roundUpToHalf(initialTotal);
+          if (product.es_por_metro && initialTotal > 0) initialTotal = roundUpToHalf(initialTotal);
 
           newProducts[index] = { 
               ...newProducts[index], 
@@ -598,7 +599,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               es_por_metro: product.es_por_metro || false,
               precio_minimo: Number(product.precio_minimo) || 0,
               precioMinimoManual: product.es_por_metro ? minP : '',
-              observaciones: product.observaciones || '', // 🔥 SE RECUPERA LA OBS DEL CATÁLOGO
+              observaciones: product.observaciones || '', 
               total: initialTotal
           };
           if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
@@ -653,19 +654,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
         } else {
             if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
-                item.precioUnitario = getPriceForQty(q, item, prev.esMayorista);
+                item.precioUnitario = Number(getPriceForQty(q, item, prev.esMayorista).toFixed(2));
             }
             const price = parseFloat(item.precioUnitario) || 0;
             let calcTotal = q * price;
-            if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
-            item.total = calcTotal;
+            item.total = Number(calcTotal.toFixed(2));
         }
 
         if (field === 'precioUnitario' && !item.es_por_metro) {
             const price = parseFloat(value) || 0;
             let calcTotal = q * price;
-            if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
-            item.total = calcTotal;
+            item.total = Number(calcTotal.toFixed(2));
         } else if (field === 'precioUnitario' && item.es_por_metro) {
             const price = parseFloat(value) || 0;
             const areaIndividual = (b / 100) * (a / 100);
@@ -1013,7 +1012,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
     const processedProducts = validProducts.map(p => {
         if (p.es_por_metro && p.base && p.altura) {
-            let cleanDesc = p.descripcion.replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+            let cleanDesc = p.descripcion.replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '');
             const medidaString = `(${p.base}x${p.altura}cm)`;
             return { ...p, descripcion: `${cleanDesc} ${medidaString}` };
         }
@@ -1286,7 +1285,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    </thead>
                    <tbody className="divide-y divide-slate-200">
                       {formData.productos.map((row, idx) => {
-                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '');
 
                         const b = parseFloat(row.base) || 0;
                         const a = parseFloat(row.altura) || 0;
@@ -1322,7 +1321,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                 {/* 🔥 CUADRO DE OBSERVACIONES EXCLUSIVO DEL PRODUCTO (SOLO LECTURA) 🔥 */}
                                 {row.observaciones && (
                                     <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 select-none cursor-not-allowed shadow-inner">
-                                        <span className="font-bold text-slate-400 block uppercase text-[9px] mb-0.5">Ficha Técnica Catálogo:</span>
+                                        <span className="font-bold text-slate-400 block text-[9px] uppercase">Nota Técnica:</span>
                                         <p className="whitespace-pre-wrap">{row.observaciones}</p>
                                     </div>
                                 )}
@@ -1418,6 +1417,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                  />
                              </td>
                              
+                             {/* 🔥 AQUÍ ESTÁ LA MAGIA: SOLO ES_POR_METRO ES EDITABLE 🔥 */}
                              <td className="py-2 px-2 align-top pt-3 bg-slate-50/50">
                                  <div className="flex items-center justify-end font-bold text-slate-800">
                                      <span className="mr-1">$</span>
