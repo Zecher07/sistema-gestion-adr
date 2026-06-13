@@ -1,41 +1,12 @@
-import React, { useState, useEffect, useMemo, useCallback } from 'react';
+import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, BookOpen, DollarSign, Building, TrendingDown, Filter, Users, Search, Plus, X, FileText } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, BookOpen, DollarSign, Building, TrendingDown, Filter, Users, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { useToast } from '@/components/ui/use-toast';
-import { useDropzone } from 'react-dropzone';
 import { cn } from '@/lib/utils';
 
 const FILTROS = ['TODOS', 'EFECTIVO', 'BANCOS / TRANSFERENCIAS', 'SOLO INGRESOS', 'SOLO EGRESOS'];
 
-// --- FUNCIÓN DE COMPRESIÓN DE IMÁGENES ---
-const compressImage = async (file) => {
-    return new Promise((resolve) => {
-        const reader = new FileReader();
-        reader.readAsDataURL(file);
-        reader.onload = (event) => {
-            const img = new Image();
-            img.src = event.target.result;
-            img.onload = () => {
-                const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 1024; 
-                let width = img.width;
-                let height = img.height;
-                if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
-                canvas.width = width;
-                canvas.height = height;
-                const ctx = canvas.getContext('2d');
-                ctx.drawImage(img, 0, 0, width, height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                resolve({ name: file.name, url: dataUrl });
-            };
-        };
-    });
-};
-
-const GeneralLedgerPanel = ({ orders = [], user }) => {
-  const { toast } = useToast();
-  
+const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
   const toLocalDateStr = (isoString) => {
     if (!isoString) return '';
     const date = new Date(isoString);
@@ -45,6 +16,8 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
 
   const [selectedDate, setSelectedDate] = useState(toLocalDateStr(new Date().toISOString()));
   const [valesDelDia, setValesDelDia] = useState([]);
+  const [rawClosings, setRawClosings] = useState([]);
+  const [profilesList, setProfilesList] = useState([]);
   const [loading, setLoading] = useState(false);
   
   // Estados de Filtros
@@ -52,78 +25,32 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
   const [filtroVendedor, setFiltroVendedor] = useState('TODOS');
   const [filtroOrden, setFiltroOrden] = useState('');
 
-  // 🔥 ESTADOS PARA CIERRE DIARIO 🔥
-  const [cierreComprobantes, setCierreComprobantes] = useState([]);
-  const [loadingCierre, setLoadingCierre] = useState(false);
-  const [isProcessingCierre, setIsProcessingCierre] = useState(false);
-
+  // 1. CARGA DE DATOS PRINCIPALES
   useEffect(() => {
-    const fetchVales = async () => {
+    const fetchData = async () => {
       setLoading(true);
       try {
-        const { data, error } = await supabase
-          .from('vales_caja')
-          .select('*')
-          .eq('status', 'APROBADO')
-          .eq('fecha', selectedDate); 
-        
-        if (error) throw error;
-        setValesDelDia(data || []);
+        const [valesRes, closingsRes, profRes] = await Promise.all([
+          supabase.from('vales_caja').select('*').eq('status', 'APROBADO').eq('fecha', selectedDate),
+          supabase.from('daily_closings').select('*'),
+          supabase.from('profiles').select('*') 
+        ]);
+
+        if (!valesRes.error) setValesDelDia(valesRes.data || []);
+        if (!closingsRes.error) setRawClosings(closingsRes.data || []);
+        if (!profRes.error) setProfilesList(profRes.data || []);
+
       } catch (error) {
-        console.error("Error cargando vales:", error);
+        console.error("Error cargando datos:", error);
       } finally {
         setLoading(false);
       }
     };
-    fetchVales();
 
-    // 🔥 CARGAR FOTOS DE CIERRE DIARIO 🔥
-    const fetchCierre = async () => {
-        setLoadingCierre(true);
-        try {
-            const { data } = await supabase.from('cierres_diarios').select('comprobantes').eq('fecha', selectedDate).maybeSingle();
-            if (data && Array.isArray(data.comprobantes)) setCierreComprobantes(data.comprobantes);
-            else setCierreComprobantes([]);
-        } catch(e) { setCierreComprobantes([]); }
-        setLoadingCierre(false);
-    };
-    fetchCierre();
+    fetchData();
   }, [selectedDate]);
 
-  // 🔥 LÓGICA DE SUBIDA DE CIERRE DIARIO 🔥
-  const handleAddCierreDocs = async (files) => {
-      setIsProcessingCierre(true);
-      const newImages = [];
-      for (const file of files) {
-          if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
-          try {
-              const compressed = await compressImage(file);
-              newImages.push(compressed);
-          } catch (e) {}
-      }
-      const updated = [...cierreComprobantes, ...newImages];
-      setCierreComprobantes(updated);
-      
-      try {
-          await supabase.from('cierres_diarios').upsert({ fecha: selectedDate, comprobantes: updated, cerrador: user.name });
-          toast({title: "Soporte de cierre guardado exitosamente."});
-      } catch(e) { 
-          toast({title: "Cierre Guardado Localmente", description: "Asegúrate de crear la tabla 'cierres_diarios' en Supabase para guardarlo en la nube.", variant: "warning"}); 
-      }
-      setIsProcessingCierre(false);
-  };
-
-  const removeCierreDoc = async (index) => {
-      const updated = cierreComprobantes.filter((_, i) => i !== index);
-      setCierreComprobantes(updated);
-      try {
-          await supabase.from('cierres_diarios').upsert({ fecha: selectedDate, comprobantes: updated, cerrador: user.name });
-      } catch(e) {}
-  };
-
-  const onDropCierre = useCallback(acceptedFiles => { handleAddCierreDocs(acceptedFiles); }, [cierreComprobantes, selectedDate]);
-  const { getRootProps: getRootPropsCierre, getInputProps: getInputPropsCierre } = useDropzone({ onDrop: onDropCierre, accept: {'image/*': []}, disabled: isProcessingCierre });
-
+  // 2. CÁLCULO DE TRANSACCIONES DEL DÍA
   const transactions = useMemo(() => {
     const txs = [];
 
@@ -131,39 +58,39 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       const createdDateStr = toLocalDateStr(o.createdAt || o.created_at);
       const updatedDateStr = toLocalDateStr(o.updatedAt || o.updated_at);
       const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
-
+      
+      const oId = o.id || Math.random().toString(36).substring(7);
       const numOrden = formatOrderId(o);
       const cliente = o.cliente || o.cliente_nombre || 'Cliente General';
       const titulo = o.tipoLetrero || o.tipo_trabajo || 'Sin Título';
 
-      // 1. ANTICIPOS (VENTAS)
+      // ANTICIPOS (VENTAS)
       if (createdDateStr === selectedDate && Number(o.anticipo) > 0) {
-        const metodo = o.formaPagoAnticipo || o.forma_pago_anticipo || 'Efectivo';
         txs.push({
-          id: `ant-${o.id}`,
+          id: `ant-${oId}`,
           tipo: 'VENTA',
           cliente, titulo, orden: numOrden,
-          vendedor: o.recibido_por_anticipo || o.vendedor,
-          metodo,
+          vendedor: o.recibido_por_anticipo || o.vendedor || 'Sistema',
+          metodo: o.formaPagoAnticipo || o.forma_pago_anticipo || 'Efectivo',
           ingreso: Number(o.anticipo), egreso: 0
         });
       }
 
-      // 2. ABONOS
-      (o.abonos || []).forEach(abono => {
+      // ABONOS
+      (o.abonos || []).forEach((abono, idx) => {
         if (toLocalDateStr(abono.fecha) === selectedDate) {
           txs.push({
-            id: `abo-${abono.id}`,
+            id: `abo-${oId}-${idx}`, 
             tipo: 'ABONO',
             cliente, titulo, orden: numOrden,
-            vendedor: abono.cobrador,
+            vendedor: abono.cobrador || 'Sistema',
             metodo: abono.metodoPago || 'Efectivo',
             ingreso: Number(abono.monto), egreso: 0
           });
         }
       });
 
-      // 3. SALDOS (RETIROS)
+      // SALDOS (RETIROS)
       const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'ENTREGADO'].includes(o.status);
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
@@ -171,35 +98,35 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
 
       if (balanceDateStr === selectedDate && isRelevantStatus && saldoFinalReal > 0) {
         txs.push({
-          id: `sal-${o.id}`,
+          id: `sal-${oId}`,
           tipo: 'RETIRO',
           cliente, titulo, orden: numOrden,
-          vendedor: o.recibido_por_saldo || o.vendedor,
+          vendedor: o.recibido_por_saldo || o.vendedor || 'Sistema',
           metodo: o.formaPagoSaldo || 'Efectivo',
           ingreso: saldoFinalReal, egreso: 0
         });
       }
 
-      // 4. ANULACIONES
+      // ANULACIONES
       if (o.status === 'ANULADA' && updatedDateStr === selectedDate && Number(o.anticipo) > 0) {
         txs.push({
-          id: `anu-${o.id}`,
+          id: `anu-${oId}`,
           tipo: 'ANULACIÓN',
           cliente, titulo, orden: numOrden,
-          vendedor: o.recibido_por_anticipo || o.vendedor,
+          vendedor: o.recibido_por_anticipo || o.vendedor || 'Sistema',
           metodo: o.formaPagoAnticipo || 'Efectivo',
           ingreso: 0, egreso: Number(o.anticipo)
         });
       }
     });
 
-    // 5. VALES DE CAJA
-    valesDelDia.forEach(vale => {
+    // VALES DE CAJA
+    valesDelDia.forEach((vale, idx) => {
       txs.push({
-        id: `val-${vale.id}`,
+        id: `val-${vale.id || idx}`,
         tipo: 'VALE DE CAJA',
         cliente: 'USO INTERNO', titulo: vale.concepto, orden: 'VALE',
-        vendedor: vale.vendedor,
+        vendedor: vale.vendedor || 'Sistema',
         metodo: 'Efectivo', 
         ingreso: 0, egreso: Number(vale.monto)
       });
@@ -207,6 +134,50 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
 
     return txs.sort((a, b) => b.ingreso - a.ingreso);
   }, [orders, selectedDate, valesDelDia]);
+
+  // 3. CÁLCULO MÁGICO DE CAJAS POR VENDEDOR (Inicio, Calculada de Cierre, Entregado)
+  const cajasData = useMemo(() => {
+    const filtrados = rawClosings.filter(c => c.date && c.date.split('T')[0] === selectedDate);
+    
+    const breakdown = filtrados.map(c => {
+      const prof = profilesList.find(p => String(p.id) === String(c.user_id)) || staffUsers?.find(p => String(p.id) === String(c.user_id));
+      const nombreReal = prof ? (prof.full_name || prof.name || prof.nombre || prof.email) : null;
+      const vendedorName = nombreReal || `Usuario #${String(c.user_id).substring(0,5)}`;
+
+      const inicial = Number(c.opening_cash || 0);
+      const entregado = Number(c.amount_to_accounting || 0);
+
+      // Calculamos cuánto sumó o restó EN EFECTIVO este vendedor durante el día
+      const normalize = (s) => (s || '').toLowerCase().trim();
+      const txsVendedor = transactions.filter(tx => 
+          normalize(tx.vendedor) === normalize(vendedorName) && 
+          tx.metodo.toLowerCase().includes('efectivo')
+      );
+
+      let ingresosEfectivo = 0;
+      let egresosEfectivo = 0;
+      txsVendedor.forEach(tx => {
+          ingresosEfectivo += tx.ingreso;
+          egresosEfectivo += tx.egreso;
+      });
+
+      // El Cierre Físico es: Con cuánto empezó + Lo que cobró - Lo que salió (vales)
+      const cierreCalculado = inicial + ingresosEfectivo - egresosEfectivo;
+
+      return {
+        vendedor: vendedorName,
+        inicial: inicial,
+        cierre: cierreCalculado,
+        entregado: entregado
+      };
+    });
+
+    const inicialTotal = breakdown.reduce((sum, b) => sum + b.inicial, 0);
+    const cierreTotal = breakdown.reduce((sum, b) => sum + b.cierre, 0);
+    const entregadoTotal = breakdown.reduce((sum, b) => sum + b.entregado, 0);
+
+    return { breakdown, inicialTotal, cierreTotal, entregadoTotal };
+  }, [rawClosings, selectedDate, staffUsers, profilesList, transactions]);
 
   const vendedoresDisponibles = useMemo(() => {
       const vends = new Set(transactions.map(tx => tx.vendedor));
@@ -269,8 +240,15 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
 
   const displayDate = new Date(selectedDate + 'T12:00:00').toLocaleDateString('es-ES', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' });
 
+  const handlePrint = () => {
+     setTimeout(() => { window.print(); }, 100);
+  };
+
   return (
     <>
+      {/* ================================================================= */}
+      {/* 1. VISTA EN PANTALLA (Oculta al imprimir)                         */}
+      {/* ================================================================= */}
       <div className="space-y-6 animate-in fade-in duration-500 max-w-[1400px] mx-auto pb-10 print:hidden">
         
         {/* CABECERA */}
@@ -291,7 +269,7 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                     className="bg-transparent border-none outline-none text-sm font-bold text-slate-700" 
                   />
               </div>
-              <Button variant="outline" onClick={() => window.print()} className="gap-2 border-slate-300 hover:bg-slate-50 text-slate-700">
+              <Button variant="outline" onClick={handlePrint} className="gap-2 border-slate-300 hover:bg-slate-50 text-slate-700">
                  <Printer className="h-4 w-4" /> Imprimir
               </Button>
            </div>
@@ -376,11 +354,11 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
               <table className="w-full text-sm text-left">
                   <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 text-xs uppercase">
                       <tr>
-                          <th className="px-4 py-3 font-bold text-center w-12">#</th>
+                          <th className="px-4 py-3 text-center w-12">#</th>
                           <th className="px-4 py-3 font-bold">Descripción del Movimiento</th>
-                          <th className="px-4 py-3 font-bold text-center">Orden</th>
+                          <th className="px-4 py-3 text-center">Orden</th>
                           <th className="px-4 py-3 font-bold">Vendedor</th>
-                          <th className="px-4 py-3 font-bold text-center">Método</th>
+                          <th className="px-4 py-3 text-center">Método</th>
                           <th className="px-4 py-3 font-bold text-right text-green-700">Ingreso</th>
                           <th className="px-4 py-3 font-bold text-right text-red-700">Egreso</th>
                       </tr>
@@ -433,44 +411,60 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
            )}
         </div>
 
-        {/* 🔥 SECCIÓN CIERRE DIARIO (FOTOS) 🔥 */}
-        <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden mt-6 p-6">
-            <h3 className="text-lg font-bold text-slate-800 border-b border-slate-100 pb-3 mb-4 flex items-center gap-2">
-                <FileText className="h-5 w-5 text-indigo-600" /> Soportes de Cierre Diario
-            </h3>
-            <p className="text-sm text-slate-500 mb-4">Adjunta aquí los vouchers de tarjetas, papeletas de depósito o fotos del cierre de caja del día <strong>{selectedDate}</strong>.</p>
-            
-            <div className="border border-slate-300 p-4 rounded-md bg-slate-50">
-                <div className="min-h-[100px] mb-4 flex flex-wrap gap-4">
-                    {cierreComprobantes.map((img, i) => (
-                       <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => window.open(img.url, '_blank')}>
-                          <img src={img.url} alt={img.name} className="w-full h-full object-cover" />
-                          <button type="button" onClick={(e) => { e.stopPropagation(); removeCierreDoc(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>
-                       </div>
-                    ))}
-                    {loadingCierre || isProcessingCierre ? (
-                        <div className="w-24 h-24 flex flex-col items-center justify-center border-2 border-dashed border-blue-300 bg-blue-50 rounded-md animate-pulse">
-                            <Loader2 className="h-6 w-6 text-blue-500 animate-spin"/>
-                        </div>
-                    ) : cierreComprobantes.length === 0 && (
-                        <div className="w-full flex flex-col items-center justify-center text-slate-400 text-xs py-4">
-                           <FileText className="h-8 w-8 mb-2 opacity-50" />
-                           <span>Sin soportes adjuntos en este día</span>
-                        </div>
-                    )}
-                </div>
-                <div>
-                    <input {...getInputPropsCierre()} className="hidden" />
-                    <label {...getRootPropsCierre()} className={`inline-flex items-center gap-2 ${isProcessingCierre ? 'bg-slate-400 cursor-wait' : 'bg-indigo-600 hover:bg-indigo-700 cursor-pointer'} text-white text-sm font-bold px-4 py-2 rounded-md transition-colors shadow-sm`}>
-                        <Plus className="h-4 w-4" /> {isProcessingCierre ? 'Procesando...' : 'Subir Soporte (Foto)'}
-                    </label>
-                </div>
+        {/* 🔥 TABLAS RESUMEN CONDESADAS AL FINAL EN PANTALLA 🔥 */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <h3 className="text-base font-bold text-slate-700 uppercase tracking-wider mb-4 border-b pb-2">Resumen de Flujos del Día</h3>
+                <table className="w-full text-sm text-left border-collapse border border-slate-200">
+                    <tbody className="divide-y divide-slate-200">
+                        <tr><td className="p-3 font-medium text-slate-700">Ingresos en Efectivo (Caja)</td><td className="p-3 text-right font-bold text-green-700">{formatCurrency(summary.efectivo)}</td></tr>
+                        <tr><td className="p-3 font-medium text-slate-700">Ingresos por Bancos (Transferencias)</td><td className="p-3 text-right font-bold text-blue-700">{formatCurrency(summary.bancos)}</td></tr>
+                        <tr className="bg-slate-50 font-bold"><td className="p-3 uppercase text-slate-800">Total Ingresos del Día</td><td className="p-3 text-right font-black text-slate-900">{formatCurrency(summary.totalIngresos)}</td></tr>
+                        <tr><td className="p-3 font-medium text-slate-700">Total Egresos (Vales / Anulaciones)</td><td className="p-3 text-right font-bold text-red-600">-{formatCurrency(summary.egresos)}</td></tr>
+                    </tbody>
+                </table>
+            </div>
+
+            {/* 🔥 NUEVA TABLA: ARQUEO DE CAJAS POR VENDEDOR 🔥 */}
+            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+                <h3 className="text-base font-bold text-slate-700 uppercase tracking-wider mb-4 border-b pb-2">Arqueo de Cajas por Vendedor</h3>
+                <table className="w-full text-sm text-left border-collapse border border-slate-200">
+                    <thead className="bg-slate-800 text-white font-bold text-xs uppercase">
+                        <tr>
+                            <th className="p-3 border-r border-slate-700">Vendedor</th>
+                            <th className="p-3 text-right border-r border-slate-700 w-28">Caja Inicio</th>
+                            <th className="p-3 text-right border-r border-slate-700 w-28">Caja Cierre</th>
+                            <th className="p-3 text-right w-32">Entregado Contab.</th>
+                        </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-200">
+                        {cajasData.breakdown.map((cv, idx) => (
+                            <tr key={idx} className="hover:bg-slate-50 transition-colors">
+                                <td className="p-3 font-bold text-slate-800 uppercase">{cv.vendedor}</td>
+                                <td className="p-3 text-right font-mono text-slate-500 font-bold">{formatCurrency(cv.inicial)}</td>
+                                <td className="p-3 text-right font-mono text-indigo-600 font-bold">{formatCurrency(cv.cierre)}</td>
+                                <td className="p-3 text-right font-mono text-emerald-600 font-black">{formatCurrency(cv.entregado)}</td>
+                            </tr>
+                        ))}
+                        {cajasData.breakdown.length === 0 && (
+                            <tr><td colSpan="4" className="p-4 text-center text-slate-400 italic">No hay cierres de caja registrados hoy.</td></tr>
+                        )}
+                    </tbody>
+                    <tfoot className="bg-slate-100 font-bold border-t-2 border-slate-300 text-xs">
+                        <tr>
+                            <td className="p-3 uppercase text-slate-700 font-black">TOTALES:</td>
+                            <td className="p-3 text-right font-mono text-slate-700 font-black text-sm">{formatCurrency(cajasData.inicialTotal)}</td>
+                            <td className="p-3 text-right font-mono text-indigo-900 font-black text-sm">{formatCurrency(cajasData.cierreTotal)}</td>
+                            <td className="p-3 text-right font-mono text-emerald-800 font-black text-sm">{formatCurrency(cajasData.entregadoTotal)}</td>
+                        </tr>
+                    </tfoot>
+                </table>
             </div>
         </div>
       </div>
 
       {/* ================================================================= */}
-      {/* 2. VISTA DE IMPRESIÓN (Visible SOLO al imprimir)                  */}
+      {/* 2. VISTA DE IMPRESIÓN (Visible SOLO al mandar a imprimir)        */}
       {/* ================================================================= */}
       <div 
         className="hidden print:block print:absolute print:inset-0 print:w-full print:bg-white print:z-[9999]"
@@ -478,6 +472,7 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
       >
         <div className="w-full max-w-[900px] mx-auto p-8 font-sans text-black">
             
+            {/* CABECERA IMPRESIÓN */}
             <div className="flex justify-between items-center border-b-2 border-black pb-4 mb-6">
                 <div className="flex items-center gap-4">
                     <img src="/logo.png" alt="Logo" className="h-16 object-contain" />
@@ -495,29 +490,11 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </div>
             </div>
 
-            <div className="grid grid-cols-4 gap-4 mb-6">
-                <div className="border border-black rounded-lg p-3 text-center bg-gray-50">
-                    <div className="text-[10px] font-bold text-slate-600 uppercase mb-1">Ingresos Efectivo</div>
-                    <div className="text-lg font-bold">{formatCurrency(summary.efectivo)}</div>
-                </div>
-                <div className="border border-black rounded-lg p-3 text-center bg-gray-50">
-                    <div className="text-[10px] font-bold text-slate-600 uppercase mb-1">Transf. / Bancos</div>
-                    <div className="text-lg font-bold">{formatCurrency(summary.bancos)}</div>
-                </div>
-                <div className="border-2 border-black rounded-lg p-3 text-center bg-slate-200">
-                    <div className="text-[10px] font-black text-slate-800 uppercase mb-1">TOTAL INGRESOS</div>
-                    <div className="text-xl font-black">{formatCurrency(summary.totalIngresos)}</div>
-                </div>
-                <div className="border border-black rounded-lg p-3 text-center bg-gray-50">
-                    <div className="text-[10px] font-bold text-slate-600 uppercase mb-1">Total Egresos</div>
-                    <div className="text-lg font-bold text-slate-800">{formatCurrency(summary.egresos)}</div>
-                </div>
-            </div>
-
+            {/* FILTROS APLICADOS */}
             {(filtroActivo !== 'TODOS' || filtroVendedor !== 'TODOS' || filtroOrden.trim() !== '') && (
-                <div className="mb-2 text-sm font-bold italic text-slate-700 bg-slate-100 p-2 rounded border border-slate-300">
+                <div className="mb-4 text-xs font-bold italic text-slate-700 bg-slate-100 p-2 rounded border border-slate-300">
                     * Filtros aplicados a esta impresión: 
-                    <span className="ml-2">
+                    <span className="ml-2 font-normal">
                         {[
                             filtroActivo !== 'TODOS' ? `Tipo: ${filtroActivo}` : null,
                             filtroVendedor !== 'TODOS' ? `Vendedor: ${filtroVendedor}` : null,
@@ -527,53 +504,103 @@ const GeneralLedgerPanel = ({ orders = [], user }) => {
                 </div>
             )}
 
+            {/* TABLA PRINCIPAL DE TRANSACCIONES EN EL PDF */}
             <table className="w-full border-collapse border border-black text-xs mb-8">
                 <thead>
-                    <tr className="bg-gray-200 border-b border-black">
+                    <tr className="bg-gray-200 border-b border-black font-bold">
                         <th className="border-r border-black p-2 w-8 text-center">#</th>
                         <th className="border-r border-black p-2 text-left">DESCRIPCIÓN DEL MOVIMIENTO</th>
                         <th className="border-r border-black p-2 text-center">ORDEN</th>
                         <th className="border-r border-black p-2 text-left">VENDEDOR</th>
                         <th className="border-r border-black p-2 text-center">MÉTODO</th>
-                        <th className="border-r border-black p-2 text-right w-20">INGRESO</th>
-                        <th className="p-2 text-right w-20">EGRESO</th>
+                        <th className="border-r border-black p-2 text-right w-24">INGRESO</th>
+                        <th className="p-2 text-right w-24">EGRESO</th>
                     </tr>
                 </thead>
                 <tbody>
                     {transaccionesFiltradas.length === 0 ? (
-                        <tr><td colSpan="7" className="p-4 text-center italic">No se registraron movimientos que coincidan.</td></tr>
+                        <tr><td colSpan="7" className="p-4 text-center italic">No se encontraron movimientos registrados.</td></tr>
                     ) : (
                         transaccionesFiltradas.map((tx, idx) => (
                             <tr key={tx.id} className="border-b border-black">
-                                <td className="border-r border-black p-1.5 text-center">{idx + 1}</td>
-                                
-                                <td className="border-r border-black p-1.5 uppercase">
-                                    <span className="font-bold">{tx.tipo}</span> - <span className="font-bold">{tx.cliente}</span> - <span>{tx.titulo}</span>
+                                <td className="border-r border-black p-1.5 text-center font-bold text-slate-500">{idx + 1}</td>
+                                <td className="border-r border-black p-1.5 uppercase font-medium">
+                                    <span className="font-bold">{tx.tipo}</span> - <span>{tx.cliente}</span> - <span className="text-slate-600 font-normal">{tx.titulo}</span>
                                 </td>
-                                
                                 <td className="border-r border-black p-1.5 text-center font-mono">{tx.orden}</td>
-                                <td className="border-r border-black p-1.5">{tx.vendedor}</td>
-                                <td className="border-r border-black p-1.5 text-center text-[10px] uppercase">
-                                    {tx.metodo.split('-')[0].trim()}
-                                </td>
-                                <td className="border-r border-black p-1.5 text-right font-bold">
-                                    {tx.ingreso > 0 ? formatCurrency(tx.ingreso) : ''}
-                                </td>
-                                <td className="p-1.5 text-right font-bold text-red-700">
-                                    {tx.egreso > 0 ? formatCurrency(tx.egreso) : ''}
-                                </td>
+                                <td className="border-r border-black p-1.5 font-medium">{tx.vendedor}</td>
+                                <td className="border-r border-black p-1.5 text-center uppercase text-[10px]">{tx.metodo.split('-')[0].trim()}</td>
+                                <td className="border-r border-black p-1.5 text-right font-bold text-green-700">{tx.ingreso > 0 ? formatCurrency(tx.ingreso) : ''}</td>
+                                <td className="p-1.5 text-right font-bold text-red-700">{tx.egreso > 0 ? formatCurrency(tx.egreso) : ''}</td>
                             </tr>
                         ))
                     )}
                 </tbody>
                 <tfoot>
-                    <tr className="bg-gray-200 border-t-2 border-black">
-                        <td colSpan="5" className="border-r border-black p-2 text-right font-bold uppercase">Totales mostrados:</td>
-                        <td className="border-r border-black p-2 text-right font-black">{formatCurrency(totalesTabla.ingresos)}</td>
-                        <td className="p-2 text-right font-black text-red-700">{formatCurrency(totalesTabla.egresos)}</td>
+                    <tr className="bg-gray-100 border-t-2 border-black font-bold">
+                        <td colSpan="5" className="border-r border-black p-2 text-right uppercase text-slate-700">Totales de la Tabla:</td>
+                        <td className="border-r border-black p-2 text-right text-green-800 font-black">{formatCurrency(totalesTabla.ingresos)}</td>
+                        <td className="p-2 text-right text-red-800 font-black">{formatCurrency(totalesTabla.egresos)}</td>
                     </tr>
                 </tfoot>
             </table>
+
+            {/* 🔥 NUEVAS TABLAS CONSOLIDADAS AL FINAL DEL PDF 🔥 */}
+            <div className="grid grid-cols-2 gap-4 mt-8" style={{ pageBreakInside: 'avoid' }}>
+                
+                {/* SUBTABLA 1: Resumen de flujos */}
+                <div>
+                    <h3 className="text-[11px] font-black uppercase tracking-wider mb-2 border-b border-black pb-1">Resumen Económico</h3>
+                    <table className="w-full border-collapse border border-black text-[11px]">
+                        <tbody>
+                            <tr className="border-b border-black"><td>Efectivo Neto Recibido</td><td className="text-right font-bold text-green-700">{formatCurrency(summary.efectivo)}</td></tr>
+                            <tr className="border-b border-black"><td>Transferencias Bancarias</td><td className="text-right font-bold text-blue-700">{formatCurrency(summary.bancos)}</td></tr>
+                            <tr className="border-b border-black bg-gray-100 font-bold"><td>TOTAL INGRESOS BRUTOS</td><td className="text-right font-black">{formatCurrency(summary.totalIngresos)}</td></tr>
+                            <tr><td>Egresos Totales (Vales)</td><td className="text-right font-bold text-red-600">-{formatCurrency(summary.egresos)}</td></tr>
+                        </tbody>
+                    </table>
+                </div>
+
+                {/* SUBTABLA 2: Arqueo individual por cada vendedor */}
+                <div>
+                    <h3 className="text-[11px] font-black uppercase tracking-wider mb-2 border-b border-black pb-1">Arqueo de Cajas por Vendedor</h3>
+                    <table className="w-full border-collapse border border-black text-[11px]">
+                        <thead>
+                            <tr className="bg-gray-100 border-b border-black font-bold text-slate-700">
+                                <th className="p-1.5 border-r border-black text-left">Vendedor</th>
+                                <th className="p-1.5 border-r border-black text-right w-20">Inicio</th>
+                                <th className="p-1.5 border-r border-black text-right w-20">Cierre</th>
+                                <th className="p-1.5 text-right w-24">Entregado</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {cajasData.breakdown.map((cv, idx) => (
+                                <tr key={`print-row-${idx}`} className="border-b border-black uppercase font-medium">
+                                    <td className="p-1.5 border-r border-black font-bold">{cv.vendedor}</td>
+                                    <td className="p-1.5 border-r border-black text-right font-mono text-slate-600">{formatCurrency(cv.inicial)}</td>
+                                    <td className="p-1.5 border-r border-black text-right font-mono text-slate-800 font-bold">{formatCurrency(cv.cierre)}</td>
+                                    <td className="p-1.5 text-right font-mono text-emerald-800 font-bold">{formatCurrency(cv.entregado)}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                        <tfoot className="bg-gray-200 font-bold">
+                            <tr>
+                                <td className="p-1.5 border-r border-black uppercase">TOTALES:</td>
+                                <td className="p-1.5 border-r border-black text-right font-mono">{formatCurrency(cajasData.inicialTotal)}</td>
+                                <td className="p-1.5 border-r border-black text-right font-mono">{formatCurrency(cajasData.cierreTotal)}</td>
+                                <td className="p-1.5 text-right font-mono">{formatCurrency(cajasData.entregadoTotal)}</td>
+                            </tr>
+                        </tfoot>
+                    </table>
+                </div>
+
+            </div>
+
+            {/* PIE DE PÁGINA IMPRESIÓN */}
+            <div className="mt-12 text-center text-[9px] text-slate-400 italic">
+                * Documento contable interno generado desde el Libro Diario de Cykes AdR.
+            </div>
+
         </div>
       </div>
     </>
