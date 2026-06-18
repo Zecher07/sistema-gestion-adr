@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { ShieldCheck, Calendar, DollarSign, Landmark, Camera, CheckCircle2, AlertCircle, X, Save, FileText, Upload, Loader2, ExternalLink } from 'lucide-react';
+import { ShieldCheck, Calendar, DollarSign, Landmark, CheckCircle2, AlertCircle, X, Save, FileText, Upload, Loader2, ExternalLink } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text';
 import { useToast } from '@/components/ui/use-toast';
@@ -110,7 +110,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
          const amountToAccounting = closing ? Number(closing.amount_to_accounting || 0) : 0;
 
          let totalTransfers = 0;
-         let transactions = []; // 🔥 NUEVO: Guardaremos el detalle de cada orden cobrada
+         let transactions = []; 
 
          orders.forEach(o => {
             const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
@@ -154,14 +154,14 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
          });
 
          const savedDetails = accountingReport?.detalles_vendedores || [];
-         const verification = savedDetails.find(d => d.vendedor?.toLowerCase().trim() === sellerName?.toLowerCase().trim()) || { status: 'PENDIENTE', proof_image: null, cash_ok: false };
+         const verification = savedDetails.find(d => d.vendedor?.toLowerCase().trim() === sellerName?.toLowerCase().trim()) || { status: 'PENDIENTE', cash_ok: false };
 
          return {
              name: sellerName,
              expectedCash: amountToAccounting,
              expectedTransfers: totalTransfers,
              hasData: amountToAccounting > 0 || totalTransfers > 0 || closing !== null,
-             transactions, // Pasamos las transacciones al modal
+             transactions, 
              verification
          };
      }).filter(s => s.hasData); 
@@ -190,6 +190,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
     }
   };
 
+  // 🔥 GUARDA EL ESTADO DE VERIFICADO DE INMEDIATO Y LO BLOQUEA 🔥
   const handleSaveSellerVerification = async () => {
       const currentDetails = accountingReport.detalles_vendedores || [];
       const newDetails = currentDetails.filter(d => d.vendedor !== verifyModal.name);
@@ -197,20 +198,40 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
       newDetails.push({
           vendedor: verifyModal.name,
           status: 'VERIFICADO',
-          cash_ok: verifyModal.cash_ok,
-          proof_image: verifyModal.proof_image
+          cash_ok: verifyModal.cash_ok
       });
 
       const updatedReport = { ...accountingReport, detalles_vendedores: newDetails };
       setAccountingReport(updatedReport);
       setVerifyModal(null);
-      toast({ title: "Vendedor Verificado", description: "Información guardada temporalmente. No olvide 'CERRAR DÍA' al finalizar." });
+      
+      try {
+          // Guardamos en Supabase al instante para que no se destilde si refrescan la página
+          const payload = {
+              fecha: selectedDate,
+              responsable: user.name,
+              detalles_vendedores: newDetails,
+              estado: accountingReport?.estado || 'PENDIENTE',
+              updated_at: new Date().toISOString()
+          };
+          await supabase.from('cierres_contables').upsert(payload, { onConflict: 'fecha' });
+          toast({ title: "Caja Verificada y Bloqueada", description: `La caja de ${verifyModal.name} fue confirmada exitosamente.` });
+      } catch (error) {
+          toast({ title: "Aviso", description: "Verificado localmente pero hubo error de red.", variant: "warning" });
+      }
   };
 
+  // 🔥 REGLA ESTRICTA: NO SE PUEDE CERRAR SI FALTAN VENDEDORES 🔥
   const handleCloseDay = async () => {
-      if (globalTotals.verifiedCount < globalTotals.totalSellers) {
-          if (!confirm("Faltan vendedores por verificar. ¿Seguro que desea cerrar el día de forma forzada?")) return;
+      const faltantes = globalTotals.totalSellers - globalTotals.verifiedCount;
+      if (faltantes > 0) {
+          return toast({ 
+              title: "Acción Denegada", 
+              description: `No puede cerrar el día. Faltan ${faltantes} caja(s) de vendedores por verificar.`, 
+              variant: "destructive" 
+          });
       }
+
       if (!generalProofImage && globalTotals.cash > 0) {
           return toast({ title: "Comprobante Obligatorio", description: "Debe subir el comprobante de depósito general de efectivo para cerrar el día.", variant: "destructive" });
       }
@@ -283,11 +304,13 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                 </CardContent>
             </Card>
 
-            <Card className="bg-slate-50 border-slate-200">
+            <Card className={cn("border", globalTotals.verifiedCount === globalTotals.totalSellers && globalTotals.totalSellers > 0 ? "bg-emerald-50 border-emerald-200" : "bg-slate-50 border-slate-200")}>
                 <CardContent className="p-6">
                     <div className="flex items-center gap-3 mb-2">
-                        <div className="p-2 bg-slate-200 rounded-lg"><CheckCircle2 className="h-6 w-6 text-slate-600" /></div>
-                        <h3 className="text-sm font-bold text-slate-700 uppercase tracking-wider">Progreso de Verificación</h3>
+                        <div className={cn("p-2 rounded-lg", globalTotals.verifiedCount === globalTotals.totalSellers && globalTotals.totalSellers > 0 ? "bg-emerald-100" : "bg-slate-200")}>
+                            <CheckCircle2 className={cn("h-6 w-6", globalTotals.verifiedCount === globalTotals.totalSellers && globalTotals.totalSellers > 0 ? "text-emerald-600" : "text-slate-600")} />
+                        </div>
+                        <h3 className={cn("text-sm font-bold uppercase tracking-wider", globalTotals.verifiedCount === globalTotals.totalSellers && globalTotals.totalSellers > 0 ? "text-emerald-800" : "text-slate-700")}>Progreso de Verificación</h3>
                     </div>
                     <p className="text-3xl font-black text-slate-800">{globalTotals.verifiedCount} <span className="text-xl text-slate-400">/ {globalTotals.totalSellers}</span></p>
                     <p className="text-xs text-slate-500 mt-1">Cajas validadas</p>
@@ -318,7 +341,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                             <tr><td colSpan="5" className="text-center py-10 text-slate-500">Nadie ha reportado movimientos de dinero para esta fecha.</td></tr>
                         ) : (
                             sellersData.map(seller => (
-                                <tr key={seller.name} className="hover:bg-slate-50">
+                                <tr key={seller.name} className={cn("transition-colors", seller.verification.status === 'VERIFICADO' ? "bg-emerald-50/30" : "hover:bg-slate-50")}>
                                     <td className="px-6 py-4 font-bold text-slate-800 uppercase">{seller.name}</td>
                                     <td className="px-6 py-4 text-right font-bold text-green-700">${seller.expectedCash.toFixed(2)}</td>
                                     <td className="px-6 py-4 text-right font-bold text-blue-700">${seller.expectedTransfers.toFixed(2)}</td>
@@ -328,13 +351,23 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-center">
+                                        {/* 🔥 BOTÓN BLOQUEADO SI YA ESTÁ VERIFICADO 🔥 */}
                                         <Button 
                                             variant="outline" 
                                             size="sm" 
-                                            className={cn("text-xs font-bold", seller.verification.status === 'VERIFICADO' ? "text-green-600 border-green-300" : "text-indigo-600 border-indigo-300")}
-                                            onClick={() => setVerifyModal({ ...seller, cash_ok: seller.verification.cash_ok, proof_image: seller.verification.proof_image })}
+                                            className={cn("text-xs font-bold transition-colors", 
+                                                seller.verification.status === 'VERIFICADO' 
+                                                ? "bg-slate-100 text-green-700 border-green-300 opacity-60 cursor-not-allowed" 
+                                                : "text-indigo-600 border-indigo-300 hover:bg-indigo-50"
+                                            )}
+                                            onClick={() => {
+                                                if (seller.verification.status !== 'VERIFICADO') {
+                                                    setVerifyModal({ ...seller, cash_ok: seller.verification.cash_ok });
+                                                }
+                                            }}
+                                            disabled={seller.verification.status === 'VERIFICADO'}
                                         >
-                                            {seller.verification.status === 'VERIFICADO' ? 'Modificar' : 'Verificar Detalles'}
+                                            {seller.verification.status === 'VERIFICADO' ? 'Validado (Bloqueado)' : 'Verificar Detalles'}
                                         </Button>
                                     </td>
                                 </tr>
@@ -349,7 +382,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
             <h3 className="font-bold text-indigo-900 mb-4 text-lg flex items-center gap-2"><Landmark className="h-5 w-5" /> Cierre de Día (Depósito General)</h3>
             <div className="flex flex-col md:flex-row gap-6 items-start">
                 <div className="flex-1 space-y-4">
-                    <p className="text-sm text-indigo-700">Para finalizar la caja del día, debes subir el comprobante de depósito bancario donde consta todo el efectivo recolectado (${globalTotals.cash.toFixed(2)}).</p>
+                    <p className="text-sm text-indigo-700">Para finalizar la caja del día, debes subir el comprobante de depósito bancario (o de transferencias globales) que sustente el cierre de la jornada.</p>
                     
                     <div className="bg-white p-4 rounded border border-indigo-100">
                         <label className="block text-xs font-bold text-slate-500 uppercase mb-2">Comprobante de Depósito / Cierre *</label>
@@ -395,7 +428,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                         </div>
                         
                         <div className="grid grid-cols-1 lg:grid-cols-2">
-                            {/* LADO IZQUIERDO: Validaciones manuales (Efectivo y Comprobante) */}
+                            {/* LADO IZQUIERDO: Validaciones manuales (Efectivo) */}
                             <div className="p-6 space-y-6 border-r border-slate-200">
                                 <h4 className="font-bold text-slate-700 mb-2 border-b border-slate-200 pb-2">1. Recepción y Evidencias</h4>
                                 
@@ -416,20 +449,9 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                                         <div>
                                             <span className="text-xs font-bold text-blue-800 uppercase tracking-wider block">Transferencias / Bancos</span>
                                             <span className="text-2xl font-black text-blue-700">${verifyModal.expectedTransfers.toFixed(2)}</span>
+                                            <p className="text-[10px] text-blue-600 mt-1">*Las evidencias de transferencia se subirán en el Cierre de Día Global abajo.</p>
                                         </div>
                                     </div>
-                                    <div className="mt-2">
-                                        <label className="cursor-pointer bg-white border border-blue-300 text-blue-700 hover:bg-blue-100 px-4 py-2 rounded-md text-xs font-bold transition-colors inline-flex items-center gap-2 shadow-sm">
-                                            <Camera className="h-4 w-4" /> Subir Evidencia
-                                            <input type="file" accept="image/*" className="hidden" onChange={(e) => handleImageUpload(e, (img) => setVerifyModal({...verifyModal, proof_image: img}))} />
-                                        </label>
-                                    </div>
-                                    {verifyModal.proof_image && (
-                                        <div className="mt-4 relative inline-block">
-                                            <img src={verifyModal.proof_image} alt="Comprobante Transferencia" className="max-h-32 rounded border border-slate-200 shadow-sm cursor-pointer" onClick={() => setPreviewImage(verifyModal.proof_image)} />
-                                            <button onClick={() => setVerifyModal({...verifyModal, proof_image: null})} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-md hover:bg-red-600"><X className="h-3 w-3"/></button>
-                                        </div>
-                                    )}
                                 </div>
                             </div>
 
@@ -478,7 +500,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
 
                         <div className="bg-slate-100 p-4 border-t border-slate-200 flex justify-end gap-3">
                             <Button variant="outline" onClick={() => setVerifyModal(null)}>Cancelar</Button>
-                            <Button onClick={handleSaveSellerVerification} className="bg-indigo-600 hover:bg-indigo-700 text-white font-bold gap-2 shadow-md">
+                            <Button onClick={handleSaveSellerVerification} disabled={!verifyModal.cash_ok} className="bg-green-600 hover:bg-green-700 text-white font-bold gap-2 shadow-md">
                                 <CheckCircle2 className="h-4 w-4" /> Marcar Verificado
                             </Button>
                         </div>

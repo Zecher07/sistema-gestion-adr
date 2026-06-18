@@ -53,7 +53,8 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
        setSearchTerm(val);
        if (val.trim().length < 2) { setSuggestions([]); setIsSearching(false); return; }
        setIsSearching(true);
-       const { data } = await supabase.from('inventario').select('*').ilike('nombre', `%${val}%`).limit(8);
+       // 🔥 MEJORA: Aumentamos el límite de 8 a 20 resultados
+       const { data } = await supabase.from('inventario').select('*').ilike('nombre', `%${val}%`).limit(20);
        setSuggestions(data || []);
     };
 
@@ -196,7 +197,8 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                           value={searchTerm} onChange={e => handleSearch(e.target.value)} disabled={noMaterials}
                                        />
                                        {suggestions.length > 0 && (
-                                           <div className="absolute z-20 w-full bg-white border border-slate-300 shadow-xl max-h-40 overflow-y-auto mt-1 rounded-md text-xs">
+                                           // 🔥 MEJORA: max-h-[300px] para que la caja sea mucho más alta
+                                           <div className="absolute z-20 w-full bg-white border border-slate-300 shadow-xl max-h-[300px] overflow-y-auto mt-1 rounded-md text-xs">
                                                {suggestions.map(s => {
                                                    const isOutOfStock = Number(s.cantidad) <= 0;
                                                    return (
@@ -223,7 +225,8 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                    </div>
 
                                    {usedMaterials.length > 0 && (
-                                       <div className="space-y-2 bg-white p-2 rounded border border-blue-100 shadow-inner max-h-40 overflow-y-auto">
+                                       // 🔥 MEJORA: max-h-[250px] para no apretar la lista de materiales agregados
+                                       <div className="space-y-2 bg-white p-2 rounded border border-blue-100 shadow-inner max-h-[250px] overflow-y-auto">
                                            {usedMaterials.map(m => (
                                                <div key={m.id} className="flex items-center gap-2 text-xs">
                                                    <span className="flex-1 truncate font-medium text-slate-700" title={m.nombre}>{m.nombre}</span>
