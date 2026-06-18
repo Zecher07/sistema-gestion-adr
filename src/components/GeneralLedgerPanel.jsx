@@ -31,12 +31,18 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       setLoading(true);
       try {
         const [valesRes, closingsRes, profRes] = await Promise.all([
-          supabase.from('vales_caja').select('*').eq('status', 'APROBADO').eq('fecha', selectedDate),
+          // 🔥 AQUÍ SE QUITÓ LA RESTRICCIÓN DE ".eq('status', 'APROBADO')" 🔥
+          supabase.from('vales_caja').select('*').eq('fecha', selectedDate),
           supabase.from('daily_closings').select('*'),
           supabase.from('profiles').select('*') 
         ]);
 
-        if (!valesRes.error) setValesDelDia(valesRes.data || []);
+        if (!valesRes.error) {
+            // Se aceptan todos los vales (Pendientes y Aprobados), 
+            // solo se ignoran los que el administrador haya rechazado o anulado.
+            const valesValidos = (valesRes.data || []).filter(v => v.status !== 'RECHAZADO' && v.status !== 'ANULADA' && v.status !== 'ANULADO');
+            setValesDelDia(valesValidos);
+        }
         if (!closingsRes.error) setRawClosings(closingsRes.data || []);
         if (!profRes.error) setProfilesList(profRes.data || []);
 
@@ -135,7 +141,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
     return txs.sort((a, b) => b.ingreso - a.ingreso);
   }, [orders, selectedDate, valesDelDia]);
 
-  // 3. CÁLCULO MÁGICO DE CAJAS POR VENDEDOR (Inicio, Calculada de Cierre, Entregado)
+  // 3. CÁLCULO MÁGICO DE CAJAS POR VENDEDOR (Inicio, Cierre, Entregado, Saldo Mañana)
   const cajasData = useMemo(() => {
     const filtrados = rawClosings.filter(c => c.date && c.date.split('T')[0] === selectedDate);
     
@@ -163,20 +169,25 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
 
       // El Cierre Físico es: Con cuánto empezó + Lo que cobró - Lo que salió (vales)
       const cierreCalculado = inicial + ingresosEfectivo - egresosEfectivo;
+      
+      // Saldo que queda físicamente en caja para mañana
+      const saldoManana = cierreCalculado - entregado;
 
       return {
         vendedor: vendedorName,
         inicial: inicial,
         cierre: cierreCalculado,
-        entregado: entregado
+        entregado: entregado,
+        saldoManana: saldoManana
       };
     });
 
     const inicialTotal = breakdown.reduce((sum, b) => sum + b.inicial, 0);
     const cierreTotal = breakdown.reduce((sum, b) => sum + b.cierre, 0);
     const entregadoTotal = breakdown.reduce((sum, b) => sum + b.entregado, 0);
+    const saldoMananaTotal = breakdown.reduce((sum, b) => sum + b.saldoManana, 0);
 
-    return { breakdown, inicialTotal, cierreTotal, entregadoTotal };
+    return { breakdown, inicialTotal, cierreTotal, entregadoTotal, saldoMananaTotal };
   }, [rawClosings, selectedDate, staffUsers, profilesList, transactions]);
 
   const vendedoresDisponibles = useMemo(() => {
@@ -412,29 +423,30 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
         </div>
 
         {/* 🔥 TABLAS RESUMEN CONDESADAS AL FINAL EN PANTALLA 🔥 */}
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mt-6">
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
+        <div className="grid grid-cols-1 xl:grid-cols-12 gap-6 mt-6">
+            <div className="xl:col-span-4 bg-white rounded-xl shadow-sm border border-slate-200 p-6 h-fit">
                 <h3 className="text-base font-bold text-slate-700 uppercase tracking-wider mb-4 border-b pb-2">Resumen de Flujos del Día</h3>
                 <table className="w-full text-sm text-left border-collapse border border-slate-200">
                     <tbody className="divide-y divide-slate-200">
-                        <tr><td className="p-3 font-medium text-slate-700">Ingresos en Efectivo (Caja)</td><td className="p-3 text-right font-bold text-green-700">{formatCurrency(summary.efectivo)}</td></tr>
-                        <tr><td className="p-3 font-medium text-slate-700">Ingresos por Bancos (Transferencias)</td><td className="p-3 text-right font-bold text-blue-700">{formatCurrency(summary.bancos)}</td></tr>
-                        <tr className="bg-slate-50 font-bold"><td className="p-3 uppercase text-slate-800">Total Ingresos del Día</td><td className="p-3 text-right font-black text-slate-900">{formatCurrency(summary.totalIngresos)}</td></tr>
-                        <tr><td className="p-3 font-medium text-slate-700">Total Egresos (Vales / Anulaciones)</td><td className="p-3 text-right font-bold text-red-600">-{formatCurrency(summary.egresos)}</td></tr>
+                        <tr><td className="p-3 font-medium text-slate-700">Ingresos Efectivo (Caja)</td><td className="p-3 text-right font-bold text-green-700">{formatCurrency(summary.efectivo)}</td></tr>
+                        <tr><td className="p-3 font-medium text-slate-700">Bancos (Transferencias)</td><td className="p-3 text-right font-bold text-blue-700">{formatCurrency(summary.bancos)}</td></tr>
+                        <tr className="bg-slate-50 font-bold"><td className="p-3 uppercase text-slate-800">Total Ingresos Día</td><td className="p-3 text-right font-black text-slate-900">{formatCurrency(summary.totalIngresos)}</td></tr>
+                        <tr><td className="p-3 font-medium text-slate-700">Egresos Totales (Vales)</td><td className="p-3 text-right font-bold text-red-600">-{formatCurrency(summary.egresos)}</td></tr>
                     </tbody>
                 </table>
             </div>
 
-            {/* 🔥 NUEVA TABLA: ARQUEO DE CAJAS POR VENDEDOR 🔥 */}
-            <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-6">
-                <h3 className="text-base font-bold text-slate-700 uppercase tracking-wider mb-4 border-b pb-2">Arqueo de Cajas por Vendedor</h3>
-                <table className="w-full text-sm text-left border-collapse border border-slate-200">
+            {/* 🔥 NUEVA TABLA: ARQUEO DE CAJAS POR VENDEDOR CON SALDO MAÑANA 🔥 */}
+            <div className="xl:col-span-8 bg-white rounded-xl shadow-sm border border-slate-200 p-6 overflow-x-auto">
+                <h3 className="text-base font-bold text-slate-700 uppercase tracking-wider mb-4 border-b pb-2">Arqueo Individual de Cajas</h3>
+                <table className="w-full text-sm text-left border-collapse border border-slate-200 min-w-[600px]">
                     <thead className="bg-slate-800 text-white font-bold text-xs uppercase">
                         <tr>
-                            <th className="p-3 border-r border-slate-700">Vendedor</th>
+                            <th className="p-3 border-r border-slate-700">Vendedor / Usuario</th>
                             <th className="p-3 text-right border-r border-slate-700 w-28">Caja Inicio</th>
                             <th className="p-3 text-right border-r border-slate-700 w-28">Caja Cierre</th>
-                            <th className="p-3 text-right w-32">Entregado Contab.</th>
+                            <th className="p-3 text-right border-r border-slate-700 w-32">Entregado Contab.</th>
+                            <th className="p-3 text-right w-32">Saldo Mañana</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-200">
@@ -444,18 +456,20 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                 <td className="p-3 text-right font-mono text-slate-500 font-bold">{formatCurrency(cv.inicial)}</td>
                                 <td className="p-3 text-right font-mono text-indigo-600 font-bold">{formatCurrency(cv.cierre)}</td>
                                 <td className="p-3 text-right font-mono text-emerald-600 font-black">{formatCurrency(cv.entregado)}</td>
+                                <td className="p-3 text-right font-mono text-orange-600 font-black">{formatCurrency(cv.saldoManana)}</td>
                             </tr>
                         ))}
                         {cajasData.breakdown.length === 0 && (
-                            <tr><td colSpan="4" className="p-4 text-center text-slate-400 italic">No hay cierres de caja registrados hoy.</td></tr>
+                            <tr><td colSpan="5" className="p-4 text-center text-slate-400 italic">No hay cierres de caja registrados hoy.</td></tr>
                         )}
                     </tbody>
                     <tfoot className="bg-slate-100 font-bold border-t-2 border-slate-300 text-xs">
                         <tr>
-                            <td className="p-3 uppercase text-slate-700 font-black">TOTALES:</td>
+                            <td className="p-3 uppercase text-slate-700 font-black">TOTALES CONSOLIDADOS:</td>
                             <td className="p-3 text-right font-mono text-slate-700 font-black text-sm">{formatCurrency(cajasData.inicialTotal)}</td>
                             <td className="p-3 text-right font-mono text-indigo-900 font-black text-sm">{formatCurrency(cajasData.cierreTotal)}</td>
                             <td className="p-3 text-right font-mono text-emerald-800 font-black text-sm">{formatCurrency(cajasData.entregadoTotal)}</td>
+                            <td className="p-3 text-right font-mono text-orange-800 font-black text-sm">{formatCurrency(cajasData.saldoMananaTotal)}</td>
                         </tr>
                     </tfoot>
                 </table>
@@ -505,7 +519,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
             )}
 
             {/* TABLA PRINCIPAL DE TRANSACCIONES EN EL PDF */}
-            <table className="w-full border-collapse border border-black text-xs mb-8">
+            <table className="w-full border-collapse border border-black text-[11px] mb-8">
                 <thead>
                     <tr className="bg-gray-200 border-b border-black font-bold">
                         <th className="border-r border-black p-2 w-8 text-center">#</th>
@@ -513,8 +527,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                         <th className="border-r border-black p-2 text-center">ORDEN</th>
                         <th className="border-r border-black p-2 text-left">VENDEDOR</th>
                         <th className="border-r border-black p-2 text-center">MÉTODO</th>
-                        <th className="border-r border-black p-2 text-right w-24">INGRESO</th>
-                        <th className="p-2 text-right w-24">EGRESO</th>
+                        <th className="border-r border-black p-2 text-right w-20">INGRESO</th>
+                        <th className="p-2 text-right w-20">EGRESO</th>
                     </tr>
                 </thead>
                 <tbody>
@@ -529,7 +543,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                 </td>
                                 <td className="border-r border-black p-1.5 text-center font-mono">{tx.orden}</td>
                                 <td className="border-r border-black p-1.5 font-medium">{tx.vendedor}</td>
-                                <td className="border-r border-black p-1.5 text-center uppercase text-[10px]">{tx.metodo.split('-')[0].trim()}</td>
+                                <td className="border-r border-black p-1.5 text-center uppercase text-[9px]">{tx.metodo.split('-')[0].trim()}</td>
                                 <td className="border-r border-black p-1.5 text-right font-bold text-green-700">{tx.ingreso > 0 ? formatCurrency(tx.ingreso) : ''}</td>
                                 <td className="p-1.5 text-right font-bold text-red-700">{tx.egreso > 0 ? formatCurrency(tx.egreso) : ''}</td>
                             </tr>
@@ -545,13 +559,13 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                 </tfoot>
             </table>
 
-            {/* 🔥 NUEVAS TABLAS CONSOLIDADAS AL FINAL DEL PDF 🔥 */}
-            <div className="grid grid-cols-2 gap-4 mt-8" style={{ pageBreakInside: 'avoid' }}>
+            {/* 🔥 NUEVAS TABLAS CONSOLIDADAS AL FINAL DEL PDF CON SALDO MAÑANA 🔥 */}
+            <div className="grid grid-cols-[1fr_2fr] gap-4 mt-8" style={{ pageBreakInside: 'avoid' }}>
                 
                 {/* SUBTABLA 1: Resumen de flujos */}
                 <div>
                     <h3 className="text-[11px] font-black uppercase tracking-wider mb-2 border-b border-black pb-1">Resumen Económico</h3>
-                    <table className="w-full border-collapse border border-black text-[11px]">
+                    <table className="w-full border-collapse border border-black text-[10px]">
                         <tbody>
                             <tr className="border-b border-black"><td>Efectivo Neto Recibido</td><td className="text-right font-bold text-green-700">{formatCurrency(summary.efectivo)}</td></tr>
                             <tr className="border-b border-black"><td>Transferencias Bancarias</td><td className="text-right font-bold text-blue-700">{formatCurrency(summary.bancos)}</td></tr>
@@ -564,13 +578,14 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                 {/* SUBTABLA 2: Arqueo individual por cada vendedor */}
                 <div>
                     <h3 className="text-[11px] font-black uppercase tracking-wider mb-2 border-b border-black pb-1">Arqueo de Cajas por Vendedor</h3>
-                    <table className="w-full border-collapse border border-black text-[11px]">
+                    <table className="w-full border-collapse border border-black text-[10px]">
                         <thead>
                             <tr className="bg-gray-100 border-b border-black font-bold text-slate-700">
                                 <th className="p-1.5 border-r border-black text-left">Vendedor</th>
-                                <th className="p-1.5 border-r border-black text-right w-20">Inicio</th>
-                                <th className="p-1.5 border-r border-black text-right w-20">Cierre</th>
-                                <th className="p-1.5 text-right w-24">Entregado</th>
+                                <th className="p-1.5 border-r border-black text-right w-16">Inicio</th>
+                                <th className="p-1.5 border-r border-black text-right w-16">Cierre</th>
+                                <th className="p-1.5 border-r border-black text-right w-20">Entregado</th>
+                                <th className="p-1.5 text-right w-20">Para Mañana</th>
                             </tr>
                         </thead>
                         <tbody>
@@ -579,7 +594,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                     <td className="p-1.5 border-r border-black font-bold">{cv.vendedor}</td>
                                     <td className="p-1.5 border-r border-black text-right font-mono text-slate-600">{formatCurrency(cv.inicial)}</td>
                                     <td className="p-1.5 border-r border-black text-right font-mono text-slate-800 font-bold">{formatCurrency(cv.cierre)}</td>
-                                    <td className="p-1.5 text-right font-mono text-emerald-800 font-bold">{formatCurrency(cv.entregado)}</td>
+                                    <td className="p-1.5 border-r border-black text-right font-mono text-emerald-800 font-bold">{formatCurrency(cv.entregado)}</td>
+                                    <td className="p-1.5 text-right font-mono text-orange-800 font-bold">{formatCurrency(cv.saldoManana)}</td>
                                 </tr>
                             ))}
                         </tbody>
@@ -588,7 +604,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                 <td className="p-1.5 border-r border-black uppercase">TOTALES:</td>
                                 <td className="p-1.5 border-r border-black text-right font-mono">{formatCurrency(cajasData.inicialTotal)}</td>
                                 <td className="p-1.5 border-r border-black text-right font-mono">{formatCurrency(cajasData.cierreTotal)}</td>
-                                <td className="p-1.5 text-right font-mono">{formatCurrency(cajasData.entregadoTotal)}</td>
+                                <td className="p-1.5 border-r border-black text-right font-mono">{formatCurrency(cajasData.entregadoTotal)}</td>
+                                <td className="p-1.5 text-right font-mono">{formatCurrency(cajasData.saldoMananaTotal)}</td>
                             </tr>
                         </tfoot>
                     </table>
