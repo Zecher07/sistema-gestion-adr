@@ -31,18 +31,13 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       setLoading(true);
       try {
         const [valesRes, closingsRes, profRes] = await Promise.all([
-          // 🔥 AQUÍ SE QUITÓ LA RESTRICCIÓN DE ".eq('status', 'APROBADO')" 🔥
-          supabase.from('vales_caja').select('*').eq('fecha', selectedDate),
+          // 🔥 AQUÍ SE RESTRINGIÓ PARA QUE SOLO TRAIGA LOS APROBADOS 🔥
+          supabase.from('vales_caja').select('*').eq('status', 'APROBADO').eq('fecha', selectedDate),
           supabase.from('daily_closings').select('*'),
           supabase.from('profiles').select('*') 
         ]);
 
-        if (!valesRes.error) {
-            // Se aceptan todos los vales (Pendientes y Aprobados), 
-            // solo se ignoran los que el administrador haya rechazado o anulado.
-            const valesValidos = (valesRes.data || []).filter(v => v.status !== 'RECHAZADO' && v.status !== 'ANULADA' && v.status !== 'ANULADO');
-            setValesDelDia(valesValidos);
-        }
+        if (!valesRes.error) setValesDelDia(valesRes.data || []);
         if (!closingsRes.error) setRawClosings(closingsRes.data || []);
         if (!profRes.error) setProfilesList(profRes.data || []);
 
@@ -126,7 +121,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       }
     });
 
-    // VALES DE CAJA
+    // VALES DE CAJA (Solo llegarán los aprobados según la consulta)
     valesDelDia.forEach((vale, idx) => {
       txs.push({
         id: `val-${vale.id || idx}`,
@@ -167,7 +162,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           egresosEfectivo += tx.egreso;
       });
 
-      // El Cierre Físico es: Con cuánto empezó + Lo que cobró - Lo que salió (vales)
+      // El Cierre Físico es: Con cuánto empezó + Lo que cobró - Lo que salió (vales aprobados)
       const cierreCalculado = inicial + ingresosEfectivo - egresosEfectivo;
       
       // Saldo que queda físicamente en caja para mañana
