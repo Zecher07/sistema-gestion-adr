@@ -141,7 +141,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
               const isBeforeToday = createdDateStr < date;
               const recibioAnticipo = isUserMatch(o.recibido_por_anticipo, userName) || (!o.recibido_por_anticipo && isUserMatch(o.vendedor, userName));
               
-              // Solo el Efectivo entra al recálculo histórico flotante
               const formaAnticipo = formatPaymentMethod(o.formaPagoAnticipo || o.forma_pago_anticipo);
               if (isAfterLastReport && isBeforeToday && recibioAnticipo && formaAnticipo === 'EFECTIVO') {
                   if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') { floatingSum += Number(o.anticipo); floatingCount++; }
@@ -149,7 +148,10 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
               const isUpdatedAfterLastReport = balanceDateStr > lastReportDateStr;
               const isUpdatedBeforeToday = balanceDateStr < date;
-              const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
+              
+              // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
+              const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
+              
               const recibioSaldo = isUserMatch(o.recibido_por_saldo, userName) || (!o.recibido_por_saldo && isUserMatch(o.vendedor, userName));
               const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
               
@@ -261,7 +263,10 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     relevantOrders.forEach(o => {
       const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
       const paymentDate = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDate;
-      const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
+      
+      // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
+      const isRelevantStatus = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
+      
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
       const saldoFinalReal = saldoCobrado - totalAbonado;
@@ -287,7 +292,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     });
     
     valesDelDia.forEach(vale => {
-        txs.push({ id: `vale-${vale.id}`, type: 'VALE CAJA', description: vale.concepto, details: vale.recibido_por ? `A: ${vale.recibido_por} (Aprobado)` : '(Aprobado)', orderNumber: 'VALE', income: 0, expense: Number(vale.monto), balanceNote: 'EGRESO', isManual: false, isAnulada: false, isVale: true, paymentMethod: 'EFECTIVO' });
+        txs.push({ id: `vale-${vale.id}`, type: 'VALE CAJA', description: vale.concepto, details: vale.recibido_por ? `A: ${vale.recibido_por} (Aprobado)` : '(Aprobado)', orderNumber: `VC-${String(vale.id).padStart(5, '0')}`, income: 0, expense: Number(vale.monto), balanceNote: 'EGRESO', isManual: false, isAnulada: false, isVale: true, paymentMethod: 'EFECTIVO' });
     });
 
     return txs;
@@ -295,7 +300,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
   const allTransactions = useMemo(() => [...automaticTransactions, ...ledgerData.manualTransactions], [automaticTransactions, ledgerData]);
 
-  // 🔥 TOTATLIZADOR CORREGIDO: SOLO EFECTIVO SUMA A LA CAJA FÍSICA 🔥
   const totals = useMemo(() => {
     let totalIncome = 0;
     let totalExpense = 0;
@@ -307,8 +311,6 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
             totalIncome += Number(tx.income || 0);
             totalExpense += Number(tx.expense || 0);
         } else {
-            // Lo que se pagó por transferencia/tarjeta no afecta la caja, 
-            // pero lo calculamos para mostrarlo en el panel informativo.
             totalOtrosMedios += Number(tx.income || 0) - Number(tx.expense || 0);
         }
     });
