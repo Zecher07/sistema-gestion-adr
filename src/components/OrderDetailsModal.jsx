@@ -53,7 +53,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
        setSearchTerm(val);
        if (val.trim().length < 2) { setSuggestions([]); setIsSearching(false); return; }
        setIsSearching(true);
-       // 🔥 MEJORA: Aumentamos el límite de 8 a 20 resultados
        const { data } = await supabase.from('inventario').select('*').ilike('nombre', `%${val}%`).limit(20);
        setSuggestions(data || []);
     };
@@ -129,9 +128,11 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                 }
 
                 for (const update of stockUpdates) {
+                    // 1. Actualizamos el inventario (restamos la cantidad)
                     const { error: updateErr } = await supabase.from('inventario').update({ cantidad: update.newQty }).eq('id', update.id);
                     if (updateErr) throw updateErr;
                     
+                    // 2. Guardamos en el historial
                     const orderRef = String(order.orderNumber || order.order_number || order.id).padStart(7, '0');
                     const { error: histErr } = await supabase.from('historial_inventario').insert([{
                         material_id: update.id,
@@ -143,9 +144,11 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                         usuario: user?.name || 'Sistema'
                     }]);
                     
+                    // 🔥 PROTECCIÓN ANTI-BLOQUEO 🔥
+                    // Si el historial falla (ej: llave duplicada), mostramos error en consola 
+                    // pero dejamos que el proceso termine para que NO descuente doble el inventario.
                     if (histErr) {
-                        console.error("Error guardando historial:", histErr);
-                        throw new Error("No se pudo guardar el historial de " + update.nombre);
+                        console.error("Error guardando historial (pero se descontó el stock correctamente):", histErr);
                     }
                 }
             }
@@ -197,7 +200,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                           value={searchTerm} onChange={e => handleSearch(e.target.value)} disabled={noMaterials}
                                        />
                                        {suggestions.length > 0 && (
-                                           // 🔥 MEJORA: max-h-[300px] para que la caja sea mucho más alta
                                            <div className="absolute z-20 w-full bg-white border border-slate-300 shadow-xl max-h-[300px] overflow-y-auto mt-1 rounded-md text-xs">
                                                {suggestions.map(s => {
                                                    const isOutOfStock = Number(s.cantidad) <= 0;
@@ -225,7 +227,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                    </div>
 
                                    {usedMaterials.length > 0 && (
-                                       // 🔥 MEJORA: max-h-[250px] para no apretar la lista de materiales agregados
                                        <div className="space-y-2 bg-white p-2 rounded border border-blue-100 shadow-inner max-h-[250px] overflow-y-auto">
                                            {usedMaterials.map(m => (
                                                <div key={m.id} className="flex items-center gap-2 text-xs">
