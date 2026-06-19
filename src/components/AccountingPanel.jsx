@@ -95,7 +95,8 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
             if (cobradorAnt) activeSellers.add(cobradorAnt);
         }
 
-        const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
+        // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
+        const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
         if (balanceDateStr === selectedDate && isClosed) {
             const cobradorSal = o.recibido_por_saldo || o.vendedor;
             if (cobradorSal) activeSellers.add(cobradorSal);
@@ -143,7 +144,8 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                 }
             }
             
-            const isClosed = o.status === 'FINALIZADA' || o.status === 'VENTAS POR RETIRAR' || o.status === 'ENTREGADO';
+            // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
+            const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
             if (balanceDateStr === selectedDate && isClosed) {
                 const cobradorSal = o.recibido_por_saldo || o.vendedor;
                 const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
@@ -190,7 +192,6 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
     }
   };
 
-  // 🔥 GUARDA EL ESTADO DE VERIFICADO DE INMEDIATO Y LO BLOQUEA 🔥
   const handleSaveSellerVerification = async () => {
       const currentDetails = accountingReport.detalles_vendedores || [];
       const newDetails = currentDetails.filter(d => d.vendedor !== verifyModal.name);
@@ -206,7 +207,6 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
       setVerifyModal(null);
       
       try {
-          // Guardamos en Supabase al instante para que no se destilde si refrescan la página
           const payload = {
               fecha: selectedDate,
               responsable: user.name,
@@ -221,7 +221,6 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
       }
   };
 
-  // 🔥 REGLA ESTRICTA: NO SE PUEDE CERRAR SI FALTAN VENDEDORES 🔥
   const handleCloseDay = async () => {
       const faltantes = globalTotals.totalSellers - globalTotals.verifiedCount;
       if (faltantes > 0) {
@@ -351,7 +350,6 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                                         </span>
                                     </td>
                                     <td className="px-6 py-4 text-center">
-                                        {/* 🔥 BOTÓN BLOQUEADO SI YA ESTÁ VERIFICADO 🔥 */}
                                         <Button 
                                             variant="outline" 
                                             size="sm" 
@@ -428,7 +426,6 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                         </div>
                         
                         <div className="grid grid-cols-1 lg:grid-cols-2">
-                            {/* LADO IZQUIERDO: Validaciones manuales (Efectivo) */}
                             <div className="p-6 space-y-6 border-r border-slate-200">
                                 <h4 className="font-bold text-slate-700 mb-2 border-b border-slate-200 pb-2">1. Recepción y Evidencias</h4>
                                 
@@ -455,7 +452,6 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
                                 </div>
                             </div>
 
-                            {/* LADO DERECHO: Desglose de Movimientos (Órdenes) */}
                             <div className="p-6 bg-slate-50 overflow-y-auto max-h-[60vh]">
                                 <h4 className="font-bold text-slate-700 mb-3 border-b border-slate-200 pb-2">2. Desglose de Movimientos (Órdenes de Hoy)</h4>
                                 

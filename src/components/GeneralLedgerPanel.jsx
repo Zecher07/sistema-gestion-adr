@@ -92,7 +92,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       });
 
       // SALDOS (RETIROS)
-      const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'ENTREGADO'].includes(o.status);
+      // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
+      const isRelevantStatus = ['FINALIZADA', 'ENTREGADO'].includes(o.status);
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
       const saldoFinalReal = saldoCobrado - totalAbonado;
@@ -126,7 +127,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       txs.push({
         id: `val-${vale.id || idx}`,
         tipo: 'VALE DE CAJA',
-        cliente: 'USO INTERNO', titulo: vale.concepto, orden: 'VALE',
+        cliente: 'USO INTERNO', titulo: vale.concepto, orden: `VC-${String(vale.id).padStart(5, '0')}`,
         vendedor: vale.vendedor || 'Sistema',
         metodo: 'Efectivo', 
         ingreso: 0, egreso: Number(vale.monto)
