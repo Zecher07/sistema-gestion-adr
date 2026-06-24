@@ -164,6 +164,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [localDiscountVal, setLocalDiscountVal] = useState('');
   const [localDiscountPercent, setLocalDiscountPercent] = useState('');
   
+  const [localRetencionVal, setLocalRetencionVal] = useState('');
+  const [localRetencionPercent, setLocalRetencionPercent] = useState('');
+  
   const [isSellerDropdownOpen, setIsSellerDropdownOpen] = useState(false);
 
   const [abonos, setAbonos] = useState([]);
@@ -180,7 +183,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [isProcessingAbonoImages, setIsProcessingAbonoImages] = useState(false);
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
-
   const roundUpToHalf = (num) => Math.ceil(num * 2) / 2;
 
   useEffect(() => { setLocalClients(clients); }, [clients]);
@@ -208,22 +210,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
 
-  const validSellers = useMemo(() => {
-     return getValidSellers(staffUsers);
-  }, [staffUsers]);
+  const validSellers = useMemo(() => getValidSellers(staffUsers), [staffUsers]);
 
-  const selectedClientData = useMemo(() => {
-      return localClients.find(c => c.id === formData.clienteId) || null;
-  }, [localClients, formData.clienteId]);
+  const selectedClientData = useMemo(() => localClients.find(c => c.id === formData.clienteId) || null, [localClients, formData.clienteId]);
 
   const limiteCredito = selectedClientData?.permiteCredito ? Number(selectedClientData.limiteCredito) || 0 : 0;
-  
   const deudaActual = useMemo(() => {
       if (!formData.clienteId) return 0;
       let deuda = 0;
       orders.forEach(o => {
           if (initialData?.id && o.id === initialData.id) return; 
-          
           if (o.cliente_id === formData.clienteId && o.status !== 'ANULADA' && o.status !== 'ARCHIVADA') {
               const total = Number(o.financials?.total) || 0;
               const anticipo = Number(o.anticipo) || 0;
@@ -235,7 +231,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       });
       return deuda;
   }, [formData.clienteId, orders, initialData]);
-  
   const creditoDisponible = Math.max(limiteCredito - deudaActual, 0);
 
   useEffect(() => {
@@ -267,23 +262,18 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       
       const retentionVal = initialData.retencion || finData.retencion || 0;
       setApplyRetention(retentionVal > 0);
+      setLocalRetencionVal(retentionVal > 0 ? retentionVal.toFixed(2) : '');
+      const savedRetPercent = finData.retentionPercent || initialData.retentionPercent || 0;
+      setLocalRetencionPercent(savedRetPercent > 0 ? savedRetPercent.toString() : '');
 
       const savedAnticipo = initialData.anticipo || finData.anticipo || 0;
       const savedDescuentoMonto = initialData.descuentoMonto || finData.descuentoMonto || 0;
       
       const savedIva = initialData.iva || finData.iva || 0;
-      let shouldApplyIva = true;
-      if (initialData.aplicarIva !== undefined) {
-          shouldApplyIva = initialData.aplicarIva;
-      } else if (finData.aplicarIva !== undefined) {
-          shouldApplyIva = finData.aplicarIva;
-      } else {
-          shouldApplyIva = savedIva > 0; 
-      }
+      let shouldApplyIva = initialData.aplicarIva !== undefined ? initialData.aplicarIva : (finData.aplicarIva !== undefined ? finData.aplicarIva : savedIva > 0);
 
       let savedPaymentMethod = initialData.forma_pago_anticipo || initialData.formaPagoAnticipo || finData.formaPago || 'Efectivo';
       let savedReference = '';
-
       if (savedPaymentMethod && savedPaymentMethod.includes(' - Ref: ')) {
           const parts = savedPaymentMethod.split(' - Ref: ');
           savedPaymentMethod = parts[0];
@@ -318,9 +308,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         productos: (initialData.productos || initialData.items || []).map(p => ({
             ...p,
             precioUnitario: p.precioUnitario !== undefined ? p.precioUnitario : p.precio || 0,
-            base: p.base || '',
-            altura: p.altura || '',
-            cantidad: p.cantidad !== undefined ? p.cantidad : 1,
+            base: p.base || '', altura: p.altura || '', cantidad: p.cantidad !== undefined ? p.cantidad : 1,
             precio_minimo: p.precio_minimo || 0,
             precioMinimoManual: p.precioMinimoManual !== undefined ? p.precioMinimoManual : (p.es_por_metro ? (Number(p.precio_minimo) > 0 ? p.precio_minimo : getPriceForQty(1, p, initialData.esMayorista)) : ''),
             observaciones: p.observaciones || '' 
@@ -329,7 +317,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
         aplicarIva: shouldApplyIva,
         anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
-        retencion: retentionVal, retentionPercent: finData.retentionPercent || initialData.retentionPercent || 0,
+        retencion: retentionVal, retentionPercent: savedRetPercent,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
         observaciones: initialData.observaciones || finData.observaciones || '', 
@@ -340,7 +328,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
       setLocalAnticipo(savedAnticipo > 0 ? savedAnticipo.toString() : ''); 
       setSearchTerm(initialData.cliente_nombre || initialData.cliente || '');
-
       setAbonos(initialData.abonos || []);
       
       if (initialData.id) {
@@ -348,17 +335,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
               try {
                   const { data } = await supabase.from('ordenes').select('imagenes, comprobantes').eq('id', initialData.id).single();
                   if (data) {
-                      if (data.imagenes && Array.isArray(data.imagenes)) {
-                          setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
-                      }
+                      if (data.imagenes && Array.isArray(data.imagenes)) setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
                       if (data.comprobantes) {
                           let cData = data.comprobantes;
                           if (Array.isArray(cData)) cData = { anticipo: cData, saldo: [], abonos: {} };
-                          setComprobantesData({
-                              anticipo: cData.anticipo || [],
-                              saldo: cData.saldo || [],
-                              abonos: cData.abonos || {}
-                          });
+                          setComprobantesData({ anticipo: cData.anticipo || [], saldo: cData.saldo || [], abonos: cData.abonos || {} });
                       }
                   }
               } catch(e) {}
@@ -384,29 +365,45 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   }, []);
 
   useEffect(() => {
-    // 🔥 TODOS LOS CÁLCULOS FINANCIEROS SE RECORTAN A 2 DECIMALES 🔥
     const subtotal = formData.productos.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
     const descuentoDirectoTotal = Number(formData.descuentoMonto) || 0;
-    
-    // 🔥 CORRECCIÓN DEL BUG: Usamos formData.aplicarIva 🔥
     const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
-    
     const descuentoBase = formData.aplicarIva ? (descuentoDirectoTotal / (1 + tasaIva)) : descuentoDirectoTotal;
+    
     const baseImponible = Number(Math.max(0, subtotal - descuentoBase).toFixed(2));
     const iva = Number((formData.aplicarIva ? baseImponible * tasaIva : 0).toFixed(2));
     const total = Number((baseImponible + iva).toFixed(2));
 
     let retencionValor = 0;
-    if (applyRetention) { retencionValor = Number((baseImponible * (formData.retentionPercent / 100)).toFixed(2)); }
+    if (applyRetention && formData.retentionPercent > 0) {
+        retencionValor = Number((baseImponible * (formData.retentionPercent / 100)).toFixed(2));
+    } else if (applyRetention) {
+        retencionValor = parseFloat(formData.retencion) || 0;
+    }
+
+    if (document.activeElement?.name !== 'retentionPercentInput' && applyRetention) {
+        setLocalRetencionPercent(formData.retentionPercent > 0 ? formData.retentionPercent.toString() : '');
+    }
+    if (document.activeElement?.name !== 'retentionValInput' && applyRetention) {
+        setLocalRetencionVal(retencionValor > 0 ? retencionValor.toFixed(2) : '');
+    }
 
     let anticipoCalculado = parseFloat(formData.anticipo) || 0;
-    if (paymentMode === 'full') {
+    
+    // 🔥 FIX: Solo auto-calculamos el anticipo al tope si es una ORDEN NUEVA. 
+    // Si ya existe (isEditMode), respetamos el anticipo original.
+    if (paymentMode === 'full' && !isEditMode) {
         anticipoCalculado = Number((total - retencionValor).toFixed(2));
-        if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : ''); }
+        if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { 
+            setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : ''); 
+        }
     }
 
     const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
-    const saldoPendiente = Number(Math.max(total - anticipoCalculado - retencionValor - abonosTotal, 0).toFixed(2));
+    
+    // 🔥 FIX: Eliminamos el Math.max para permitir saldos negativos si bajan el precio 🔥
+    const saldoRealBruto = total - anticipoCalculado - retencionValor - abonosTotal;
+    const saldoPendiente = Number(saldoRealBruto.toFixed(2));
 
     setFinancials({ subtotal, descuentoVal: descuentoBase, baseImponible, iva, total, saldoPendiente });
     
@@ -416,16 +413,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     setFormData(prev => {
-        if (prev.retencion !== retencionValor || (paymentMode === 'full' && prev.anticipo !== anticipoCalculado)) {
-            return { ...prev, retencion: retencionValor, anticipo: paymentMode === 'full' ? anticipoCalculado : prev.anticipo };
+        if (prev.retencion !== retencionValor || (paymentMode === 'full' && !isEditMode && prev.anticipo !== anticipoCalculado)) {
+            return { ...prev, retencion: retencionValor, anticipo: paymentMode === 'full' && !isEditMode ? anticipoCalculado : prev.anticipo };
         }
         return prev;
     });
 
-  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos]);
+  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos, formData.retencion, isEditMode]);
 
   const porcentajeAnticipoUI = financials.total > 0 ? ((formData.anticipo / financials.total) * 100).toFixed(1) : '0.0';
-  const porcentajeSaldoUI = financials.total > 0 ? ((financials.saldoPendiente / financials.total) * 100).toFixed(1) : '0.0';
+  const porcentajeSaldoUI = financials.total > 0 ? ((Math.max(financials.saldoPendiente, 0) / financials.total) * 100).toFixed(1) : '0.0';
 
   const handleAnticipoChange = (e) => {
       const valStr = e.target.value;
@@ -436,9 +433,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const handleAnticipoBlur = () => {
       const valNum = parseFloat(localAnticipo) || 0;
-      const maximoPosible = financials.total - formData.retencion;
+      const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
+      const maximoPosible = financials.total - formData.retencion - abonosTotal;
+      
       if (valNum > maximoPosible + 0.01) { 
-          toast({ title: "Monto ajustado", description: "El anticipo no puede ser mayor al Total.", variant: "warning" });
+          toast({ title: "Monto ajustado", description: "El anticipo no puede ser mayor al Total a pagar.", variant: "warning" });
           const ajustado = maximoPosible > 0 ? maximoPosible : 0;
           setLocalAnticipo(ajustado.toFixed(2));
           setFormData(prev => ({ ...prev, anticipo: ajustado }));
@@ -456,11 +455,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           const baseDist = Number(item.precioDistribuidorBase || item.precio_distribuidor || 0);
           if (baseDist > 0) return baseDist;
       }
-
       const tiersNorm = [...(item.precios_escalonados || [])].sort((a,b) => b.cantidad - a.cantidad);
       const tierNorm = tiersNorm.find(t => qty >= t.cantidad);
       if (tierNorm && Number(tierNorm.precio) > 0) return Number(tierNorm.precio);
-      
       return Number(item.precioBaseOriginal || item.precio || 0);
   };
 
@@ -470,25 +467,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           const q = parseFloat(p.cantidad) || 0;
           const minCatalogo = Number(p.precio_minimo) > 0 ? Number(p.precio_minimo) : getPriceForQty(1, p, isWholesale);
           const PRECIO_MINIMO_ITEM = p.precioMinimoManual !== undefined && p.precioMinimoManual !== '' 
-              ? parseFloat(p.precioMinimoManual) 
-              : minCatalogo;
+              ? parseFloat(p.precioMinimoManual) : minCatalogo;
           
           if (p.es_por_metro) {
-              const b = parseFloat(p.base) || 0;
-              const a = parseFloat(p.altura) || 0;
+              const b = parseFloat(p.base) || 0; const a = parseFloat(p.altura) || 0;
               const areaIndividual = (b/100) * (a/100);
               const areaTotalCalculada = parseFloat((areaIndividual * q).toFixed(2));
-              
               const newPrice = getPriceForQty(areaTotalCalculada, p, isWholesale);
-              
               let precioPorPieza = areaIndividual * newPrice;
-              if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
-                  precioPorPieza = PRECIO_MINIMO_ITEM;
-              }
-              
+              if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) precioPorPieza = PRECIO_MINIMO_ITEM;
               let calcTotal = precioPorPieza * q;
               if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
-
               return { ...p, precioUnitario: areaTotalCalculada > 0 ? newPrice : '', total: calcTotal };
           } else {
               const newPrice = getPriceForQty(q, p, isWholesale);
@@ -501,37 +490,24 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleCatalogSelect = (item) => {
     const minQty = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
     const minP = Number(item.precio_minimo) > 0 ? Number(item.precio_minimo) : getPriceForQty(1, item, formData.esMayorista);
-    
     let computedPrice = 0;
-    if (!item.es_por_metro) {
-        computedPrice = getPriceForQty(minQty, item, formData.esMayorista);
-    }
-
+    if (!item.es_por_metro) computedPrice = getPriceForQty(minQty, item, formData.esMayorista);
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
 
     setFormData(prev => {
         const newProducts = [...prev.productos];
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
-
         let initialTotal = item.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1);
         if (item.es_por_metro && initialTotal > 0) initialTotal = roundUpToHalf(initialTotal);
 
         const newProduct = {
-            cantidad: minQty > 0 ? minQty : 1, 
-            venta_minima: minQty > 0 ? minQty : 1,
-            base: '', altura: '',
-            descripcion: finalDesc,
-            precioUnitario: computedPrice || '', 
-            precioBaseOriginal: Number(item.precio) || 0,
-            precios_escalonados: item.precios_escalonados || [],
-            precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
-            precios_distribuidor: item.precios_distribuidor || [],
-            es_por_metro: item.es_por_metro || false,
-            precio_minimo: Number(item.precio_minimo) || 0,
-            precioMinimoManual: item.es_por_metro ? minP : '',
-            observaciones: item.observaciones || '', 
-            total: initialTotal
+            cantidad: minQty > 0 ? minQty : 1, venta_minima: minQty > 0 ? minQty : 1, base: '', altura: '',
+            descripcion: finalDesc, precioUnitario: computedPrice || '', precioBaseOriginal: Number(item.precio) || 0,
+            precios_escalonados: item.precios_escalonados || [], precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
+            precios_distribuidor: item.precios_distribuidor || [], es_por_metro: item.es_por_metro || false,
+            precio_minimo: Number(item.precio_minimo) || 0, precioMinimoManual: item.es_por_metro ? minP : '',
+            observaciones: item.observaciones || '', total: initialTotal
         };
 
         if (emptyIndex !== -1) {
@@ -543,26 +519,16 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         }
         return { ...prev, productos: newProducts };
     });
-    
-    setIsCatalogOpen(false);
-    toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
+    setIsCatalogOpen(false); toast({ title: "Producto Añadido", description: `${item.nombre} agregado a la orden.` });
   };
 
   const handleProductSearchRequest = async (index, value) => {
       updateProduct(index, 'descripcion', value);
-      if (value.trim().length < 2) {
-          setProductSuggestions([]);
-          setActiveProductSearchRow(null);
-          return;
-      }
+      if (value.trim().length < 2) { setProductSuggestions([]); setActiveProductSearchRow(null); return; }
       setActiveProductSearchRow(index);
-      
       const terms = value.trim().split(/\s+/);
       let query = supabase.from('catalogo_productos').select('*');
-      terms.forEach(term => {
-          query = query.or(`nombre.ilike.%${term}%,categoria.ilike.%${term}%,codigo.ilike.%${term}%`);
-      });
-
+      terms.forEach(term => { query = query.or(`nombre.ilike.%${term}%,categoria.ilike.%${term}%,codigo.ilike.%${term}%`); });
       const { data } = await query.limit(12);
       setProductSuggestions(data || []);
   };
@@ -570,108 +536,66 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleSelectProductSuggestion = (index, product) => {
       const minQty = product.venta_minima !== undefined && product.venta_minima !== null ? parseInt(product.venta_minima, 10) : 1;
       const minP = Number(product.precio_minimo) > 0 ? Number(product.precio_minimo) : getPriceForQty(1, product, formData.esMayorista);
-
       let computedPrice = 0;
-      if (!product.es_por_metro) {
-          computedPrice = getPriceForQty(minQty, product, formData.esMayorista);
-      }
-
+      if (!product.es_por_metro) computedPrice = getPriceForQty(minQty, product, formData.esMayorista);
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
 
       setFormData(prev => {
           const newProducts = [...prev.productos];
-
           let initialTotal = product.es_por_metro ? 0 : computedPrice * (minQty > 0 ? minQty : 1);
           if (product.es_por_metro && initialTotal > 0) initialTotal = roundUpToHalf(initialTotal);
 
           newProducts[index] = { 
-              ...newProducts[index], 
-              descripcion: finalDesc,
-              precioUnitario: computedPrice || '',
-              precioBaseOriginal: Number(product.precio) || 0,
-              precios_escalonados: product.precios_escalonados || [],
-              precioDistribuidorBase: Number(product.precio_distribuidor) || 0,
-              precios_distribuidor: product.precios_distribuidor || [],
-              venta_minima: minQty > 0 ? minQty : 1,
-              cantidad: minQty > 0 ? minQty : 1, 
-              base: '', altura: '',
-              es_por_metro: product.es_por_metro || false,
-              precio_minimo: Number(product.precio_minimo) || 0,
-              precioMinimoManual: product.es_por_metro ? minP : '',
-              observaciones: product.observaciones || '', 
-              total: initialTotal
+              ...newProducts[index], descripcion: finalDesc, precioUnitario: computedPrice || '',
+              precioBaseOriginal: Number(product.precio) || 0, precios_escalonados: product.precios_escalonados || [],
+              precioDistribuidorBase: Number(product.precio_distribuidor) || 0, precios_distribuidor: product.precios_distribuidor || [],
+              venta_minima: minQty > 0 ? minQty : 1, cantidad: minQty > 0 ? minQty : 1, base: '', altura: '',
+              es_por_metro: product.es_por_metro || false, precio_minimo: Number(product.precio_minimo) || 0,
+              precioMinimoManual: product.es_por_metro ? minP : '', observaciones: product.observaciones || '', total: initialTotal
           };
           if (index === newProducts.length - 1) newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
           return { ...prev, productos: newProducts };
       });
-      setProductSuggestions([]);
-      setActiveProductSearchRow(null);
+      setProductSuggestions([]); setActiveProductSearchRow(null);
   };
 
   const updateProduct = (index, field, value) => {
     setFormData(prev => {
         const newProducts = [...prev.productos];
         let item = { ...newProducts[index], [field]: value };
-        
-        if (field === 'total') {
-            item.total = value; 
-            newProducts[index] = item; 
-            return { ...prev, productos: newProducts };
-        }
+        if (field === 'total') { item.total = value; newProducts[index] = item; return { ...prev, productos: newProducts }; }
 
-        const q = parseFloat(item.cantidad) || 0; 
-        const b = parseFloat(item.base) || 0; 
-        const a = parseFloat(item.altura) || 0; 
-        
+        const q = parseFloat(item.cantidad) || 0; const b = parseFloat(item.base) || 0; const a = parseFloat(item.altura) || 0; 
         const minCatalogo = Number(item.precio_minimo) > 0 ? Number(item.precio_minimo) : getPriceForQty(1, item, prev.esMayorista);
-        const PRECIO_MINIMO_ITEM = item.precioMinimoManual !== undefined && item.precioMinimoManual !== '' 
-            ? parseFloat(item.precioMinimoManual) 
-            : minCatalogo;
+        const PRECIO_MINIMO_ITEM = item.precioMinimoManual !== undefined && item.precioMinimoManual !== '' ? parseFloat(item.precioMinimoManual) : minCatalogo;
 
         if (item.es_por_metro) {
             const areaIndividual = (b / 100) * (a / 100); 
             const areaTotalCalculada = parseFloat((areaIndividual * q).toFixed(2));
-            
             if (['base', 'altura', 'cantidad', 'precioMinimoManual'].includes(field) && item.precioBaseOriginal !== undefined) {
-                if (areaTotalCalculada > 0) {
-                    item.precioUnitario = getPriceForQty(areaTotalCalculada, item, prev.esMayorista);
-                } else {
-                    item.precioUnitario = '';
-                }
+                if (areaTotalCalculada > 0) item.precioUnitario = getPriceForQty(areaTotalCalculada, item, prev.esMayorista);
+                else item.precioUnitario = '';
             }
-
             const pUnit = parseFloat(item.precioUnitario) || 0;
             let precioPorPieza = areaIndividual * pUnit;
-
-            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
-                precioPorPieza = PRECIO_MINIMO_ITEM;
-            }
-
+            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) precioPorPieza = PRECIO_MINIMO_ITEM;
             let calcTotal = precioPorPieza * q;
             if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
             item.total = calcTotal;
-
         } else {
-            if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
-                item.precioUnitario = Number(getPriceForQty(q, item, prev.esMayorista).toFixed(2));
-            }
+            if (field === 'cantidad' && item.precioBaseOriginal !== undefined) item.precioUnitario = Number(getPriceForQty(q, item, prev.esMayorista).toFixed(2));
             const price = parseFloat(item.precioUnitario) || 0;
             let calcTotal = q * price;
             item.total = Number(calcTotal.toFixed(2));
         }
 
         if (field === 'precioUnitario' && !item.es_por_metro) {
-            const price = parseFloat(value) || 0;
-            let calcTotal = q * price;
-            item.total = Number(calcTotal.toFixed(2));
+            const price = parseFloat(value) || 0; let calcTotal = q * price; item.total = Number(calcTotal.toFixed(2));
         } else if (field === 'precioUnitario' && item.es_por_metro) {
-            const price = parseFloat(value) || 0;
-            const areaIndividual = (b / 100) * (a / 100);
+            const price = parseFloat(value) || 0; const areaIndividual = (b / 100) * (a / 100);
             let precioPorPieza = areaIndividual * price;
-            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
-                precioPorPieza = PRECIO_MINIMO_ITEM;
-            }
+            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) precioPorPieza = PRECIO_MINIMO_ITEM;
             let calcTotal = precioPorPieza * q;
             if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
             item.total = calcTotal;
@@ -680,42 +604,22 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
             newProducts.push({ descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' });
         }
-
-        newProducts[index] = item;
-        return { ...prev, productos: newProducts };
+        newProducts[index] = item; return { ...prev, productos: newProducts };
     });
   };
 
   const handleQuantityBlur = (index, value) => {
-      const item = formData.productos[index];
-      if (!item.descripcion) return;
-      
+      const item = formData.productos[index]; if (!item.descripcion) return;
       const min = item.venta_minima !== undefined && item.venta_minima !== null ? parseInt(item.venta_minima, 10) : 1;
-      let qty = parseInt(value, 10);
-      if (isNaN(qty)) qty = 0;
-      
+      let qty = parseInt(value, 10); if (isNaN(qty)) qty = 0;
       if (qty > 0 && min > 0 && qty < min) {
           toast({ title: "Venta Mínima", description: `Este producto exige mínimo ${min} unidades.`, variant: "destructive" });
           updateProduct(index, 'cantidad', min);
-      } else {
-          updateProduct(index, 'cantidad', qty);
-      }
+      } else { updateProduct(index, 'cantidad', qty); }
   };
 
-  const removeProduct = (idx) => {
-    setFormData(prev => {
-        if (prev.productos.length <= 1) return prev;
-        const newProducts = prev.productos.filter((_, i) => i !== idx);
-        return { ...prev, productos: newProducts };
-    });
-  };
-
-  const addProduct = () => {
-    setFormData(prev => ({
-        ...prev,
-        productos: [...prev.productos, { descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }]
-    }));
-  };
+  const removeProduct = (idx) => { setFormData(prev => { if (prev.productos.length <= 1) return prev; return { ...prev, productos: prev.productos.filter((_, i) => i !== idx) }; }); };
+  const addProduct = () => { setFormData(prev => ({ ...prev, productos: [...prev.productos, { descripcion: '', precioUnitario: '', cantidad: 1, base: '', altura: '', total: 0, venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '', observaciones: '' }] })); };
 
   const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(searchTerm.toLowerCase()) || (c.empresa && c.empresa.toLowerCase().includes(searchTerm.toLowerCase())));
 
@@ -723,49 +627,32 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     const isWholesale = client.es_mayorista || false;
     setFormData(prev => {
         const newProducts = recalculatePrices(prev.productos, isWholesale);
-        return { 
-            ...prev, 
-            clienteId: client.id, 
-            cliente: client.nombre, 
-            esMayorista: isWholesale,
-            productos: newProducts
-        };
+        return { ...prev, clienteId: client.id, cliente: client.nombre, esMayorista: isWholesale, productos: newProducts };
     });
-    setSearchTerm(client.nombre);
-    setIsSearching(false);
+    setSearchTerm(client.nombre); setIsSearching(false);
   };
 
   const handleNewClientCreated = (newClient) => {
     setShowNewClientModal(false);
     if(onReloadClients) onReloadClients();
-    
     if (newClient) {
         const clientData = Array.isArray(newClient) ? newClient[0] : newClient;
-        if(clientData && clientData.id) {
-            setLocalClients([clientData, ...localClients]);
-            handleSelectClient(clientData);
-        }
+        if(clientData && clientData.id) { setLocalClients([clientData, ...localClients]); handleSelectClient(clientData); }
     }
   };
 
   const handleResponsableToggle = (sellerName) => {
     setFormData(prev => {
         let currentSellers = prev.vendedor ? prev.vendedor.split(',').map(s => s.trim()).filter(Boolean) : [];
-        if (currentSellers.includes(sellerName)) {
-            currentSellers = currentSellers.filter(s => s !== sellerName);
-        } else {
-            currentSellers.push(sellerName);
-        }
+        if (currentSellers.includes(sellerName)) currentSellers = currentSellers.filter(s => s !== sellerName);
+        else currentSellers.push(sellerName);
         return { ...prev, vendedor: currentSellers.join(', ') };
     });
   };
 
   useEffect(() => {
-    function handleClickOutside(event) {
-      if (searchRef.current && !searchRef.current.contains(event.target)) setIsSearching(false);
-    }
-    document.addEventListener("mousedown", handleClickOutside);
-    return () => document.removeEventListener("mousedown", handleClickOutside);
+    function handleClickOutside(event) { if (searchRef.current && !searchRef.current.contains(event.target)) setIsSearching(false); }
+    document.addEventListener("mousedown", handleClickOutside); return () => document.removeEventListener("mousedown", handleClickOutside);
   }, [searchRef]);
 
   const handleAddImages = async (files) => {
@@ -773,46 +660,27 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       const newImages = [];
       for (const file of files) {
           if (file.size > 15000000) { toast({ title: "Archivo demasiado grande", description: `"${file.name}" supera el límite.`, variant: "destructive" }); continue; }
-          try {
-              const compressed = await compressImage(file);
-              newImages.push(compressed);
-          } catch (e) {
-              toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" });
-          }
+          try { const compressed = await compressImage(file); newImages.push(compressed); } catch (e) { toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" }); }
       }
-      setFormData(prev => ({ ...prev, imagenes: [...(prev.imagenes || []), ...newImages] }));
-      setIsProcessingImages(false);
+      setFormData(prev => ({ ...prev, imagenes: [...(prev.imagenes || []), ...newImages] })); setIsProcessingImages(false);
   };
 
-  const removeImage = (index) => {
-    setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) }));
-  };
+  const removeImage = (index) => { setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) })); };
 
   const requiresComprobante = (method) => {
-      if (!method) return false;
-      const m = method.toLowerCase();
-      return !m.includes('efectivo') && !m.includes('no aplica') && !m.includes('tarjeta');
+      if (!method) return false; const m = method.toLowerCase(); return !m.includes('efectivo') && !m.includes('no aplica') && !m.includes('tarjeta');
   };
 
   const handleAddComprobantes = async (files, type, abonoIndex = null) => {
-      setIsProcessingComprobantes(true);
-      const newImages = [];
+      setIsProcessingComprobantes(true); const newImages = [];
       for (const file of files) {
           if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
-          try {
-              const compressed = await compressImage(file);
-              newImages.push(compressed);
-          } catch (e) {}
+          try { const compressed = await compressImage(file); newImages.push(compressed); } catch (e) {}
       }
-
       setComprobantesData(prev => {
           const updated = { ...prev };
-          if (type === 'abono') {
-              updated.abonos = { ...(updated.abonos || {}) };
-              updated.abonos[abonoIndex] = [...(updated.abonos[abonoIndex] || []), ...newImages];
-          } else {
-              updated[type] = [...(updated[type] || []), ...newImages];
-          }
+          if (type === 'abono') { updated.abonos = { ...(updated.abonos || {}) }; updated.abonos[abonoIndex] = [...(updated.abonos[abonoIndex] || []), ...newImages]; } 
+          else { updated[type] = [...(updated[type] || []), ...newImages]; }
           return updated;
       });
       setIsProcessingComprobantes(false);
@@ -821,194 +689,108 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleRemoveComprobante = (type, abonoIndex, imgIndex) => {
       setComprobantesData(prev => {
           const updated = { ...prev };
-          if (type === 'abono') {
-              updated.abonos = { ...(updated.abonos || {}) };
-              updated.abonos[abonoIndex] = updated.abonos[abonoIndex].filter((_, i) => i !== imgIndex);
-          } else {
-              updated[type] = updated[type].filter((_, i) => i !== imgIndex);
-          }
+          if (type === 'abono') { updated.abonos = { ...(updated.abonos || {}) }; updated.abonos[abonoIndex] = updated.abonos[abonoIndex].filter((_, i) => i !== imgIndex); } 
+          else { updated[type] = updated[type].filter((_, i) => i !== imgIndex); }
           return updated;
       });
   };
 
   const onDropAbono = useCallback(async (acceptedFiles) => {
-      setIsProcessingAbonoImages(true);
-      const newImages = [];
+      setIsProcessingAbonoImages(true); const newImages = [];
       for (const file of acceptedFiles) {
           if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
-          try {
-              const compressed = await compressImage(file);
-              newImages.push(compressed);
-          } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
+          try { const compressed = await compressImage(file); newImages.push(compressed); } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
       }
-      setAbonoComprobantes(prev => [...prev, ...newImages]);
-      setIsProcessingAbonoImages(false);
+      setAbonoComprobantes(prev => [...prev, ...newImages]); setIsProcessingAbonoImages(false);
   }, [toast]);
   
   const { getRootProps: getRootPropsAbono, getInputProps: getInputPropsAbono } = useDropzone({ onDrop: onDropAbono, accept: {'image/*': []} });
 
   const openAbonoModal = (isFullBalance = false) => {
-      setAbonoFormData({ 
-          monto: isFullBalance ? financials.saldoPendiente.toFixed(2) : '', 
-          metodoPago: 'Efectivo', 
-          referencia: '', 
-          nota: isFullBalance ? 'Liquidación de saldo final' : '', 
-          fecha: getLocalDate() 
-      });
-      setAbonoComprobantes([]);
-      setIsAbonoModalOpen(true);
+      setAbonoFormData({ monto: isFullBalance ? financials.saldoPendiente.toFixed(2) : '', metodoPago: 'Efectivo', referencia: '', nota: isFullBalance ? 'Liquidación de saldo final' : '', fecha: getLocalDate() });
+      setAbonoComprobantes([]); setIsAbonoModalOpen(true);
   };
 
   const handleSaveLocalAbono = (e) => {
       e.preventDefault();
       const montoNum = parseFloat(abonoFormData.monto);
-      if (isNaN(montoNum) || montoNum <= 0) {
-          toast({ title: "Monto inválido", variant: "destructive" });
-          return;
-      }
-      if (montoNum > financials.saldoPendiente + 0.05) {
-          toast({ title: "Monto excede el saldo", description: `El saldo máximo a cobrar es $${financials.saldoPendiente.toFixed(2)}`, variant: "destructive" });
-          return;
-      }
+      if (isNaN(montoNum) || montoNum <= 0) { toast({ title: "Monto inválido", variant: "destructive" }); return; }
+      if (montoNum > financials.saldoPendiente + 0.05) { toast({ title: "Monto excede el saldo", description: `El saldo máximo a cobrar es $${financials.saldoPendiente.toFixed(2)}`, variant: "destructive" }); return; }
 
       let metodoFinal = abonoFormData.metodoPago;
-      if (requiresComprobante(abonoFormData.metodoPago) && abonoFormData.referencia.trim()) {
-          metodoFinal = `${abonoFormData.metodoPago} - Ref: ${abonoFormData.referencia}`;
-      }
+      if (requiresComprobante(abonoFormData.metodoPago) && abonoFormData.referencia.trim()) metodoFinal = `${abonoFormData.metodoPago} - Ref: ${abonoFormData.referencia}`;
 
-      const nuevoAbono = {
-          monto: montoNum,
-          metodoPago: metodoFinal,
-          fecha: `${abonoFormData.fecha}T12:00:00`,
-          nota: abonoFormData.nota,
-          cobrador: currentUser.name
-      };
-
-      const newAbonos = [...abonos, nuevoAbono];
-      setAbonos(newAbonos);
+      const nuevoAbono = { monto: montoNum, metodoPago: metodoFinal, fecha: `${abonoFormData.fecha}T12:00:00`, nota: abonoFormData.nota, cobrador: currentUser.name };
+      const newAbonos = [...abonos, nuevoAbono]; setAbonos(newAbonos);
 
       if (abonoComprobantes.length > 0) {
-          setComprobantesData(prev => {
-              const updated = { ...prev, abonos: { ...(prev.abonos || {}) } };
-              updated.abonos[newAbonos.length - 1] = abonoComprobantes;
-              return updated;
-          });
+          setComprobantesData(prev => { const updated = { ...prev, abonos: { ...(prev.abonos || {}) } }; updated.abonos[newAbonos.length - 1] = abonoComprobantes; return updated; });
       }
-
       setIsAbonoModalOpen(false);
   };
 
   const removeAbonoLocal = (index) => {
       setAbonos(prev => prev.filter((_, i) => i !== index));
       setComprobantesData(prev => {
-          const updated = { ...prev, abonos: { ...prev.abonos } };
-          const newAbonos = {};
-          let newIdx = 0;
-          Object.keys(updated.abonos).forEach(key => {
-              if (parseInt(key) !== index) {
-                  newAbonos[newIdx] = updated.abonos[key];
-                  newIdx++;
-              }
-          });
-          updated.abonos = newAbonos;
-          return updated;
+          const updated = { ...prev, abonos: { ...prev.abonos } }; const newAbonos = {}; let newIdx = 0;
+          Object.keys(updated.abonos).forEach(key => { if (parseInt(key) !== index) { newAbonos[newIdx] = updated.abonos[key]; newIdx++; } });
+          updated.abonos = newAbonos; return updated;
       });
   };
 
   const handleCancelOrder = async () => {
-    if (!cancelReason.trim()) {
-        toast({ title: "Atención", description: "Debe ingresar el motivo de la anulación.", variant: "destructive" });
-        return;
-    }
+    if (!cancelReason.trim()) { toast({ title: "Atención", description: "Debe ingresar el motivo de la anulación.", variant: "destructive" }); return; }
     setLoading(true);
     try {
-        const { error } = await supabase.from('ordenes').update({
-            status: 'ANULADA',
-            motivoAnulacion: cancelReason,
-            updated_at: new Date().toISOString()
-        }).eq('id', initialData.id);
-
+        const { error } = await supabase.from('ordenes').update({ status: 'ANULADA', motivoAnulacion: cancelReason, updated_at: new Date().toISOString() }).eq('id', initialData.id);
         if (error) throw error;
-        
         toast({ title: "Orden Anulada", description: "La orden ha sido cancelada correctamente." });
-        setIsCancelModalOpen(false);
-        if(onSuccess) onSuccess();
-    } catch (error) {
-        toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" });
-    } finally {
-        setLoading(false);
-    }
+        setIsCancelModalOpen(false); if(onSuccess) onSuccess();
+    } catch (error) { toast({ title: "Error", description: "No se pudo anular la orden.", variant: "destructive" }); } finally { setLoading(false); }
   };
 
   const handleSubmit = async (e) => {
-    e.preventDefault();
-    setLoading(true);
+    e.preventDefault(); setLoading(true);
 
-    if (!formData.clienteId && !formData.cliente) {
-      toast({ title: "⚠️ Falta Cliente", variant: "destructive" });
-      setLoading(false); return;
-    }
+    if (!formData.clienteId && !formData.cliente) { toast({ title: "⚠️ Falta Cliente", variant: "destructive" }); setLoading(false); return; }
     const validProducts = formData.productos.filter(p => p.descripcion && p.descripcion.trim() !== '');
-    if (validProducts.length === 0) {
-      toast({ title: "⚠️ Sin productos", variant: "destructive" });
-      setLoading(false); return;
-    }
+    if (validProducts.length === 0) { toast({ title: "⚠️ Sin productos", variant: "destructive" }); setLoading(false); return; }
 
     const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.base === '' || p.altura === ''));
-    if (invalidMetroProducts.length > 0) {
-      toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura en cm para los productos por metro.", variant: "destructive" });
-      setLoading(false); return;
-    }
+    if (invalidMetroProducts.length > 0) { toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura en cm para los productos por metro.", variant: "destructive" }); setLoading(false); return; }
 
-    if (financials.saldoPendiente < -0.02) {
-        toast({ title: "Error en montos", description: "La suma de anticipos y abonos supera el total.", variant: "destructive" });
-        setLoading(false); return;
+    // 🔥 FIX: BLOQUEO POR EXCESO DE PAGO 🔥
+    // Si la matemática dice que el saldo pendiente es MENOR a 0 (porque el total es menor a lo ya pagado), bloqueamos el guardado.
+    if (financials.saldoPendiente < -0.02) { 
+        toast({ 
+            title: "Total no válido", 
+            description: `El nuevo Total de la orden es MENOR al dinero que ya se ha cobrado (Anticipo + Abonos). Hay un exceso de $${Math.abs(financials.saldoPendiente).toFixed(2)}.`, 
+            variant: "destructive" 
+        }); 
+        setLoading(false); return; 
     }
 
     const isCreditoAnticipo = formData.formaPagoAnticipo === 'Crédito';
     const isCreditoSaldo = paymentMode === 'partial' && formData.formaPagoSaldo === 'Crédito';
 
     if (isCreditoAnticipo || isCreditoSaldo) {
-        if (!selectedClientData?.permiteCredito) {
-            toast({ title: "Crédito no autorizado", description: "Este cliente no tiene crédito habilitado.", variant: "destructive" });
-            setLoading(false); return;
-        }
-        
+        if (!selectedClientData?.permiteCredito) { toast({ title: "Crédito no autorizado", description: "Este cliente no tiene crédito habilitado.", variant: "destructive" }); setLoading(false); return; }
         let montoUsandoCredito = 0;
-        if (isCreditoAnticipo && paymentMode === 'full') {
-            montoUsandoCredito += (financials.total - formData.retencion);
-        } else if (isCreditoAnticipo && paymentMode === 'partial') {
-            montoUsandoCredito += (parseFloat(formData.anticipo) || 0);
-        }
+        if (isCreditoAnticipo && paymentMode === 'full') montoUsandoCredito += (financials.total - formData.retencion);
+        else if (isCreditoAnticipo && paymentMode === 'partial') montoUsandoCredito += (parseFloat(formData.anticipo) || 0);
         
-        if (isCreditoSaldo && paymentMode === 'partial') {
-            montoUsandoCredito += (parseFloat(financials.saldoPendiente) || 0);
-        }
+        if (isCreditoSaldo && paymentMode === 'partial') montoUsandoCredito += (parseFloat(financials.saldoPendiente) || 0);
         
-        if (montoUsandoCredito > creditoDisponible + 0.05) { 
-            toast({ 
-                title: "Límite de crédito excedido", 
-                description: `El cliente solo dispone de $${creditoDisponible.toFixed(2)}. Intentas aplicar $${montoUsandoCredito.toFixed(2)} a crédito.`, 
-                variant: "destructive" 
-            });
-            setLoading(false); return;
-        }
+        if (montoUsandoCredito > creditoDisponible + 0.05) { toast({ title: "Límite de crédito excedido", description: `El cliente solo dispone de $${creditoDisponible.toFixed(2)}. Intentas aplicar $${montoUsandoCredito.toFixed(2)} a crédito.`, variant: "destructive" }); setLoading(false); return; }
     }
 
     let finalPaymentString = formData.formaPagoAnticipo;
-    if (requiresComprobante(formData.formaPagoAnticipo) && formData.referenciaPago) {
-        finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
-    }
+    if (requiresComprobante(formData.formaPagoAnticipo) && formData.referenciaPago) finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
 
     let finalTitle = formData.tipoLetrero || '';
     const isVentaCortaSelected = formData.tipoOrden === ORDER_TYPES[1] || formData.tipoOrden === 'VC';
-    
-    if (isVentaCortaSelected && !finalTitle.toUpperCase().includes('(VC)')) {
-        finalTitle = `${finalTitle} (VC)`;
-    } 
-    else if (!isVentaCortaSelected && finalTitle.toUpperCase().includes('(VC)')) {
-        finalTitle = finalTitle.replace(/\(VC\)/gi, '').trim();
-    }
+    if (isVentaCortaSelected && !finalTitle.toUpperCase().includes('(VC)')) finalTitle = `${finalTitle} (VC)`;
+    else if (!isVentaCortaSelected && finalTitle.toUpperCase().includes('(VC)')) finalTitle = finalTitle.replace(/\(VC\)/gi, '').trim();
 
     const processedProducts = validProducts.map(p => {
         if (p.es_por_metro && p.base && p.altura) {
@@ -1021,65 +803,29 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
     try {
         const payload = {
-            cliente_id: formData.clienteId,
-            cliente_nombre: formData.cliente,
-            tipo_trabajo: finalTitle, 
-            tipoOrden: formData.tipoOrden, 
-            fecha_entrega: formData.fechaEntrega || null,
-            vendedor: formData.vendedor, 
-            notas: formData.notas, 
-            prioridad: 'Normal',
-            origenProformaInfo: formData.origenProformaInfo,
-            productos: processedProducts, 
-            abonos: abonos,
-            comprobantes: comprobantesData,
+            cliente_id: formData.clienteId, cliente_nombre: formData.cliente, tipo_trabajo: finalTitle, tipoOrden: formData.tipoOrden, fecha_entrega: formData.fechaEntrega || null,
+            vendedor: formData.vendedor, notas: formData.notas, prioridad: 'Normal', origenProformaInfo: formData.origenProformaInfo,
+            productos: processedProducts, abonos: abonos, comprobantes: comprobantesData,
             financials: { 
-                ...financials, 
-                saldo: financials.saldoPendiente,
-                descuentoMonto: formData.descuentoMonto, 
-                descuentoVal: financials.descuentoVal, 
-                ivaPercentage: formData.ivaPercentage, 
-                retentionPercent: formData.retentionPercent,
-                retencion: formData.retencion,
-                formaPagoSaldo: formData.formaPagoSaldo,
-                creditoVenceSaldo: formData.creditoVenceSaldo,
-                notaSaldo: formData.notaSaldo,
-                aplicarIva: formData.aplicarIva,
-                observaciones: formData.observaciones 
+                ...financials, saldo: financials.saldoPendiente, descuentoMonto: formData.descuentoMonto, descuentoVal: financials.descuentoVal, 
+                ivaPercentage: formData.ivaPercentage, retentionPercent: formData.retentionPercent, retencion: formData.retencion,
+                formaPagoSaldo: formData.formaPagoSaldo, creditoVenceSaldo: formData.creditoVenceSaldo, notaSaldo: formData.notaSaldo,
+                aplicarIva: formData.aplicarIva, observaciones: formData.observaciones 
             },
-            anticipo: formData.anticipo,
-            retencion: formData.retencion,
-            forma_pago_anticipo: finalPaymentString,
-            nota_anticipo: formData.notaAnticipo, 
-            credito_vence_anticipo: formData.creditoVenceAnticipo, 
-            imagenes: formData.imagenes, 
-            updated_at: new Date().toISOString()
+            anticipo: formData.anticipo, retencion: formData.retencion, forma_pago_anticipo: finalPaymentString,
+            nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
         };
 
-        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') {
-            payload.status = 'VENTAS';
-            payload.created_at = new Date().toISOString();
-            payload.recibido_por_anticipo = currentUser.name; 
-        } else if (isAdmin && initialData.vendedor !== formData.vendedor) {
-            toast({ title: "Orden Reasignada", description: `Vendedores actualizados.` });
-        }
+        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') { payload.status = 'VENTAS'; payload.created_at = new Date().toISOString(); payload.recibido_por_anticipo = currentUser.name; } 
+        else if (isAdmin && initialData.vendedor !== formData.vendedor) { toast({ title: "Orden Reasignada", description: `Vendedores actualizados.` }); }
 
-        if (initialData?.id && initialData.status !== 'BORRADOR') {
-            const { error } = await supabase.from('ordenes').update(payload).eq('id', initialData.id);
-            if(error) throw error;
-        } else {
-            const { error } = await supabase.from('ordenes').insert([payload]);
-            if(error) throw error;
-        }
+        if (initialData?.id && initialData.status !== 'BORRADOR') { const { error } = await supabase.from('ordenes').update(payload).eq('id', initialData.id); if(error) throw error; } 
+        else { const { error } = await supabase.from('ordenes').insert([payload]); if(error) throw error; }
 
-        toast({ title: "✅ Orden Guardada", description: `Total: $${financials.total.toFixed(2)}` });
+        toast({ title: "✅ Orden Guardada", description: `Total a Pagar: $${(financials.total - formData.retencion).toFixed(2)}` });
         if(onSuccess) onSuccess();
 
-    } catch (error) {
-        toast({ title: "Error al guardar", description: error.message, variant: "destructive" });
-    } finally {
-        setLoading(false);
-    }
+    } catch (error) { toast({ title: "Error al guardar", description: error.message, variant: "destructive" }); } finally { setLoading(false); }
   };
 
   const getDisplayedOrderNumber = () => {
@@ -1091,9 +837,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const canCancelOrder = useMemo(() => {
       if (!initialData || !initialData.id || initialData.status === 'ANULADA') return false;
       if (isAdmin) return true;
-      if (currentUser?.role === 'Vendedor') {
-          return (initialData.vendedor || '').includes(currentUser?.name) && initialData.status === 'VENTAS';
-      }
+      if (currentUser?.role === 'Vendedor') return (initialData.vendedor || '').includes(currentUser?.name) && initialData.status === 'VENTAS';
       return false;
   }, [initialData, isAdmin, currentUser]);
 
@@ -1357,7 +1101,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                             <span className="text-[10px] font-bold text-purple-700">P. Mín: $</span>
                                             <div 
                                                 className="h-6 px-2 flex items-center justify-center text-xs border border-purple-200 bg-purple-100/50 rounded font-bold text-purple-900 select-none cursor-default" 
-                                                title="Establecido desde el catálogo de productos (No editable)"
                                             >
                                                 {row.precioMinimoManual !== undefined && row.precioMinimoManual !== '' ? Number(row.precioMinimoManual).toFixed(2) : '0.00'}
                                             </div>
@@ -1392,15 +1135,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              
                              <td className="py-2 px-2 relative align-top pt-3">
                                  <input 
-                                    type="number" 
-                                    step="1" 
+                                    type="number" step="1" 
                                     className="w-full text-center border-none bg-transparent focus:ring-0 text-sm p-0 font-bold h-9" 
-                                    min="1" 
-                                    value={row.cantidad !== undefined ? row.cantidad : ''} 
+                                    min="1" value={row.cantidad !== undefined ? row.cantidad : ''} 
                                     onChange={e => updateProduct(idx, 'cantidad', e.target.value)} 
-                                    onKeyDown={e => {
-                                        if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault();
-                                    }}
+                                    onKeyDown={e => { if (!row.es_por_metro && (e.key === '.' || e.key === ',')) e.preventDefault(); }}
                                     onBlur={e => handleQuantityBlur(idx, e.target.value)}
                                     readOnly={isEffectivelyReadOnly}
                                  />
@@ -1417,7 +1156,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                  />
                              </td>
                              
-                             {/* 🔥 AQUÍ ESTÁ LA MAGIA: SOLO ES_POR_METRO ES EDITABLE 🔥 */}
                              <td className="py-2 px-2 align-top pt-3 bg-slate-50/50">
                                  <div className="flex items-center justify-end font-bold text-slate-800">
                                      <span className="mr-1">$</span>
@@ -1430,22 +1168,19 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                      />
                                  </div>
                                  {row.es_por_metro && !isEffectivelyReadOnly && (
-                                     <div className="text-[9px] text-slate-400 font-medium mt-1 text-right italic" title="Puedes modificar este valor a mano">
-                                         Editable
-                                     </div>
+                                     <div className="text-[9px] text-slate-400 font-medium mt-1 text-right italic" title="Puedes modificar este valor a mano">Editable</div>
                                  )}
                              </td>
                              <td className="py-2 px-1 text-center align-top pt-4">
                                  {!isEffectivelyReadOnly && (row.nombre || row.descripcion) && (
-                                     <button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity">
-                                         <Trash2 className="h-4 w-4" />
-                                     </button>
+                                     <button type="button" onClick={() => removeProduct(idx)} className="text-red-400 opacity-0 group-hover:opacity-100 hover:text-red-600 transition-opacity"><Trash2 className="h-4 w-4" /></button>
                                  )}
                              </td>
                           </tr>
                         );
                       })}
                    </tbody>
+
                    <tfoot className="bg-slate-100 font-medium text-slate-700 border-t border-slate-300 text-xs">
                       <tr><td colSpan="4" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
                       <tr>
@@ -1456,11 +1191,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                             ) : (
                                 <>
                                     <input 
-                                        name="discountValInput" 
-                                        type="number" step="0.01" 
+                                        name="discountValInput" type="number" step="0.01" 
                                         className="w-16 text-right border border-slate-300 rounded px-1 text-xs bg-white font-bold text-red-600" 
-                                        placeholder="0.00" 
-                                        value={localDiscountVal} 
+                                        placeholder="0.00" value={localDiscountVal} 
                                         onChange={e => {
                                             setLocalDiscountVal(e.target.value);
                                             setFormData(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
@@ -1468,11 +1201,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     />
                                     <span className="text-slate-500">(%)</span>
                                     <input 
-                                        name="discountPercentInput" 
-                                        type="number" step="0.01" 
+                                        name="discountPercentInput" type="number" step="0.01" 
                                         className="w-12 text-right border border-slate-300 rounded px-1 text-xs bg-white" 
-                                        placeholder="0" 
-                                        value={localDiscountPercent} 
+                                        placeholder="0" value={localDiscountPercent} 
                                         onChange={e => {
                                             setLocalDiscountPercent(e.target.value);
                                             const perc = parseFloat(e.target.value) || 0;
@@ -1496,8 +1227,79 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
+                      
+                      {/* 🔥 TOTAL FACTURA 🔥 */}
                       <tr className="bg-slate-200 font-bold text-slate-900 border-t border-slate-300">
-                         <td colSpan="4" className="text-right py-2 px-2">TOTAL</td><td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
+                         <td colSpan="4" className="text-right py-2 px-2">TOTAL FACTURA</td>
+                         <td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
+                      </tr>
+                      
+                      {/* 🔥 NUEVO: SECCIÓN DE RETENCIÓN VISIBLE Y EDITABLE 🔥 */}
+                      <tr>
+                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
+                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={isBottomReadOnly}/>
+                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>
+                               ¿Aplica Retención? 
+                            </label>
+
+                            {applyRetention && !isBottomReadOnly && (
+                                <div className="flex items-center gap-1 ml-2">
+                                   <input 
+                                      name="retentionPercentInput"
+                                      type="number" step="0.01" 
+                                      className="w-12 text-center border border-orange-300 rounded px-1 text-xs bg-white text-orange-700 font-bold" 
+                                      placeholder="%" 
+                                      value={localRetencionPercent} 
+                                      onChange={e => {
+                                          setLocalRetencionPercent(e.target.value);
+                                          const perc = parseFloat(e.target.value) || 0;
+                                          const calcVal = financials.baseImponible * (perc / 100);
+                                          setLocalRetencionVal(calcVal > 0 ? calcVal.toFixed(2) : '');
+                                          setFormData(prev => ({...prev, retentionPercent: perc, retencion: calcVal}));
+                                      }} 
+                                   />
+                                   <span className="text-xs text-slate-500">%</span>
+                                </div>
+                            )}
+                            {applyRetention && isBottomReadOnly && (
+                                <span className="text-orange-700 font-bold ml-2">({formData.retentionPercent}%)</span>
+                            )}
+                         </td>
+                         <td className="text-right py-1 px-2 text-orange-600 font-bold">
+                             {applyRetention ? (
+                                 <div className="flex items-center justify-end gap-1">
+                                     <span>- $</span>
+                                     {!isBottomReadOnly ? (
+                                         <input 
+                                             name="retentionValInput"
+                                             type="number" step="0.01" 
+                                             className="w-16 text-right border border-orange-300 rounded px-1 text-xs bg-white text-orange-700 font-bold" 
+                                             placeholder="0.00" 
+                                             value={localRetencionVal} 
+                                             onChange={e => {
+                                                 setLocalRetencionVal(e.target.value);
+                                                 const val = parseFloat(e.target.value) || 0;
+                                                 const base = financials.baseImponible || 0;
+                                                 const perc = base > 0 ? (val / base) * 100 : 0;
+                                                 setLocalRetencionPercent(perc > 0 ? perc.toFixed(2) : '');
+                                                 setFormData(prev => ({...prev, retencion: val, retentionPercent: perc}));
+                                             }} 
+                                         />
+                                     ) : (
+                                         <span>{formData.retencion.toFixed(2)}</span>
+                                     )}
+                                 </div>
+                             ) : (
+                                 <span className="text-slate-300">- $0.00</span>
+                             )}
+                         </td>
+                         <td></td>
+                      </tr>
+
+                      {/* 🔥 TOTAL A PAGAR (Factura - Retención) 🔥 */}
+                      <tr className="bg-blue-100 font-black text-blue-900 border-t border-slate-300 shadow-inner">
+                         <td colSpan="4" className="text-right py-2 px-2">TOTAL A PAGAR</td>
+                         <td className="text-right py-2 px-2">$ {(financials.total - formData.retencion).toFixed(2)}</td><td></td>
                       </tr>
                    </tfoot>
                 </table>
@@ -1589,22 +1391,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       ) : (
                           <input type="text" placeholder={formData.formaPagoAnticipo === 'Efectivo' ? "Ej: Billete de $100, vuelto $20" : "Notas adicionales del pago..."} className="flex-1 border border-slate-200 rounded px-2 py-1 text-xs text-slate-600 bg-slate-50" value={formData.notaAnticipo} onChange={e => setFormData({...formData, notaAnticipo: e.target.value})} />
                       )}
-                   </div>
-
-                   <div className="flex items-center gap-2 mt-2 pt-2 border-t border-dashed border-slate-300">
-                        {isBottomReadOnly || hasAbonosExtras ? (
-                            <>
-                                <Checkbox id="chk-ret" checked={applyRetention} disabled />
-                                <label htmlFor="chk-ret" className="text-xs select-none opacity-50 cursor-not-allowed">¿Aplica Retención?</label>
-                                {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">RET: {formData.retentionPercent}% (- $ {formData.retencion.toFixed(2)})</span></div>)}
-                            </>
-                        ) : (
-                            <>
-                                <Checkbox id="chk-ret" checked={applyRetention} onCheckedChange={setApplyRetention} />
-                                <label htmlFor="chk-ret" className="text-xs select-none cursor-pointer">¿Aplica Retención?</label>
-                                {applyRetention && (<div className="flex items-center gap-1 ml-auto"><span className="text-xs text-slate-500">%</span><input type="number" step="0.01" className="w-12 text-center text-xs border-b border-slate-400 bg-transparent focus:outline-none" value={formData.retentionPercent} onChange={e => setFormData({...formData, retentionPercent: parseFloat(e.target.value) || 0})} title="Porcentaje de Retención" /><span className="text-xs font-bold text-red-600">- $ {formData.retencion.toFixed(2)}</span></div>)}
-                            </>
-                        )}
                    </div>
                 </div>
 
