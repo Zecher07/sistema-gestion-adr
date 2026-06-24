@@ -4,7 +4,7 @@ import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Printer, CheckCircle, FileText, Image as ImageIcon, CreditCard, DollarSign, Calendar as CalendarIcon, 
-  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2
+  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2, RotateCcw, Undo2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -81,6 +81,49 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
         setLoading(false);
     };
 
+    const handleRevert = async () => {
+        if (!window.confirm("¿Revertir este producto a 'En Proceso'? Si se había descontado material del inventario, este se devolverá automáticamente al stock para corregir el error.")) return;
+
+        setLoading(true);
+        try {
+            if (!product.sin_materiales && product.materiales && product.materiales.length > 0) {
+                for (const mat of product.materiales) {
+                    const qtyToRestore = Number(mat.cant_usada);
+                    if (qtyToRestore > 0) {
+                        const { data: currentItem, error: fetchErr } = await supabase.from('inventario').select('cantidad, nombre').eq('id', mat.id).single();
+                        if (fetchErr) throw fetchErr;
+                        
+                        const stockActual = Number(currentItem?.cantidad || 0);
+                        const newQty = stockActual + qtyToRestore;
+                        
+                        const { error: updateErr } = await supabase.from('inventario').update({ cantidad: newQty }).eq('id', mat.id);
+                        if (updateErr) throw updateErr;
+                        
+                        const orderRef = String(order.orderNumber || order.order_number || order.id).padStart(7, '0');
+                        await supabase.from('historial_inventario').insert([{
+                            material_id: mat.id,
+                            material_nombre: mat.nombre,
+                            cantidad_cambio: qtyToRestore,
+                            cantidad_resultante: newQty,
+                            tipo: 'INGRESO',
+                            motivo: `Reversión de Producción (Admin) - Orden #${orderRef}`,
+                            usuario: user?.name || 'Administrador'
+                        }]);
+                    }
+                }
+            }
+
+            const updated = { ...product, estado_prod: 'EN_PROCESO' };
+            await onProductUpdate(index, updated);
+            toast({ title: "Producto Revertido", description: "El producto ha vuelto a En Proceso y el inventario ha sido restaurado." });
+        } catch (error) {
+            console.error(error);
+            toast({ title: "Error", description: "Hubo un problema al revertir el inventario.", variant: "destructive" });
+        } finally {
+            setLoading(false);
+        }
+    };
+
     const handleFinish = async () => {
         if (!noMaterials && usedMaterials.length === 0) {
             toast({ title: "Faltan Materiales", description: "Debe agregar materiales de inventario o marcar 'No usar inventario'.", variant: "destructive" });
@@ -128,11 +171,9 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                 }
 
                 for (const update of stockUpdates) {
-                    // 1. Actualizamos el inventario (restamos la cantidad)
                     const { error: updateErr } = await supabase.from('inventario').update({ cantidad: update.newQty }).eq('id', update.id);
                     if (updateErr) throw updateErr;
                     
-                    // 2. Guardamos en el historial
                     const orderRef = String(order.orderNumber || order.order_number || order.id).padStart(7, '0');
                     const { error: histErr } = await supabase.from('historial_inventario').insert([{
                         material_id: update.id,
@@ -144,9 +185,6 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                         usuario: user?.name || 'Sistema'
                     }]);
                     
-                    // 🔥 PROTECCIÓN ANTI-BLOQUEO 🔥
-                    // Si el historial falla (ej: llave duplicada), mostramos error en consola 
-                    // pero dejamos que el proceso termine para que NO descuente doble el inventario.
                     if (histErr) {
                         console.error("Error guardando historial (pero se descontó el stock correctamente):", histErr);
                     }
@@ -254,7 +292,23 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
 
                   {status === 'FINALIZADO' && (
                        <div className="bg-green-50/80 p-3 rounded-lg border border-green-200 shadow-sm animate-in fade-in">
-                           <div className="text-xs font-black text-green-700 uppercase tracking-wider flex items-center gap-1 mb-2"><CheckCircle2 className="w-4 h-4"/> Finalizado</div>
+                           <div className="flex justify-between items-start mb-2">
+                               <div className="text-xs font-black text-green-700 uppercase tracking-wider flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Finalizado</div>
+                               
+                               {user?.role === 'Administrador' && (
+                                   <Button 
+                                       size="sm" 
+                                       variant="outline" 
+                                       onClick={handleRevert} 
+                                       disabled={loading} 
+                                       className="h-6 text-[10px] px-2 py-0 border-red-200 text-red-600 hover:bg-red-50 hover:text-red-700 hover:border-red-300 transition-colors"
+                                       title="Deshacer finalización y devolver materiales al inventario"
+                                   >
+                                       {loading ? <Loader2 className="w-3 h-3 animate-spin"/> : <RotateCcw className="w-3 h-3 mr-1"/>} Revertir
+                                   </Button>
+                               )}
+                           </div>
+                           
                            <div className="bg-white rounded border border-green-100 p-2">
                                {product.sin_materiales ? (
                                    <div className="text-[10px] text-slate-500 italic flex items-center gap-1"><Ban className="w-3 h-3"/> No se usó inventario</div>
@@ -371,7 +425,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const totalAbonos = abonosArray.reduce((acc, a) => acc + Number(a.monto), 0);
   
   const saldoCalculado = Math.max(fin.total - anticipoVal - retencion - totalAbonos, 0);
-  const saldoFinalReal = saldoCalculado;
 
   const isCredito = (order?.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order?.formaPagoSaldo || '').toLowerCase().includes('credito') || (order?.formaPagoAnticipo || '').toLowerCase().includes('crédito');
 
@@ -590,7 +643,24 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             {Number(fin.descuentoVal) > 0 && <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto Total</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>}
                             <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
                             <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({fin.ivaPercentage || 15}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 bg-blue-50 text-base"><div className="px-4 py-3 text-right font-bold text-blue-900">TOTAL</div><div className="px-4 py-3 text-right font-bold text-blue-900">{formatCurrency(fin.total)}</div></div>
+                            
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-slate-100 text-base">
+                                <div className="px-4 py-2 text-right font-bold text-slate-800">TOTAL FACTURA</div>
+                                <div className="px-4 py-2 text-right font-bold text-slate-800">{formatCurrency(fin.total)}</div>
+                            </div>
+                            
+                            {/* 🔥 NUEVO: SE MUESTRA LA RETENCIÓN AQUÍ 🔥 */}
+                            {retencion > 0 && (
+                                <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-orange-50 text-sm">
+                                    <div className="px-4 py-2 text-right font-bold text-orange-800">Retención ({parsedFinancials.retentionPercent || 0}%)</div>
+                                    <div className="px-4 py-2 text-right font-bold text-orange-800">-{formatCurrency(retencion)}</div>
+                                </div>
+                            )}
+
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 bg-blue-50 text-base">
+                                <div className="px-4 py-3 text-right font-bold text-blue-900">TOTAL A PAGAR</div>
+                                <div className="px-4 py-3 text-right font-bold text-blue-900">{formatCurrency(fin.total - retencion)}</div>
+                            </div>
                         </div>
                     </div>
                 )}
@@ -892,9 +962,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             <span className="font-bold">IVA {fin.ivaPercentage || 15}%</span>
                             <span className="font-medium">{formatCurrency(fin.iva)}</span>
                         </div>
-                        <div className="flex justify-between items-center p-2 bg-gray-200 h-full">
-                            <span className="font-black text-sm">TOTAL</span>
+                        <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-200">
+                            <span className="font-black text-sm">TOTAL FACTURA</span>
                             <span className="font-black text-sm">{formatCurrency(fin.total)}</span>
+                        </div>
+                        {retencion > 0 && (
+                            <div className="flex justify-between items-center p-1.5 border-b border-black bg-orange-50">
+                                <span className="font-bold text-orange-800">RETENCIÓN ({parsedFinancials.retentionPercent || 0}%)</span>
+                                <span className="font-bold text-orange-800">-{formatCurrency(retencion)}</span>
+                            </div>
+                        )}
+                        <div className="flex justify-between items-center p-2 bg-blue-100 h-full border-t border-black">
+                            <span className="font-black text-sm">TOTAL A PAGAR</span>
+                            <span className="font-black text-sm">{formatCurrency(fin.total - retencion)}</span>
                         </div>
                     </div>
                 </div>
