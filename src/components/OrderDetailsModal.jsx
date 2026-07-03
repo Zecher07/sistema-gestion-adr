@@ -347,9 +347,14 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const isAdmin = user?.role === 'Administrador';
   const isVendedor = user?.role === 'Vendedor';
   const isProduccion = user?.role === 'Producción';
+  const isContabilidad = user?.role === 'Contabilidad';
+  
   const canEditProductionStatus = isAdmin || isProduccion;
   const isCancelled = order?.status === 'ANULADA';
   const isArchived = order?.status === 'ARCHIVADA';
+
+  // 🔥 PERMISOS ACTUALIZADOS PARA EL BOTÓN INTERNO DE EDITAR 🔥
+  const canActuallyEdit = canEdit || isAdmin || (isContabilidad && order?.status === 'CONTABILIDAD');
 
   useEffect(() => {
     if (order) {
@@ -560,7 +565,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     <span className="cursor-not-allowed opacity-50 flex items-center gap-1 font-mono text-sm">0000000 {' - >'}</span>
                 </div>
                 <div className="flex items-center gap-2 flex-wrap justify-end">
-                    {canEdit && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2" onClick={() => onUpdateOrder && onUpdateOrder()}><Edit2 className="h-4 w-4" /> Editar Orden</Button>}
+                    {canActuallyEdit && <Button size="sm" variant="outline" className="border-blue-300 text-blue-700 hover:bg-blue-50 gap-2" onClick={() => onUpdateOrder && onUpdateOrder()}><Edit2 className="h-4 w-4" /> Editar Orden</Button>}
                     
                     <Button size="sm" variant="ghost" className="text-amber-700 hover:bg-amber-100 bg-amber-50 gap-2 font-bold border border-amber-200" onClick={handlePrint}>
                         <Printer className="h-4 w-4" /> Imprimir Orden
