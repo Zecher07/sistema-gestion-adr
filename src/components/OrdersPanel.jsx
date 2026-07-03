@@ -89,21 +89,23 @@ const OrdersPanel = ({
   };
 
   const isAdmin = user.role === 'Administrador';
-  const isProduccion = user.role === 'Producción'; // 🔥 Nueva regla de seguridad para el Taller 🔥
+  const isProduccion = user.role === 'Producción'; 
 
   const actionConfig = useMemo(() => {
     return {
       showView: true,
       showEdit: true,
-      showClone: !isProduccion, // Producción no clona
+      showClone: !isProduccion, 
       showPayment: isAdmin,
       showArchive: isAdmin,
       showUnarchive: isAdmin
     };
   }, [isAdmin, isProduccion]);
 
+  // 🔥 PERMISOS ACTUALIZADOS PARA CONTABILIDAD 🔥
   const canModify = (order) => {
       if (isAdmin) return true;
+      if (user?.role === 'Contabilidad' && order.status === 'CONTABILIDAD') return true;
       return (order.vendedor || '').includes(user?.name);
   };
 
@@ -344,9 +346,11 @@ const OrdersPanel = ({
     }
   };
 
+  // 🔥 ACTUALIZADO: REGLA DE EDICIÓN PARA CONTABILIDAD 🔥
   const canEdit = (status) => {
     if (status === 'ANULADA' || status === 'ARCHIVADA') return false;
     if (isAdmin) return true;
+    if (user?.role === 'Contabilidad' && status === 'CONTABILIDAD') return true;
     return status === 'VENTAS';
   };
   

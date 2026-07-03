@@ -297,7 +297,9 @@ function App() {
   // =======================================================================
 
   const handleEditOrderRequest = (o) => {
-      if (user.role !== 'Administrador' && !o.vendedor?.includes(user.name)) {
+      const isContabilidadAllowed = user.role === 'Contabilidad' && o.status === 'CONTABILIDAD';
+
+      if (user.role !== 'Administrador' && !isContabilidadAllowed && !o.vendedor?.includes(user.name)) {
           toast({ title: "Acceso Denegado", description: "Solo puedes editar las órdenes donde estés asignado.", variant: "destructive" });
           return;
       }
@@ -520,7 +522,11 @@ function App() {
         onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
         onAnulateOrder={handleAnulateOrderRequest} 
         canAnulate={user.role === 'Administrador' || (canUserAnulate && viewOrder?.vendedor?.includes(user.name))} 
-        canEdit={user.role === 'Administrador' || (canUserEdit && viewOrder?.vendedor?.includes(user.name))} 
+        canEdit={
+          user.role === 'Administrador' || 
+          (user.role === 'Contabilidad' && viewOrder?.status === 'CONTABILIDAD') || 
+          (canUserEdit && viewOrder?.vendedor?.includes(user.name))
+        } 
         onAbonoOrder={handleAbonoOrderRequest} 
       />
 

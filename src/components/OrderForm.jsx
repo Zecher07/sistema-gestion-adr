@@ -133,12 +133,25 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
 
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients, onCreateClient }) => {
   const { toast } = useToast();
+  
+  // 🔥 LÓGICA DE ROLES Y PERMISOS ACTUALIZADA 🔥
   const isAdmin = currentUser?.role === 'Administrador';
+  const isContabilidad = currentUser?.role === 'Contabilidad';
+  const isInContabilidadStatus = initialData?.status === 'CONTABILIDAD';
   
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
+  
+  // Lo general es de solo lectura para todos excepto Admin
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
-  const isEditMode = !!(initialData && initialData.id);
   const isBottomReadOnly = isEffectivelyReadOnly;
+
+  // 🌟 NUEVO: Candado especial para la Retención
+  // Permite que Contabilidad EDITE ÚNICAMENTE LA RETENCIÓN si la orden está en su etapa.
+  const isRetentionReadOnly = isAdmin ? false : (
+      (isContabilidad && isInContabilidadStatus) ? false : isPastPaso1
+  );
+
+  const isEditMode = !!(initialData && initialData.id);
 
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
@@ -390,8 +403,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
     let anticipoCalculado = parseFloat(formData.anticipo) || 0;
     
-    // 🔥 FIX: Solo auto-calculamos el anticipo al tope si es una ORDEN NUEVA. 
-    // Si ya existe (isEditMode), respetamos el anticipo original.
     if (paymentMode === 'full' && !isEditMode) {
         anticipoCalculado = Number((total - retencionValor).toFixed(2));
         if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { 
@@ -401,7 +412,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
     const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
     
-    // 🔥 FIX: Eliminamos el Math.max para permitir saldos negativos si bajan el precio 🔥
     const saldoRealBruto = total - anticipoCalculado - retencionValor - abonosTotal;
     const saldoPendiente = Number(saldoRealBruto.toFixed(2));
 
@@ -759,8 +769,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     const invalidMetroProducts = validProducts.filter(p => p.es_por_metro && (p.base === '' || p.altura === ''));
     if (invalidMetroProducts.length > 0) { toast({ title: "Medidas Requeridas", description: "Debe colocar base y altura en cm para los productos por metro.", variant: "destructive" }); setLoading(false); return; }
 
-    // 🔥 FIX: BLOQUEO POR EXCESO DE PAGO 🔥
-    // Si la matemática dice que el saldo pendiente es MENOR a 0 (porque el total es menor a lo ya pagado), bloqueamos el guardado.
     if (financials.saldoPendiente < -0.02) { 
         toast({ 
             title: "Total no válido", 
@@ -852,7 +860,21 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       </div>
 
-      {isPastPaso1 && (
+      {isPastPaso1 && !isRetentionReadOnly && (
+        <div className="bg-orange-50 border-b border-orange-200 p-3 px-6 shadow-sm">
+            <div className="flex items-start gap-3">
+                <AlertOctagon className="h-5 w-5 text-orange-600 mt-0.5" />
+                <div>
+                    <h4 className="text-sm font-bold text-orange-800">Modo: Ajuste de Retención</h4>
+                    <p className="text-xs text-orange-700 mt-1">
+                        La orden ya avanzó de etapa, pero como usuario de <b>Contabilidad</b> puedes activar y editar la retención en la tabla de <b>Total Factura</b> abajo.
+                    </p>
+                </div>
+            </div>
+        </div>
+      )}
+
+      {isPastPaso1 && isRetentionReadOnly && (
         <div className="bg-amber-50 border-b border-amber-200 p-3 px-6 shadow-sm">
             <div className="flex items-start gap-3">
                 <AlertOctagon className="h-5 w-5 text-amber-600 mt-0.5" />
@@ -1234,15 +1256,15 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          <td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
                       </tr>
                       
-                      {/* 🔥 NUEVO: SECCIÓN DE RETENCIÓN VISIBLE Y EDITABLE 🔥 */}
+                      {/* 🔥 NUEVO: SECCIÓN DE RETENCIÓN VISIBLE Y EDITABLE (Controlada por rol) 🔥 */}
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={isBottomReadOnly}/>
-                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>
+                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={isRetentionReadOnly}/>
+                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${isRetentionReadOnly ? 'opacity-50' : ''}`}>
                                ¿Aplica Retención? 
                             </label>
 
-                            {applyRetention && !isBottomReadOnly && (
+                            {applyRetention && !isRetentionReadOnly && (
                                 <div className="flex items-center gap-1 ml-2">
                                    <input 
                                       name="retentionPercentInput"
@@ -1261,7 +1283,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                    <span className="text-xs text-slate-500">%</span>
                                 </div>
                             )}
-                            {applyRetention && isBottomReadOnly && (
+                            {applyRetention && isRetentionReadOnly && (
                                 <span className="text-orange-700 font-bold ml-2">({formData.retentionPercent}%)</span>
                             )}
                          </td>
@@ -1269,7 +1291,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              {applyRetention ? (
                                  <div className="flex items-center justify-end gap-1">
                                      <span>- $</span>
-                                     {!isBottomReadOnly ? (
+                                     {!isRetentionReadOnly ? (
                                          <input 
                                              name="retentionValInput"
                                              type="number" step="0.01" 
