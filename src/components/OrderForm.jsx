@@ -133,25 +133,13 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
 
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients, onCreateClient }) => {
   const { toast } = useToast();
-  
-  // 🔥 LÓGICA DE ROLES Y PERMISOS ACTUALIZADA 🔥
   const isAdmin = currentUser?.role === 'Administrador';
-  const isContabilidad = currentUser?.role === 'Contabilidad';
-  const isInContabilidadStatus = initialData?.status === 'CONTABILIDAD';
   
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
-  
-  // Lo general es de solo lectura para todos excepto Admin
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
-  const isBottomReadOnly = isEffectivelyReadOnly;
-
-  // 🌟 NUEVO: Candado especial para la Retención
-  // Permite que Contabilidad EDITE ÚNICAMENTE LA RETENCIÓN si la orden está en su etapa.
-  const isRetentionReadOnly = isAdmin ? false : (
-      (isContabilidad && isInContabilidadStatus) ? false : isPastPaso1
-  );
-
   const isEditMode = !!(initialData && initialData.id);
+  // 🔥 CORRECCIÓN APLICADA: Permite que Contabilidad edite la parte inferior de la orden
+  const isBottomReadOnly = (isAdmin || currentUser?.role === 'Contabilidad') ? false : isEffectivelyReadOnly;
 
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
@@ -218,7 +206,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
     descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
-    esMayorista: false
+    esMayorista: false, nroFactura: '' // 🔥 Nuevo campo
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
@@ -335,7 +323,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         imagenes: initialData.imagenes || [], notas: initialData.notas || '',
         observaciones: initialData.observaciones || finData.observaciones || '', 
         descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
-        esMayorista: initialData.esMayorista || initialData.es_mayorista || false
+        esMayorista: initialData.esMayorista || initialData.es_mayorista || false,
+        nroFactura: initialData.nro_factura || finData.nroFactura || initialData.nroFactura || '' // 🔥 Cargar Nro Factura
       }));
       
       setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
@@ -818,7 +807,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 ...financials, saldo: financials.saldoPendiente, descuentoMonto: formData.descuentoMonto, descuentoVal: financials.descuentoVal, 
                 ivaPercentage: formData.ivaPercentage, retentionPercent: formData.retentionPercent, retencion: formData.retencion,
                 formaPagoSaldo: formData.formaPagoSaldo, creditoVenceSaldo: formData.creditoVenceSaldo, notaSaldo: formData.notaSaldo,
-                aplicarIva: formData.aplicarIva, observaciones: formData.observaciones 
+                aplicarIva: formData.aplicarIva, observaciones: formData.observaciones,
+                nroFactura: formData.nroFactura // 🔥 Guardando Número de Factura
             },
             anticipo: formData.anticipo, retencion: formData.retencion, forma_pago_anticipo: finalPaymentString,
             nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
@@ -860,21 +850,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </div>
       </div>
 
-      {isPastPaso1 && !isRetentionReadOnly && (
-        <div className="bg-orange-50 border-b border-orange-200 p-3 px-6 shadow-sm">
-            <div className="flex items-start gap-3">
-                <AlertOctagon className="h-5 w-5 text-orange-600 mt-0.5" />
-                <div>
-                    <h4 className="text-sm font-bold text-orange-800">Modo: Ajuste de Retención</h4>
-                    <p className="text-xs text-orange-700 mt-1">
-                        La orden ya avanzó de etapa, pero como usuario de <b>Contabilidad</b> puedes activar y editar la retención en la tabla de <b>Total Factura</b> abajo.
-                    </p>
-                </div>
-            </div>
-        </div>
-      )}
-
-      {isPastPaso1 && isRetentionReadOnly && (
+      {isPastPaso1 && (
         <div className="bg-amber-50 border-b border-amber-200 p-3 px-6 shadow-sm">
             <div className="flex items-start gap-3">
                 <AlertOctagon className="h-5 w-5 text-amber-600 mt-0.5" />
@@ -882,7 +858,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                     <h4 className="text-sm font-bold text-amber-800">Orden en etapa: {initialData.status}</h4>
                     <p className="text-xs text-amber-700 mt-1">
                         Esta orden ya salió de VENTAS. Los datos del pedido están bloqueados por seguridad. 
-                        <b> Solo puedes registrar la Liquidación de Saldo Final o nuevos Abonos.</b>
+                        <b> Solo puedes registrar la Liquidación de Saldo Final, Nuevos Abonos o Facturación.</b>
                     </p>
                 </div>
             </div>
@@ -1084,7 +1060,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                     readOnly={isEffectivelyReadOnly}
                                 />
                                 
-                                {/* 🔥 CUADRO DE OBSERVACIONES EXCLUSIVO DEL PRODUCTO (SOLO LECTURA) 🔥 */}
                                 {row.observaciones && (
                                     <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 select-none cursor-not-allowed shadow-inner">
                                         <span className="font-bold text-slate-400 block text-[9px] uppercase">Nota Técnica:</span>
@@ -1250,21 +1225,19 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
                       
-                      {/* 🔥 TOTAL FACTURA 🔥 */}
                       <tr className="bg-slate-200 font-bold text-slate-900 border-t border-slate-300">
                          <td colSpan="4" className="text-right py-2 px-2">TOTAL FACTURA</td>
                          <td className="text-right py-2 px-2">$ {financials.total.toFixed(2)}</td><td></td>
                       </tr>
                       
-                      {/* 🔥 NUEVO: SECCIÓN DE RETENCIÓN VISIBLE Y EDITABLE (Controlada por rol) 🔥 */}
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={isRetentionReadOnly}/>
-                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${isRetentionReadOnly ? 'opacity-50' : ''}`}>
+                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={isBottomReadOnly}/>
+                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>
                                ¿Aplica Retención? 
                             </label>
 
-                            {applyRetention && !isRetentionReadOnly && (
+                            {applyRetention && !isBottomReadOnly && (
                                 <div className="flex items-center gap-1 ml-2">
                                    <input 
                                       name="retentionPercentInput"
@@ -1283,7 +1256,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                    <span className="text-xs text-slate-500">%</span>
                                 </div>
                             )}
-                            {applyRetention && isRetentionReadOnly && (
+                            {applyRetention && isBottomReadOnly && (
                                 <span className="text-orange-700 font-bold ml-2">({formData.retentionPercent}%)</span>
                             )}
                          </td>
@@ -1291,7 +1264,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              {applyRetention ? (
                                  <div className="flex items-center justify-end gap-1">
                                      <span>- $</span>
-                                     {!isRetentionReadOnly ? (
+                                     {!isBottomReadOnly ? (
                                          <input 
                                              name="retentionValInput"
                                              type="number" step="0.01" 
@@ -1318,7 +1291,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          <td></td>
                       </tr>
 
-                      {/* 🔥 TOTAL A PAGAR (Factura - Retención) 🔥 */}
                       <tr className="bg-blue-100 font-black text-blue-900 border-t border-slate-300 shadow-inner">
                          <td colSpan="4" className="text-right py-2 px-2">TOTAL A PAGAR</td>
                          <td className="text-right py-2 px-2">$ {(financials.total - formData.retencion).toFixed(2)}</td><td></td>
@@ -1475,6 +1447,27 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         )}
                     </div>
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
+             </div>
+
+             {/* 🔥 NUEVO BLOQUE: NÚMERO DE FACTURA PARA CONTABILIDAD 🔥 */}
+             <div className="mt-4 border border-blue-200 bg-blue-50/60 rounded-lg p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-inner">
+                 <div className="w-full sm:w-1/2">
+                     <h4 className="text-sm font-bold text-blue-900 uppercase flex items-center gap-2">
+                         <FileText className="h-4 w-4"/> Número de Factura
+                     </h4>
+                     <p className="text-xs text-blue-700 mt-0.5 leading-snug">Uso de Contabilidad para adjuntar la factura antes de finalizar.</p>
+                 </div>
+                 <div className="w-full sm:w-1/2 relative">
+                     <span className="absolute left-3 top-2.5 text-blue-400 font-bold">N°</span>
+                     <input 
+                         type="text" 
+                         className={`w-full pl-8 pr-3 py-2 border rounded-md text-sm font-bold focus:outline-none transition-colors ${isBottomReadOnly ? 'bg-slate-100 border-slate-300 text-slate-500 cursor-not-allowed' : 'bg-white border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 text-slate-800'}`}
+                         placeholder="Ej: 001-002-0000123" 
+                         value={formData.nroFactura || ''} 
+                         onChange={e => setFormData({...formData, nroFactura: e.target.value})} 
+                         readOnly={isBottomReadOnly} 
+                     />
+                 </div>
              </div>
 
              <div className="mt-4 border-t border-slate-200 pt-4">
