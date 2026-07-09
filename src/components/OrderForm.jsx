@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Calendar as CalendarIcon, User, Search, Calculator, 
-  FileText, Loader2, UserPlus, FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart, DollarSign, Image as ImageIcon, AlertOctagon
+  FileText, Loader2, UserPlus, FileImage, Check, CheckCircle2, Trash2, Plus, CreditCard, Lock, Users, Info, Ban, ShoppingCart, DollarSign, Image as ImageIcon, AlertOctagon, Undo2
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -135,16 +135,19 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
   const isContabilidad = currentUser?.role === 'Contabilidad'; 
+  const isVendedor = currentUser?.role === 'Vendedor';
   
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
   const isEditMode = !!(initialData && initialData.id);
   const isBottomReadOnly = (isAdmin || isContabilidad) ? false : isEffectivelyReadOnly;
 
+  // 🔥 NUEVA REGLA: El vendedor puede editar la retención si está en el paso de "VENTAS POR RETIRAR" 🔥
+  const canEditRetention = !isBottomReadOnly || (isVendedor && initialData?.status === 'VENTAS POR RETIRAR');
+
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
   
-  // 🔥 ESTADO PARA VER IMÁGENES EN GRANDE 🔥
   const [previewImage, setPreviewImage] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState('');
@@ -176,7 +179,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [abonos, setAbonos] = useState([]);
   const hasAbonosExtras = abonos && abonos.length > 0; 
   
-  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
+  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [] });
   const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
   
   const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
@@ -343,8 +346,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       if (data.imagenes && Array.isArray(data.imagenes)) setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
                       if (data.comprobantes) {
                           let cData = data.comprobantes;
-                          if (Array.isArray(cData)) cData = { anticipo: cData, saldo: [], abonos: {} };
-                          setComprobantesData({ anticipo: cData.anticipo || [], saldo: cData.saldo || [], abonos: cData.abonos || {} });
+                          // 🔥 INICIALIZANDO RETENCION TAMBIÉN 🔥
+                          if (Array.isArray(cData)) cData = { anticipo: cData, saldo: [], abonos: {}, retencion: [] };
+                          setComprobantesData({ 
+                              anticipo: cData.anticipo || [], 
+                              saldo: cData.saldo || [], 
+                              abonos: cData.abonos || {},
+                              retencion: cData.retencion || []
+                          });
                       }
                   }
               } catch(e) {}
@@ -763,8 +772,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
     if (financials.saldoPendiente < -0.02) { 
         toast({ 
-            title: "Total no válido", 
-            description: `El nuevo Total de la orden es MENOR al dinero que ya se ha cobrado (Anticipo + Abonos). Hay un exceso de $${Math.abs(financials.saldoPendiente).toFixed(2)}.`, 
+            title: "Balance Negativo. No se puede guardar", 
+            description: `Se detectó un excedente de $${Math.abs(financials.saldoPendiente).toFixed(2)}. Por favor, haz clic en "Registrar Devolución" antes de guardar.`, 
             variant: "destructive" 
         }); 
         setLoading(false); return; 
@@ -1235,12 +1244,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={isBottomReadOnly}/>
-                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>
+                            {/* 🔥 APLICANDO REGLA CANEDITRETENTION AL CHECKBOX 🔥 */}
+                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={!canEditRetention}/>
+                            <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${!canEditRetention ? 'opacity-50' : ''}`}>
                                ¿Aplica Retención? 
                             </label>
 
-                            {applyRetention && !isBottomReadOnly && (
+                            {/* 🔥 APLICANDO REGLA CANEDITRETENTION A LOS INPUTS 🔥 */}
+                            {applyRetention && canEditRetention && (
                                 <div className="flex items-center gap-1 ml-2">
                                    <input 
                                       name="retentionPercentInput"
@@ -1259,7 +1270,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                    <span className="text-xs text-slate-500">%</span>
                                 </div>
                             )}
-                            {applyRetention && isBottomReadOnly && (
+                            {applyRetention && !canEditRetention && (
                                 <span className="text-orange-700 font-bold ml-2">({formData.retentionPercent}%)</span>
                             )}
                          </td>
@@ -1267,7 +1278,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              {applyRetention ? (
                                  <div className="flex items-center justify-end gap-1">
                                      <span>- $</span>
-                                     {!isBottomReadOnly ? (
+                                     {canEditRetention ? (
                                          <input 
                                              name="retentionValInput"
                                              type="number" step="0.01" 
@@ -1368,7 +1379,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            isProcessing={isProcessingComprobantes} 
                            disabled={isBottomReadOnly || hasAbonosExtras}
                            canRemove={!isContabilidad}
-                           onClickImage={setPreviewImage} // 🔥 NUEVO: ABRE LA IMAGEN 🔥
+                           onClickImage={setPreviewImage} 
                        />
                    )}
 
@@ -1454,6 +1465,30 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
              </div>
 
+             {/* 🔥 NUEVO BLOQUE: FOTO Y COMPROBANTE EXCLUSIVO PARA RETENCIONES 🔥 */}
+             {formData.retencion > 0 && (
+                <div className="mt-4 border border-orange-200 bg-orange-50/60 rounded-lg p-4 shadow-inner">
+                    <div className="flex justify-between items-center mb-2 border-b border-orange-200 pb-2">
+                        <span className="text-orange-800 font-bold text-sm uppercase flex items-center gap-1">
+                            <FileText className="h-4 w-4"/> Comprobante de Retención
+                        </span>
+                        <span className="text-lg font-bold text-orange-800">${Number(formData.retencion).toFixed(2)}</span>
+                    </div>
+                    <p className="text-xs text-orange-700 mb-3">La captura o documento de la retención debe ser adjuntada únicamente por el departamento de Contabilidad.</p>
+                    
+                    <InlineComprobanteEdit
+                        type="retencion"
+                        items={comprobantesData.retencion || []}
+                        onAdd={handleAddComprobantes}
+                        onRemove={handleRemoveComprobante}
+                        isProcessing={isProcessingComprobantes}
+                        disabled={!isContabilidad && !isAdmin} // 🔥 SOLO CONTABILIDAD PUEDE AÑADIR/BORRAR 🔥
+                        canRemove={isContabilidad || isAdmin}
+                        onClickImage={setPreviewImage} 
+                    />
+                </div>
+             )}
+
              <div className="mt-4 border border-blue-200 bg-blue-50/60 rounded-lg p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-inner">
                  <div className="w-full sm:w-1/2">
                      <h4 className="text-sm font-bold text-blue-900 uppercase flex items-center gap-2">
@@ -1488,38 +1523,74 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          </div>
                      )}
                  </div>
+
+                 {/* 🔥 NUEVA LÓGICA DE EXCEDENTE NEGATIVO POR RETENCIÓN TARDÍA 🔥 */}
+                 {financials.saldoPendiente < -0.01 && (
+                     <div className="bg-red-50 border border-red-300 p-3 rounded-lg flex flex-col md:flex-row justify-between items-center mb-4 shadow-sm gap-3 animate-in fade-in">
+                         <div>
+                             <span className="text-red-800 font-bold text-sm block flex items-center gap-1"><AlertOctagon className="h-4 w-4"/> Excedente de Pago Detectado</span>
+                             <span className="text-red-600 text-xs">Debido a la reciente retención añadida, hay un saldo a favor del cliente de <b>${Math.abs(financials.saldoPendiente).toFixed(2)}</b>. Para guardar los cambios, debes registrar la devolución.</span>
+                         </div>
+                         <Button 
+                             type="button" 
+                             onClick={() => {
+                                 const excedente = Math.abs(financials.saldoPendiente);
+                                 setAbonos([...abonos, {
+                                     monto: -excedente,
+                                     metodoPago: 'Devolución Efectivo',
+                                     fecha: `${getLocalDate()}T12:00:00`,
+                                     nota: 'Devolución por Retención',
+                                     cobrador: currentUser.name
+                                 }]);
+                                 toast({ title: "Devolución registrada", description: "El saldo se ha balanceado a $0.00." });
+                             }} 
+                             className="bg-red-600 hover:bg-red-700 text-white text-xs h-8 whitespace-nowrap"
+                         >
+                             <Undo2 className="h-4 w-4 mr-1"/> Registrar Devolución Efectivo
+                         </Button>
+                     </div>
+                 )}
                  
                  {abonos.length > 0 ? (
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-                         {abonos.map((abono, idx) => (
-                             <div key={idx} className="bg-red-50 border border-red-200 rounded p-3 shadow-sm relative group flex flex-col">
-                                 {!isContabilidad && (
-                                     <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4"/></button>
-                                 )}
-                                 <div className="flex justify-between items-start w-full pr-6 mb-2">
-                                     <div>
-                                         <div className="text-[10px] text-slate-500 font-bold">{abono.fecha ? abono.fecha.split('T')[0] : ''}</div>
-                                         <div className="text-xs font-bold text-red-700 uppercase">{abono.metodoPago || abono.metodo_pago}</div>
+                         {abonos.map((abono, idx) => {
+                             const isDevolucion = abono.monto < 0;
+                             return (
+                                 <div key={idx} className={`border rounded p-3 shadow-sm relative group flex flex-col ${isDevolucion ? 'bg-orange-50 border-orange-200' : 'bg-red-50 border-red-200'}`}>
+                                     
+                                     {/* Lógica de Borrado */}
+                                     {(!isContabilidad && !isDevolucion) && (
+                                         <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4"/></button>
+                                     )}
+                                     {(isContabilidad || isAdmin) && isDevolucion && (
+                                         <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-orange-400 hover:text-orange-600"><Trash2 className="h-4 w-4"/></button>
+                                     )}
+
+                                     <div className="flex justify-between items-start w-full pr-6 mb-2">
+                                         <div>
+                                             <div className="text-[10px] text-slate-500 font-bold">{abono.fecha ? abono.fecha.split('T')[0] : ''}</div>
+                                             <div className={`text-xs font-bold uppercase ${isDevolucion ? 'text-orange-700' : 'text-red-700'}`}>{abono.metodoPago || abono.metodo_pago}</div>
+                                         </div>
+                                         <div className={`font-black text-lg ${isDevolucion ? 'text-orange-600' : 'text-red-600'}`}>
+                                             {isDevolucion ? formatCurrency(abono.monto) : `+${formatCurrency(abono.monto)}`}
+                                         </div>
                                      </div>
-                                     <div className="font-black text-red-600 text-lg">
-                                         +{formatCurrency(abono.monto)}
-                                     </div>
+                                     
+                                     {requiresComprobante(abono.metodoPago || abono.metodo_pago) && (
+                                         <InlineComprobanteEdit 
+                                             type="abono" 
+                                             abonoIndex={idx} 
+                                             items={(comprobantesData.abonos || {})[idx] || []} 
+                                             onAdd={handleAddComprobantes} 
+                                             onRemove={handleRemoveComprobante} 
+                                             isProcessing={isProcessingComprobantes} 
+                                             canRemove={!isContabilidad}
+                                             onClickImage={setPreviewImage} 
+                                         />
+                                     )}
                                  </div>
-                                 
-                                 {requiresComprobante(abono.metodoPago || abono.metodo_pago) && (
-                                     <InlineComprobanteEdit 
-                                         type="abono" 
-                                         abonoIndex={idx} 
-                                         items={(comprobantesData.abonos || {})[idx] || []} 
-                                         onAdd={handleAddComprobantes} 
-                                         onRemove={handleRemoveComprobante} 
-                                         isProcessing={isProcessingComprobantes} 
-                                         canRemove={!isContabilidad}
-                                         onClickImage={setPreviewImage} // 🔥 NUEVO: ABRE LA IMAGEN 🔥
-                                     />
-                                 )}
-                             </div>
-                         ))}
+                             );
+                         })}
                      </div>
                  ) : (
                      <div className="text-xs text-slate-400 italic">No hay abonos ni pagos registrados.</div>
@@ -1561,7 +1632,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 onRemove={removeImage} 
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
-                onClickImage={setPreviewImage} // 🔥 NUEVO: ABRE LA IMAGEN 🔥
+                onClickImage={setPreviewImage} 
              />
           </div>
         </form>
@@ -1691,44 +1762,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 </div>
             </div>
           </div>
-        </div>
-      )}
-
-      {isCatalogOpen && (
-        <div className="fixed inset-y-0 right-0 w-full md:w-[450px] bg-white shadow-2xl z-[100] flex flex-col border-l border-slate-200 animate-in slide-in-from-right">
-            <div className="bg-slate-800 text-white p-4 flex justify-between items-center shrink-0">
-                <h3 className="font-bold text-lg flex items-center gap-2"><ShoppingCart className="h-5 w-5"/> Catálogo de Precios</h3>
-                <Button variant="ghost" size="icon" onClick={() => setIsCatalogOpen(false)} className="hover:bg-slate-700"><X className="h-5 w-5" /></Button>
-            </div>
-            <div className="p-4 border-b border-slate-200 shrink-0 bg-slate-50">
-                <div className="relative">
-                    <Search className="absolute left-3 top-2.5 h-4 w-4 text-slate-400" />
-                    <Input autoFocus placeholder="Buscar por código, nombre o categoría..." className="pl-9 bg-white" value={searchCatalog} onChange={e => setSearchCatalog(e.target.value)} />
-                </div>
-            </div>
-            <div className="flex-1 overflow-y-auto p-4 space-y-3 bg-white">
-                {catalogItems.filter(item => 
-                    (item.nombre || '').toLowerCase().includes(searchCatalog.toLowerCase()) || 
-                    (item.codigo || '').toLowerCase().includes(searchCatalog.toLowerCase()) ||
-                    (item.categoria || '').toLowerCase().includes(searchCatalog.toLowerCase())
-                ).map(item => (
-                    <div key={item.id} className="bg-slate-50 border border-slate-200 p-3 rounded-lg shadow-sm hover:border-blue-400 hover:shadow-md cursor-pointer transition-all group" onClick={() => handleCatalogSelect(item)}>
-                        <div className="flex justify-between items-start mb-1">
-                            <span className="font-bold text-sm text-slate-800 group-hover:text-blue-700 uppercase">{item.nombre}</span>
-                            <span className="font-bold text-green-700">${Number(item.precio).toFixed(2)}</span>
-                        </div>
-                        <div className="text-[10px] font-bold text-purple-600 mb-1">{item.categoria}</div>
-                        <div className="text-xs text-slate-500 line-clamp-2">{item.descripcion || item.observaciones}</div>
-                        
-                        <div className="mt-2 flex flex-wrap items-center gap-2">
-                            {item.es_por_metro && <span className="text-[10px] font-bold text-purple-700 bg-purple-100 border border-purple-200 px-1.5 py-0.5 rounded">Precio Fijo/Rango</span>}
-                            {item.venta_minima > 1 && <span className="text-[10px] font-bold text-red-600 bg-red-50 px-2 py-0.5 rounded border border-red-100">Mínimo: {item.venta_minima}</span>}
-                            {item.precios_escalonados && item.precios_escalonados.length > 0 && <span className="text-[10px] font-bold text-blue-600 bg-blue-50 px-2 py-0.5 rounded border border-blue-100">Descuentos por volumen</span>}
-                        </div>
-                    </div>
-                ))}
-                {catalogItems.length === 0 && <div className="text-center py-10 text-slate-400">Catálogo vacío. Agrega productos en el módulo de Catálogo.</div>}
-            </div>
         </div>
       )}
 

@@ -338,7 +338,8 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const [loadingImages, setLoadingImages] = useState(false); 
   const [isAdvancing, setIsAdvancing] = useState(false);
 
-  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {} });
+  // 🔥 AÑADIMOS RETENCION AL MODELO DE DATOS 🔥
+  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [] });
   const [loadingComprobantes, setLoadingComprobantes] = useState(false);
   
   const printRef = useRef();
@@ -380,18 +381,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
               const { data } = await supabase.from('ordenes').select('comprobantes').eq('id', order.id).single();
               if (data && data.comprobantes) {
                   if (Array.isArray(data.comprobantes)) {
-                      setComprobantesData({ anticipo: data.comprobantes, saldo: [], abonos: {} });
+                      setComprobantesData({ anticipo: data.comprobantes, saldo: [], abonos: {}, retencion: [] });
                   } else {
                       setComprobantesData({
                           anticipo: data.comprobantes.anticipo || [],
                           saldo: data.comprobantes.saldo || [],
-                          abonos: data.comprobantes.abonos || {}
+                          abonos: data.comprobantes.abonos || {},
+                          retencion: data.comprobantes.retencion || []
                       });
                   }
               } else {
-                  setComprobantesData({ anticipo: [], saldo: [], abonos: {} });
+                  setComprobantesData({ anticipo: [], saldo: [], abonos: {}, retencion: [] });
               }
-          } catch (err) { setComprobantesData({ anticipo: [], saldo: [], abonos: {} }); } 
+          } catch (err) { setComprobantesData({ anticipo: [], saldo: [], abonos: {}, retencion: [] }); } 
           finally { setLoadingComprobantes(false); }
       };
 
@@ -422,7 +424,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
       ivaPercentage: Number(parsedFinancials.ivaPercentage || 15)
   };
 
-  // 🔥 NUEVA VARIABLE PARA MOSTRAR LA FACTURA 🔥
   const nroFacturaDisplay = order?.nro_factura || order?.numero_factura || parsedFinancials.nroFactura || order?.numeroFactura || order?.facturaNumber || order?.invoiceNumber || 'PENDIENTE';
 
   const anticipoVal = Number(order?.anticipo || 0);
@@ -600,7 +601,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             <div className="flex flex-col"><span className="text-blue-600 font-bold uppercase tracking-wide">{order.cliente || order.cliente_nombre}</span>{(order.ruc || order.cedula || order.cliente_identificacion) && (<span className="text-xs text-slate-500 font-mono mt-0.5">ID/RUC: {order.ruc || order.cedula || order.cliente_identificacion}</span>)}</div>
                         </div>
 
-                        {/* 🔥 SE AGREGA FACTURA VISUALMENTE EN LOS DETALLES 🔥 */}
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-1">
                             <span className="font-bold text-right text-slate-600">N° Factura:</span>
                             <div className="flex items-center">
@@ -730,27 +730,47 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                     </div>
                                 </div>
                             </div>
+
+                            {/* 🔥 MOSTRAR COMPROBANTE DE RETENCIÓN SI HAY 🔥 */}
+                            {retencion > 0 && comprobantesData.retencion && comprobantesData.retencion.length > 0 && (
+                                <div className="bg-white border border-orange-300 rounded p-4 shadow-sm flex items-center justify-between gap-4">
+                                    <div className="flex-1 w-full">
+                                        <div className="flex justify-between items-center mb-2 border-b border-orange-100 pb-2">
+                                            <span className="text-orange-800 font-bold text-sm">Retención Registrada</span>
+                                            <span className="text-lg font-bold text-orange-800">{formatCurrency(retencion)}</span>
+                                        </div>
+                                        <p className="text-[10px] text-orange-600 font-medium">Documento subido por Contabilidad</p>
+                                    </div>
+                                    <InlineComprobante items={comprobantesData.retencion} onClickImage={setPreviewImage} />
+                                </div>
+                            )}
+
                         </div>
 
                         {order.abonos && order.abonos.length > 0 && (
                             <div className="mt-6 border-t border-slate-300 pt-4 animate-in fade-in slide-in-from-top-4 duration-500">
-                                <h4 className="font-bold text-red-700 text-xs mb-3 uppercase border-b border-red-200 pb-1">Abonos Extras Registrados</h4>
+                                <h4 className="font-bold text-red-700 text-xs mb-3 uppercase border-b border-red-200 pb-1">Abonos y Devoluciones Extras</h4>
                                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                                    {order.abonos.map((a, i) => (
-                                        <div key={i} className="bg-red-50/50 border border-red-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
-                                            <div className="flex-1 w-full">
-                                                <div className="flex justify-between items-start mb-1">
-                                                    <div>
-                                                        <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
-                                                        <div className="text-xs font-bold text-red-700 uppercase">{a.metodoPago || a.metodo_pago}</div>
+                                    {order.abonos.map((a, i) => {
+                                        const isDevolucion = a.monto < 0;
+                                        return (
+                                            <div key={i} className={`border rounded p-4 shadow-sm flex items-center justify-between gap-4 ${isDevolucion ? 'bg-orange-50 border-orange-300' : 'bg-red-50/50 border-red-200'}`}>
+                                                <div className="flex-1 w-full">
+                                                    <div className="flex justify-between items-start mb-1">
+                                                        <div>
+                                                            <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
+                                                            <div className={`text-xs font-bold uppercase ${isDevolucion ? 'text-orange-700' : 'text-red-700'}`}>{a.metodoPago || a.metodo_pago}</div>
+                                                        </div>
+                                                        <div className={`font-black text-lg ${isDevolucion ? 'text-orange-600' : 'text-red-600'}`}>
+                                                            {isDevolucion ? formatCurrency(a.monto) : `+${formatCurrency(a.monto)}`}
+                                                        </div>
                                                     </div>
-                                                    <div className="font-black text-red-600 text-lg">+{formatCurrency(a.monto)}</div>
+                                                    {a.nota && <div className="text-[10px] text-slate-600 italic bg-white/50 p-1 rounded inline-block">{a.nota}</div>}
                                                 </div>
-                                                {a.nota && <div className="text-[10px] text-slate-600 italic bg-white/50 p-1 rounded inline-block">{a.nota}</div>}
+                                                <InlineComprobante items={(comprobantesData.abonos || {})[i] || []} onClickImage={setPreviewImage} />
                                             </div>
-                                            <InlineComprobante items={(comprobantesData.abonos || {})[i] || []} onClickImage={setPreviewImage} />
-                                        </div>
-                                    ))}
+                                        );
+                                    })}
                                 </div>
                             </div>
                         )}
@@ -962,8 +982,8 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                         </div>
                         
                         {order.abonos && order.abonos.map((a, i) => (
-                            <div key={i} className="flex justify-between items-center border-b border-dashed border-red-300 pb-1 text-red-700">
-                                <span className="font-bold">ABONO {i+1} ({a.fecha ? a.fecha.split('T')[0] : ''}):</span>
+                            <div key={i} className={`flex justify-between items-center border-b border-dashed pb-1 ${a.monto < 0 ? 'border-orange-300 text-orange-700' : 'border-red-300 text-red-700'}`}>
+                                <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? a.fecha.split('T')[0] : ''}):</span>
                                 <span className="font-bold">{formatCurrency(a.monto)}</span>
                             </div>
                         ))}
