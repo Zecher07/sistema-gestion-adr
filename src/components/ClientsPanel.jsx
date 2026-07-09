@@ -23,8 +23,21 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
   const canDelete = user?.role === 'Administrador' || user?.role === 'Contabilidad';
   const canViewOrderDetails = user?.role === 'Administrador' || user?.role === 'Contabilidad';
 
+  // 🔥 FILTRADO Y CÁLCULO DE ÓRDENES POR CLIENTE 🔥
   const clientesFiltrados = useMemo(() => {
-      return clients.filter(cliente => {
+      // 1. Primero, calculamos las órdenes de cada cliente
+      const clientsWithCounts = clients.map(cliente => {
+          const count = orders.filter(o => {
+              const matchIdentificacion = cliente.empresa && (o.ruc === cliente.empresa || o.cedula === cliente.empresa || o.cliente_identificacion === cliente.empresa);
+              const matchNombre = (o.cliente || o.cliente_nombre)?.toLowerCase() === cliente.nombre?.toLowerCase();
+              return matchIdentificacion || matchNombre;
+          }).length;
+          
+          return { ...cliente, orderCount: count };
+      });
+
+      // 2. Luego, aplicamos la búsqueda por texto
+      return clientsWithCounts.filter(cliente => {
           const texto = searchTerm.toLowerCase();
           return (
               cliente.nombre?.toLowerCase().includes(texto) ||
@@ -33,7 +46,7 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
               cliente.telefono?.toLowerCase().includes(texto)
           );
       });
-  }, [clients, searchTerm]);
+  }, [clients, orders, searchTerm]);
 
   // 🔥 LÓGICA DE ORDENAMIENTO 🔥
   const requestSort = (key) => {
@@ -98,11 +111,11 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
   }
 
   const handleExport = () => {
-    const cabeceras = "Nombre,RUC/Cedula,Email,Telefono,Direccion\n"
+    const cabeceras = "Nombre,RUC/Cedula,Email,Telefono,Direccion,Cant_Ordenes\n"
     const filas = sortedClients.map(c => 
-      `${c.nombre},${c.empresa || ''},${c.email || ''},${c.telefono || ''},"${c.direccion || ''}"`
+      `"${c.nombre || ''}","${c.empresa || ''}","${c.email || ''}","${c.telefono || ''}","${c.direccion || ''}",${c.orderCount || 0}`
     ).join("\n")
-    const blob = new Blob([cabeceras + filas], { type: 'text/csv' })
+    const blob = new Blob([cabeceras + filas], { type: 'text/csv;charset=utf-8;' })
     const url = window.URL.createObjectURL(blob)
     const a = document.createElement('a')
     a.href = url
@@ -199,11 +212,11 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
         <div className="overflow-x-auto">
           <table className="w-full text-sm text-left">
             <thead className="bg-slate-50 text-slate-700 font-bold uppercase text-xs print:bg-white print:border-b-2 print:border-black">
-              {/* 🔥 APLICAMOS HEADERS ORDENABLES 🔥 */}
               <tr>
                 <SortableHeader label="Razón Social" sortKey="nombre" />
                 <SortableHeader label="Email" sortKey="email" />
                 <SortableHeader label="Ced / RUC" sortKey="empresa" />
+                <SortableHeader label="Órdenes" sortKey="orderCount" align="center" />
                 <SortableHeader label="Dirección" sortKey="direccion" />
                 <SortableHeader label="Estado Crédito" sortKey="limiteCredito" align="center" />
                 <th className="px-6 py-4 text-center no-print">Acciones</th>
@@ -211,14 +224,25 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
             </thead>
             <tbody className="divide-y divide-slate-100 print:divide-slate-300">
               {sortedClients.length === 0 ? (
-                <tr><td colSpan="6" className="text-center py-12 text-slate-500">No se encontraron clientes.</td></tr>
+                <tr><td colSpan="7" className="text-center py-12 text-slate-500">No se encontraron clientes.</td></tr>
               ) : (
-                // 🔥 ITERAMOS SOBRE sortedClients EN VEZ DE clientesFiltrados 🔥
                 sortedClients.map((cliente) => (
                   <tr key={cliente.id} className="hover:bg-slate-50 transition-colors print:hover:bg-transparent">
                     <td className="px-6 py-4 font-medium text-slate-900">{cliente.nombre}</td>
                     <td className="px-6 py-4 text-slate-600">{cliente.email || '-'}</td>
                     <td className="px-6 py-4 text-slate-600 font-mono tracking-wider">{cliente.empresa || '-'}</td>
+                    
+                    <td className="px-6 py-4 text-center">
+                        <span className={cn(
+                            "px-3 py-1 rounded-full text-xs font-bold border",
+                            cliente.orderCount > 0 
+                                ? "bg-blue-100 text-blue-700 border-blue-200" 
+                                : "bg-slate-100 text-slate-400 border-slate-200"
+                        )}>
+                            {cliente.orderCount}
+                        </span>
+                    </td>
+
                     <td className="px-6 py-4 text-slate-600 max-w-[200px] truncate print:whitespace-normal print:overflow-visible">
                       {cliente.direccion || '-'}
                     </td>
@@ -239,12 +263,12 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
                           <Eye size={16} />
                         </Button>
                         
-                        {/* 🔥 TODOS (VENDEDOR, ADMIN, CONTAB) VEN EL LÁPIZ 🔥 */}
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:bg-blue-50" onClick={() => onEditClient && onEditClient(cliente)} title="Editar">
-                          <Pencil size={16} />
-                        </Button>
+                        {onEditClient && (
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-blue-600 hover:bg-blue-50" onClick={() => onEditClient(cliente)} title="Editar">
+                            <Pencil size={16} />
+                          </Button>
+                        )}
 
-                        {/* 🔥 SOLO ADMIN Y CONTABILIDAD VEN EL BASURERO 🔥 */}
                         {canDelete && (
                             <Button variant="ghost" size="icon" className="h-8 w-8 text-red-600 hover:bg-red-50" onClick={() => handleBorrar(cliente.id, cliente.nombre)} title="Eliminar">
                               <Trash2 size={16} />
@@ -284,7 +308,6 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
                       </div>
                   </div>
                   <div className="flex items-center gap-2">
-                      {/* 🔥 TODOS PUEDEN EDITAR DESDE EL EXPEDIENTE 🔥 */}
                       {onEditClient && (
                           <Button variant="outline" size="sm" onClick={() => { setClienteExpediente(null); onEditClient(clienteExpediente); }} className="bg-slate-700/50 border-slate-600 text-white hover:bg-blue-600 hover:border-blue-500 transition-colors">
                               <Edit2 className="h-4 w-4 mr-2" /> Editar Datos
@@ -356,9 +379,12 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
 
                         <div>
                             <h3 className="font-bold text-slate-800 mb-4 flex items-center gap-2"><History className="h-5 w-5 text-slate-500"/> Registro de Órdenes</h3>
-                            <div className="bg-white border border-slate-200 rounded-lg overflow-hidden shadow-sm">
-                                <table className="w-full text-sm text-left">
-                                    <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-600">
+                            
+                            {/* 🔥 CONTENEDOR CON BARRA DE DESPLAZAMIENTO (SCROLL) Y LÍMITE DE ALTURA 🔥 */}
+                            <div className="bg-white border border-slate-200 rounded-lg shadow-sm overflow-y-auto max-h-[600px]">
+                                <table className="w-full text-sm text-left relative">
+                                    {/* 🔥 CABECERA "PEGADOSA" (STICKY) PARA QUE NO SE PIERDA AL BAJAR 🔥 */}
+                                    <thead className="bg-slate-50 border-b border-slate-200 text-xs uppercase font-bold text-slate-600 sticky top-0 z-10 shadow-sm">
                                         <tr>
                                             <th className="px-4 py-3 text-center">Nº Orden</th>
                                             <th className="px-4 py-3">Fecha</th>

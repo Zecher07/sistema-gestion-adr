@@ -269,6 +269,15 @@ const WorkAreaList = ({
                           const stats = calculateProductStats(order);
                           const isFullyCompleted = stats.total > 0 && stats.completed === stats.total;
                           const hasProgress = stats.startedCount > 0;
+                          
+                          // Lógica de saldo para ocultar o mostrar el botón Cobrar
+                          const saldoCobrado = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - (Number(order.retencion) || 0);
+                          const totalAbonado = (order.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+                          const saldoFinalReal = saldoCobrado - totalAbonado;
+                          const isCredito = (order.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order.formaPagoSaldo || '').toLowerCase().includes('credito') || (order.formaPagoAnticipo || '').toLowerCase().includes('crédito');
+                          
+                          // Mostrar el botón cobrar si hay saldo o es a crédito, ocultar si ya se liquidó
+                          const showCobrarButton = order.status === 'CONTABILIDAD' && onAbonoOrder && (saldoFinalReal > 0 || isCredito);
 
                           return (
                             <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer bg-white" onClick={() => onViewOrder(order)}>
@@ -291,7 +300,7 @@ const WorkAreaList = ({
                                
                                {(user.role === 'Contabilidad' || user.role === 'Administrador') && (
                                   <td className="px-6 py-3 text-center" onClick={(e) => e.stopPropagation()}>
-                                      {order.status === 'CONTABILIDAD' && onAbonoOrder ? (
+                                      {showCobrarButton ? (
                                           <Button size="sm" onClick={() => onAbonoOrder(order)} className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-1 shadow-sm mx-auto">
                                               <DollarSign className="h-4 w-4"/> Cobrar
                                           </Button>

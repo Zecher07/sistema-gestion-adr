@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback, memo, useMemo } from 'react';
-import { motion } from 'framer-motion';
+import { motion, AnimatePresence } from 'framer-motion';
 import { useDropzone } from 'react-dropzone';
 import { 
   Save, X, Calendar as CalendarIcon, User, Search, Calculator, 
@@ -67,7 +67,7 @@ const compressImage = async (file) => {
     });
 };
 
-const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }) => {
+const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing, onClickImage }) => {
     const onDrop = useCallback(acceptedFiles => { onAdd(acceptedFiles); }, [onAdd]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || isReadOnly });
   
@@ -75,9 +75,9 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
       <div className="border border-slate-300 p-4 rounded-sm bg-slate-50/50 mt-2">
          <div className="min-h-[100px] mb-3 flex flex-wrap gap-4">
             {images.map((img, i) => (
-               <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all">
+               <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => onClickImage && onClickImage(img.url)}>
                   <img src={img.url} alt={img.name} className="w-full h-full object-cover" title={img.name} loading="lazy" decoding="async" />
-                  {!isReadOnly && <button type="button" onClick={() => onRemove(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>}
+                  {!isReadOnly && <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>}
                </div>
             ))}
             {isProcessing && (
@@ -100,7 +100,7 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing }
     );
 });
 
-const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false }) => {
+const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false, canRemove = true, onClickImage }) => {
     const onDrop = useCallback(files => onAdd(files, type, abonoIndex), [onAdd, type, abonoIndex]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || disabled });
 
@@ -109,9 +109,9 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
             <div className="text-[10px] font-bold text-slate-500 uppercase mb-2 flex items-center gap-1"><FileText className="h-3 w-3"/> Soportes de pago adjuntos</div>
             <div className="flex flex-wrap gap-2 items-center">
                 {items.map((img, i) => (
-                    <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => window.open(img.url, '_blank')}>
+                    <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => onClickImage && onClickImage(img.url)}>
                         <img src={img.url} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="Comprobante" />
-                        {!disabled && (
+                        {!disabled && canRemove && (
                             <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(type, abonoIndex, i); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <X className="h-3 w-3" />
                             </button>
@@ -134,15 +134,18 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
 const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], onSuccess, onCancel, initialData = null, mode = 'create', nextOrderNumber, onReloadClients, onCreateClient }) => {
   const { toast } = useToast();
   const isAdmin = currentUser?.role === 'Administrador';
+  const isContabilidad = currentUser?.role === 'Contabilidad'; 
   
   const isPastPaso1 = initialData && initialData.id && initialData.status !== 'VENTAS' && initialData.status !== 'BORRADOR';
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
   const isEditMode = !!(initialData && initialData.id);
-  // 🔥 CORRECCIÓN APLICADA: Permite que Contabilidad edite la parte inferior de la orden
-  const isBottomReadOnly = (isAdmin || currentUser?.role === 'Contabilidad') ? false : isEffectivelyReadOnly;
+  const isBottomReadOnly = (isAdmin || isContabilidad) ? false : isEffectivelyReadOnly;
 
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);
+  
+  // 🔥 ESTADO PARA VER IMÁGENES EN GRANDE 🔥
+  const [previewImage, setPreviewImage] = useState(null);
 
   const [searchTerm, setSearchTerm] = useState('');
   const [isSearching, setIsSearching] = useState(false);
@@ -206,7 +209,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
     descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
-    esMayorista: false, nroFactura: '' // 🔥 Nuevo campo
+    esMayorista: false, nroFactura: ''
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
@@ -324,7 +327,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         observaciones: initialData.observaciones || finData.observaciones || '', 
         descuentoMonto: savedDescuentoMonto, ivaPercentage: finData.ivaPercentage || initialData.ivaPercentage || prev.ivaPercentage,
         esMayorista: initialData.esMayorista || initialData.es_mayorista || false,
-        nroFactura: initialData.nro_factura || finData.nroFactura || initialData.nroFactura || '' // 🔥 Cargar Nro Factura
+        nroFactura: initialData.nro_factura || finData.nroFactura || initialData.nroFactura || ''
       }));
       
       setLocalDiscountVal(savedDescuentoMonto > 0 ? savedDescuentoMonto.toFixed(2) : '');
@@ -808,7 +811,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 ivaPercentage: formData.ivaPercentage, retentionPercent: formData.retentionPercent, retencion: formData.retencion,
                 formaPagoSaldo: formData.formaPagoSaldo, creditoVenceSaldo: formData.creditoVenceSaldo, notaSaldo: formData.notaSaldo,
                 aplicarIva: formData.aplicarIva, observaciones: formData.observaciones,
-                nroFactura: formData.nroFactura // 🔥 Guardando Número de Factura
+                nroFactura: formData.nroFactura 
             },
             anticipo: formData.anticipo, retencion: formData.retencion, forma_pago_anticipo: finalPaymentString,
             nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
@@ -1364,6 +1367,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                            onRemove={handleRemoveComprobante} 
                            isProcessing={isProcessingComprobantes} 
                            disabled={isBottomReadOnly || hasAbonosExtras}
+                           canRemove={!isContabilidad}
+                           onClickImage={setPreviewImage} // 🔥 NUEVO: ABRE LA IMAGEN 🔥
                        />
                    )}
 
@@ -1449,7 +1454,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
              </div>
 
-             {/* 🔥 NUEVO BLOQUE: NÚMERO DE FACTURA PARA CONTABILIDAD 🔥 */}
              <div className="mt-4 border border-blue-200 bg-blue-50/60 rounded-lg p-4 flex flex-col sm:flex-row justify-between items-center gap-4 shadow-inner">
                  <div className="w-full sm:w-1/2">
                      <h4 className="text-sm font-bold text-blue-900 uppercase flex items-center gap-2">
@@ -1489,7 +1493,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                          {abonos.map((abono, idx) => (
                              <div key={idx} className="bg-red-50 border border-red-200 rounded p-3 shadow-sm relative group flex flex-col">
-                                 <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4"/></button>
+                                 {!isContabilidad && (
+                                     <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4"/></button>
+                                 )}
                                  <div className="flex justify-between items-start w-full pr-6 mb-2">
                                      <div>
                                          <div className="text-[10px] text-slate-500 font-bold">{abono.fecha ? abono.fecha.split('T')[0] : ''}</div>
@@ -1508,6 +1514,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                          onAdd={handleAddComprobantes} 
                                          onRemove={handleRemoveComprobante} 
                                          isProcessing={isProcessingComprobantes} 
+                                         canRemove={!isContabilidad}
+                                         onClickImage={setPreviewImage} // 🔥 NUEVO: ABRE LA IMAGEN 🔥
                                      />
                                  )}
                              </div>
@@ -1553,6 +1561,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 onRemove={removeImage} 
                 onAdd={handleAddImages} 
                 isProcessing={isProcessingImages}
+                onClickImage={setPreviewImage} // 🔥 NUEVO: ABRE LA IMAGEN 🔥
              />
           </div>
         </form>
@@ -1651,9 +1660,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         </label>
                         <div className="border border-slate-300 p-2 rounded-md bg-slate-50 flex flex-wrap gap-2 items-center">
                             {abonoComprobantes.map((img, i) => (
-                                <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm">
+                                <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => setPreviewImage(img.url)}>
                                     <img src={img.url} className="w-full h-full object-cover" alt="Comprobante" />
-                                    <button type="button" onClick={() => setAbonoComprobantes(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
+                                    <button type="button" onClick={(e) => { e.stopPropagation(); setAbonoComprobantes(prev => prev.filter((_, idx) => idx !== i)); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <X className="h-3 w-3" />
                                     </button>
                                 </div>
@@ -1758,6 +1767,28 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>
+
+      {/* 🔥 MODAL PARA VISUALIZAR LA IMAGEN EN GRANDE 🔥 */}
+      <AnimatePresence>
+        {previewImage && (
+          <motion.div 
+            initial={{ opacity: 0 }} 
+            animate={{ opacity: 1 }} 
+            exit={{ opacity: 0 }} 
+            className="fixed inset-0 z-[99999] flex items-center justify-center bg-black/95 p-4" 
+            onClick={(e) => { e.stopPropagation(); setPreviewImage(null); }}
+          >
+            <button 
+                type="button" 
+                className="absolute top-4 right-4 text-white hover:text-gray-300 p-2 bg-white/10 rounded-full transition-colors"
+                onClick={(e) => { e.stopPropagation(); setPreviewImage(null); }}
+            >
+                <X className="h-8 w-8" />
+            </button>
+            <img src={previewImage} alt="Referencia Completa" className="max-w-full max-h-[95vh] rounded shadow-2xl" />
+          </motion.div>
+        )}
+      </AnimatePresence>
 
     </motion.div>
   );
