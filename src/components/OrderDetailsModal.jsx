@@ -353,7 +353,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const isCancelled = order?.status === 'ANULADA';
   const isArchived = order?.status === 'ARCHIVADA';
 
-  // 🔥 PERMISOS ACTUALIZADOS PARA EL BOTÓN INTERNO DE EDITAR 🔥
   const canActuallyEdit = canEdit || isAdmin || (isContabilidad && order?.status === 'CONTABILIDAD');
 
   useEffect(() => {
@@ -423,6 +422,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
       ivaPercentage: Number(parsedFinancials.ivaPercentage || 15)
   };
 
+  // 🔥 NUEVA VARIABLE PARA MOSTRAR LA FACTURA 🔥
+  const nroFacturaDisplay = order?.nro_factura || order?.numero_factura || parsedFinancials.nroFactura || order?.numeroFactura || order?.facturaNumber || order?.invoiceNumber || 'PENDIENTE';
+
   const anticipoVal = Number(order?.anticipo || 0);
   const retencion = Number(order?.retencion || parsedFinancials.retencion || 0);
   
@@ -431,9 +433,16 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   
   const saldoCalculado = Math.max(fin.total - anticipoVal - retencion - totalAbonos, 0);
 
-  const isCredito = (order?.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order?.formaPagoSaldo || '').toLowerCase().includes('credito') || (order?.formaPagoAnticipo || '').toLowerCase().includes('crédito');
+  const pSaldo = String(order?.formaPagoSaldo || parsedFinancials.formaPagoSaldo || '').toLowerCase();
+  const pAnticipo = String(order?.formaPagoAnticipo || order?.forma_pago_anticipo || '').toLowerCase();
+  
+  const isCredito = pSaldo.includes('crédit') || pSaldo.includes('credit') || 
+                    pAnticipo.includes('crédit') || pAnticipo.includes('credit');
 
-  const lockToContabilidad = order?.status === 'VENTAS POR RETIRAR' && !isCredito && saldoCalculado > 0 && !isAdmin;
+  const isVCStatus = order?.tipoOrden && order.tipoOrden.includes('(VC)');
+  const isGoingToContabilidad = order?.status === 'VENTAS POR RETIRAR' || (order?.status === 'VENTAS' && isVCStatus);
+
+  const lockToContabilidad = isGoingToContabilidad && !isCredito && saldoCalculado > 0 && !isAdmin;
 
   const canAdvance = useMemo(() => {
       if (!order) return false;
@@ -590,6 +599,22 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             <span className="font-bold text-right text-slate-600">Cliente:</span>
                             <div className="flex flex-col"><span className="text-blue-600 font-bold uppercase tracking-wide">{order.cliente || order.cliente_nombre}</span>{(order.ruc || order.cedula || order.cliente_identificacion) && (<span className="text-xs text-slate-500 font-mono mt-0.5">ID/RUC: {order.ruc || order.cedula || order.cliente_identificacion}</span>)}</div>
                         </div>
+
+                        {/* 🔥 SE AGREGA FACTURA VISUALMENTE EN LOS DETALLES 🔥 */}
+                        <div className="grid grid-cols-[140px_1fr] gap-2 mt-1">
+                            <span className="font-bold text-right text-slate-600">N° Factura:</span>
+                            <div className="flex items-center">
+                                {nroFacturaDisplay !== 'PENDIENTE' ? (
+                                    <span className="text-xs font-bold text-indigo-700 bg-indigo-50 px-2 py-0.5 rounded border border-indigo-200 flex items-center gap-1 shadow-sm">
+                                        <FileText className="h-3 w-3" /> {nroFacturaDisplay}
+                                    </span>
+                                ) : (
+                                    <span className="text-xs font-medium text-slate-400 italic flex items-center gap-1">
+                                        No asignada
+                                    </span>
+                                )}
+                            </div>
+                        </div>
                         
                         {(order.origenProformaInfo || order.origenProformaId) && (
                             <div className="grid grid-cols-[140px_1fr] gap-2 mt-1">
@@ -654,7 +679,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 <div className="px-4 py-2 text-right font-bold text-slate-800">{formatCurrency(fin.total)}</div>
                             </div>
                             
-                            {/* 🔥 NUEVO: SE MUESTRA LA RETENCIÓN AQUÍ 🔥 */}
                             {retencion > 0 && (
                                 <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-orange-50 text-sm">
                                     <div className="px-4 py-2 text-right font-bold text-orange-800">Retención ({parsedFinancials.retentionPercent || 0}%)</div>
@@ -686,7 +710,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                     </div>
                                     <div className="space-y-1 text-xs text-slate-600">
                                          <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
-                                         {(order.formaPagoAnticipo === 'Crédito' || order.forma_pago_anticipo === 'Crédito') && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
+                                         {(pAnticipo.includes('crédit') || pAnticipo.includes('credit')) && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
                                          {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
                                     </div>
                                 </div>
@@ -700,9 +724,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                         <span className={`text-lg font-bold ${saldoCalculado > 0 ? 'text-red-600' : 'text-green-600'}`}>{formatCurrency(saldoCalculado)}</span>
                                     </div>
                                     <div className="space-y-1 text-xs text-slate-600 mb-2">
-                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoSaldo || fin.formaPagoSaldo || '-'}</span></div>
-                                         {isCredito && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || fin.creditoVenceSaldo || '-'}</span></div>)}
-                                         {(order.notaSaldo || fin.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || fin.notaSaldo}</div>}
+                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoSaldo || parsedFinancials.formaPagoSaldo || '-'}</span></div>
+                                         {(pSaldo.includes('crédit') || pSaldo.includes('credit')) && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || parsedFinancials.creditoVenceSaldo || '-'}</span></div>)}
+                                         {(order.notaSaldo || parsedFinancials.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || parsedFinancials.notaSaldo}</div>}
                                     </div>
                                 </div>
                             </div>
@@ -733,7 +757,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     </div>
                 )}
                 
-                {/* 🔥 NOTAS INTERNAS SISTEMA 🔥 */}
                 {order.notas && (
                     <div className="mb-6">
                         <h3 className="font-bold text-slate-700 mb-2 flex items-center gap-2">Notas Internas (Solo Sistema)</h3>
@@ -806,12 +829,12 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                            className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3 disabled:opacity-75 disabled:hover:scale-100 disabled:cursor-wait"
                                            onClick={async () => { 
                                                if (workflowConfig.nextStatus === 'FINALIZADA') {
-                                                   const pAnticipo = (order.formaPagoAnticipo || order.forma_pago_anticipo || '').toLowerCase();
-                                                   const pSaldo = (order.formaPagoSaldo || fin.formaPagoSaldo || '').toLowerCase();
+                                                   const pAnticipoTemp = (order.formaPagoAnticipo || order.forma_pago_anticipo || '').toLowerCase();
+                                                   const pSaldoTemp = (order.formaPagoSaldo || fin.formaPagoSaldo || '').toLowerCase();
                                                    
                                                    const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque');
                                                    
-                                                   let isTransfer = checkTransfer(pAnticipo) || checkTransfer(pSaldo);
+                                                   let isTransfer = checkTransfer(pAnticipoTemp) || checkTransfer(pSaldoTemp);
                                                    if (!isTransfer && order.abonos) {
                                                        isTransfer = order.abonos.some(a => checkTransfer(a.metodoPago || a.metodo_pago));
                                                    }
@@ -888,7 +911,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                          <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
                          
                          <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
-                         <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{order.numeroFactura || order.facturaNumber || order.invoiceNumber || order.numero_factura || 'PENDIENTE'}</span></div>
+                         <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{nroFacturaDisplay}</span></div>
                     </div>
                 </div>
 
@@ -921,7 +944,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     </table>
                 </div>
 
-                {/* 🔥 OBSERVACIONES GENERALES EN EL PDF PRODUCCIÓN 🔥 */}
                 {observacionesPublicas && (
                     <div className="border-2 border-black rounded-lg p-3 mb-6 bg-white" style={{ pageBreakInside: 'avoid' }}>
                         <div className="font-bold text-[11px] mb-1 uppercase tracking-wider">Observaciones y Condiciones del Proyecto:</div>
