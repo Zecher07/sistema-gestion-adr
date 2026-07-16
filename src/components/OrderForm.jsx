@@ -100,13 +100,14 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing, 
     );
 });
 
-const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false, canRemove = true, onClickImage }) => {
+// 🔥 MODIFICADO PARA ACEPTAR LABELS E ICONOS PERSONALIZADOS 🔥
+const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false, canRemove = true, onClickImage, label = "Soportes adjuntos", colorClass = "text-slate-500", Icon = FileText }) => {
     const onDrop = useCallback(files => onAdd(files, type, abonoIndex), [onAdd, type, abonoIndex]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || disabled });
 
     return (
-        <div className="mt-2 pt-2 border-t border-dashed border-slate-300 w-full animate-in fade-in zoom-in-95">
-            <div className="text-[10px] font-bold text-slate-500 uppercase mb-2 flex items-center gap-1"><FileText className="h-3 w-3"/> Soportes de pago adjuntos</div>
+        <div className="mt-2 pt-2 border-t border-dashed border-slate-200 w-full animate-in fade-in zoom-in-95">
+            <div className={`text-[10px] font-bold ${colorClass} uppercase mb-2 flex items-center gap-1`}><Icon className="h-3 w-3"/> {label}</div>
             <div className="flex flex-wrap gap-2 items-center">
                 {items.map((img, i) => (
                     <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => onClickImage && onClickImage(img.url)}>
@@ -121,7 +122,7 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
                 {isProcessing && <div className="w-12 h-12 flex items-center justify-center border border-dashed border-blue-300 bg-blue-50 rounded"><Loader2 className="w-4 h-4 animate-spin text-blue-500" /></div>}
                 
                 {!disabled && (
-                    <div {...getRootProps()} className={`cursor-pointer bg-emerald-50 hover:bg-emerald-100 text-emerald-700 rounded px-2 flex items-center gap-1 text-[10px] font-bold border border-emerald-200 transition-colors h-12 shadow-sm ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
+                    <div {...getRootProps()} className={`cursor-pointer bg-slate-100 hover:bg-slate-200 text-slate-700 rounded px-2 flex items-center gap-1 text-[10px] font-bold border border-slate-300 transition-colors h-12 shadow-sm ${disabled ? 'opacity-50 cursor-not-allowed' : ''}`}>
                         <input {...getInputProps()} />
                         <Plus className="w-3 h-3" /> {items.length === 0 ? 'Adjuntar' : 'Añadir'}
                     </div>
@@ -142,7 +143,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const isEditMode = !!(initialData && initialData.id);
   const isBottomReadOnly = (isAdmin || isContabilidad) ? false : isEffectivelyReadOnly;
 
-  // 🔥 NUEVA REGLA: El vendedor puede editar la retención si está en el paso de "VENTAS POR RETIRAR" 🔥
   const canEditRetention = !isBottomReadOnly || (isVendedor && initialData?.status === 'VENTAS POR RETIRAR');
 
   const [loading, setLoading] = useState(false);
@@ -179,7 +179,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [abonos, setAbonos] = useState([]);
   const hasAbonosExtras = abonos && abonos.length > 0; 
   
-  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [] });
+  // 🔥 SE AÑADE VERIFICACION_ANTICIPO Y VERIFICACION_ABONOS 🔥
+  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
   const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
   
   const [isAbonoModalOpen, setIsAbonoModalOpen] = useState(false);
@@ -346,13 +347,14 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       if (data.imagenes && Array.isArray(data.imagenes)) setFormData(prev => ({ ...prev, imagenes: data.imagenes }));
                       if (data.comprobantes) {
                           let cData = data.comprobantes;
-                          // 🔥 INICIALIZANDO RETENCION TAMBIÉN 🔥
-                          if (Array.isArray(cData)) cData = { anticipo: cData, saldo: [], abonos: {}, retencion: [] };
+                          if (Array.isArray(cData)) cData = { anticipo: cData, saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} };
                           setComprobantesData({ 
                               anticipo: cData.anticipo || [], 
                               saldo: cData.saldo || [], 
                               abonos: cData.abonos || {},
-                              retencion: cData.retencion || []
+                              retencion: cData.retencion || [],
+                              verificacion_anticipo: cData.verificacion_anticipo || [], 
+                              verificacion_abonos: cData.verificacion_abonos || {}
                           });
                       }
                   }
@@ -682,6 +684,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       if (!method) return false; const m = method.toLowerCase(); return !m.includes('efectivo') && !m.includes('no aplica') && !m.includes('tarjeta');
   };
 
+  // 🔥 MODIFICADO PARA SOPORTAR MULTIPLES TIPOS DE COMPROBANTES DE BANCO 🔥
   const handleAddComprobantes = async (files, type, abonoIndex = null) => {
       setIsProcessingComprobantes(true); const newImages = [];
       for (const file of files) {
@@ -690,8 +693,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
       setComprobantesData(prev => {
           const updated = { ...prev };
-          if (type === 'abono') { updated.abonos = { ...(updated.abonos || {}) }; updated.abonos[abonoIndex] = [...(updated.abonos[abonoIndex] || []), ...newImages]; } 
-          else { updated[type] = [...(updated[type] || []), ...newImages]; }
+          if (type === 'abono' || type === 'verificacion_abonos') { 
+              updated[type] = { ...(updated[type] || {}) }; 
+              updated[type][abonoIndex] = [...(updated[type][abonoIndex] || []), ...newImages]; 
+          } 
+          else { 
+              updated[type] = [...(updated[type] || []), ...newImages]; 
+          }
           return updated;
       });
       setIsProcessingComprobantes(false);
@@ -700,8 +708,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const handleRemoveComprobante = (type, abonoIndex, imgIndex) => {
       setComprobantesData(prev => {
           const updated = { ...prev };
-          if (type === 'abono') { updated.abonos = { ...(updated.abonos || {}) }; updated.abonos[abonoIndex] = updated.abonos[abonoIndex].filter((_, i) => i !== imgIndex); } 
-          else { updated[type] = updated[type].filter((_, i) => i !== imgIndex); }
+          if (type === 'abono' || type === 'verificacion_abonos') { 
+              updated[type] = { ...(updated[type] || {}) }; 
+              updated[type][abonoIndex] = updated[type][abonoIndex].filter((_, i) => i !== imgIndex); 
+          } 
+          else { 
+              updated[type] = updated[type].filter((_, i) => i !== imgIndex); 
+          }
           return updated;
       });
   };
@@ -740,13 +753,38 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setIsAbonoModalOpen(false);
   };
 
+  // 🔥 AL ELIMINAR UN ABONO, LIMPIAMOS TAMBIÉN SUS VERIFICACIONES DE BANCO 🔥
   const removeAbonoLocal = (index) => {
       setAbonos(prev => prev.filter((_, i) => i !== index));
       setComprobantesData(prev => {
-          const updated = { ...prev, abonos: { ...prev.abonos } }; const newAbonos = {}; let newIdx = 0;
-          Object.keys(updated.abonos).forEach(key => { if (parseInt(key) !== index) { newAbonos[newIdx] = updated.abonos[key]; newIdx++; } });
-          updated.abonos = newAbonos; return updated;
+          const updated = { ...prev };
+          ['abonos', 'verificacion_abonos'].forEach(type => {
+              if (updated[type]) {
+                  const newObj = {}; let newIdx = 0;
+                  Object.keys(updated[type]).forEach(key => { 
+                      if (parseInt(key) !== index) { newObj[newIdx] = updated[type][key]; newIdx++; } 
+                  });
+                  updated[type] = newObj;
+              }
+          });
+          return updated;
       });
+  };
+
+  const registrarDevolucionPorRetencion = () => {
+      const excedente = Math.abs(financials.saldoPendiente);
+      if (excedente <= 0) return;
+
+      const nuevoAbono = { 
+          monto: -excedente, 
+          metodoPago: 'Efectivo',
+          fecha: `${getLocalDate()}T12:00:00`, 
+          nota: 'Devolución automática de efectivo por ajuste de Retención tardía', 
+          cobrador: currentUser.name 
+      };
+      
+      setAbonos([...abonos, nuevoAbono]);
+      toast({ title: "Devolución Registrada", description: `Se ha generado un egreso de $${excedente.toFixed(2)} para cuadrar la retención.` });
   };
 
   const handleCancelOrder = async () => {
@@ -875,6 +913,21 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 </div>
             </div>
         </div>
+      )}
+
+      {financials.saldoPendiente < -0.02 && (
+          <div className="bg-red-50 border-b border-red-200 p-3 px-6 shadow-sm flex items-center justify-between">
+              <div className="flex items-center gap-3">
+                  <AlertOctagon className="h-6 w-6 text-red-600 animate-pulse" />
+                  <div>
+                      <h4 className="text-sm font-bold text-red-800">¡Alerta de Caja! (Saldo Negativo: ${Math.abs(financials.saldoPendiente).toFixed(2)})</h4>
+                      <p className="text-xs text-red-700 mt-0.5">La orden tiene más abonos y retenciones registradas que el costo total de la factura. Tienes que registrar la devolución del dinero excedente al cliente para guardar la orden y cuadrar caja.</p>
+                  </div>
+              </div>
+              <Button type="button" onClick={registrarDevolucionPorRetencion} className="bg-red-600 hover:bg-red-700 text-white font-bold text-xs gap-2">
+                  <Undo2 className="h-4 w-4"/> Registrar Devolución
+              </Button>
+          </div>
       )}
 
       <div className="p-6 overflow-y-auto flex-1 bg-white">
@@ -1244,13 +1297,24 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
-                            {/* 🔥 APLICANDO REGLA CANEDITRETENTION AL CHECKBOX 🔥 */}
-                            <Checkbox id="ret-check" checked={applyRetention} onCheckedChange={setApplyRetention} disabled={!canEditRetention}/>
+                            <Checkbox 
+                                id="ret-check" 
+                                checked={applyRetention} 
+                                onCheckedChange={(c) => {
+                                    setApplyRetention(c);
+                                    if (!c) {
+                                        setLocalRetencionPercent('');
+                                        setLocalRetencionVal('');
+                                        setFormData(prev => ({...prev, retencion: 0, retentionPercent: 0}));
+                                        setComprobantesData(prev => ({...prev, retencion: []}));
+                                    }
+                                }} 
+                                disabled={!canEditRetention}
+                            />
                             <label htmlFor="ret-check" className={`cursor-pointer flex items-center gap-1 ${!canEditRetention ? 'opacity-50' : ''}`}>
                                ¿Aplica Retención? 
                             </label>
 
-                            {/* 🔥 APLICANDO REGLA CANEDITRETENTION A LOS INPUTS 🔥 */}
                             {applyRetention && canEditRetention && (
                                 <div className="flex items-center gap-1 ml-2">
                                    <input 
@@ -1370,17 +1434,36 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                        </div>
                    )}
                    
+                   {/* 🔥 NUEVO BLOQUE: FOTO VENDEDOR Y FOTO BANCO JUNTAS 🔥 */}
                    {requiresComprobante(formData.formaPagoAnticipo) && (
-                       <InlineComprobanteEdit 
-                           type="anticipo" 
-                           items={comprobantesData.anticipo || []} 
-                           onAdd={handleAddComprobantes} 
-                           onRemove={handleRemoveComprobante} 
-                           isProcessing={isProcessingComprobantes} 
-                           disabled={isBottomReadOnly || hasAbonosExtras}
-                           canRemove={!isContabilidad}
-                           onClickImage={setPreviewImage} 
-                       />
+                       <div className="flex flex-col gap-2 bg-white p-2 rounded border border-slate-200">
+                           <InlineComprobanteEdit 
+                               type="anticipo" 
+                               items={comprobantesData.anticipo || []} 
+                               onAdd={handleAddComprobantes} 
+                               onRemove={handleRemoveComprobante} 
+                               isProcessing={isProcessingComprobantes} 
+                               disabled={isBottomReadOnly || hasAbonosExtras}
+                               canRemove={!isContabilidad}
+                               onClickImage={setPreviewImage} 
+                               label="Comprobante (Vendedor)"
+                               Icon={User}
+                           />
+                           
+                           <InlineComprobanteEdit 
+                               type="verificacion_anticipo" 
+                               items={comprobantesData.verificacion_anticipo || []} 
+                               onAdd={handleAddComprobantes} 
+                               onRemove={handleRemoveComprobante} 
+                               isProcessing={isProcessingComprobantes} 
+                               disabled={!isContabilidad && !isAdmin}
+                               canRemove={isContabilidad || isAdmin}
+                               onClickImage={setPreviewImage} 
+                               label="Verificación Banco (Contabilidad)"
+                               colorClass="text-emerald-700"
+                               Icon={CheckCircle2}
+                           />
+                       </div>
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
@@ -1465,7 +1548,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 ) : (<div className="flex flex-col items-center justify-center text-slate-400 text-xs italic border border-dashed border-slate-300 rounded bg-slate-50"><CheckCircle2 className="h-6 w-6 mb-1 text-green-500" />Orden pagada en su totalidad.<br/>Saldo Pendiente: $0.00</div>)}
              </div>
 
-             {/* 🔥 NUEVO BLOQUE: FOTO Y COMPROBANTE EXCLUSIVO PARA RETENCIONES 🔥 */}
              {formData.retencion > 0 && (
                 <div className="mt-4 border border-orange-200 bg-orange-50/60 rounded-lg p-4 shadow-inner">
                     <div className="flex justify-between items-center mb-2 border-b border-orange-200 pb-2">
@@ -1482,7 +1564,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         onAdd={handleAddComprobantes}
                         onRemove={handleRemoveComprobante}
                         isProcessing={isProcessingComprobantes}
-                        disabled={!isContabilidad && !isAdmin} // 🔥 SOLO CONTABILIDAD PUEDE AÑADIR/BORRAR 🔥
+                        disabled={!isContabilidad && !isAdmin} 
                         canRemove={isContabilidad || isAdmin}
                         onClickImage={setPreviewImage} 
                     />
@@ -1524,7 +1606,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                      )}
                  </div>
 
-                 {/* 🔥 NUEVA LÓGICA DE EXCEDENTE NEGATIVO POR RETENCIÓN TARDÍA 🔥 */}
                  {financials.saldoPendiente < -0.01 && (
                      <div className="bg-red-50 border border-red-300 p-3 rounded-lg flex flex-col md:flex-row justify-between items-center mb-4 shadow-sm gap-3 animate-in fade-in">
                          <div>
@@ -1533,17 +1614,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          </div>
                          <Button 
                              type="button" 
-                             onClick={() => {
-                                 const excedente = Math.abs(financials.saldoPendiente);
-                                 setAbonos([...abonos, {
-                                     monto: -excedente,
-                                     metodoPago: 'Devolución Efectivo',
-                                     fecha: `${getLocalDate()}T12:00:00`,
-                                     nota: 'Devolución por Retención',
-                                     cobrador: currentUser.name
-                                 }]);
-                                 toast({ title: "Devolución registrada", description: "El saldo se ha balanceado a $0.00." });
-                             }} 
+                             onClick={registrarDevolucionPorRetencion} 
                              className="bg-red-600 hover:bg-red-700 text-white text-xs h-8 whitespace-nowrap"
                          >
                              <Undo2 className="h-4 w-4 mr-1"/> Registrar Devolución Efectivo
@@ -1552,13 +1623,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                  )}
                  
                  {abonos.length > 0 ? (
-                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
                          {abonos.map((abono, idx) => {
                              const isDevolucion = abono.monto < 0;
                              return (
-                                 <div key={idx} className={`border rounded p-3 shadow-sm relative group flex flex-col ${isDevolucion ? 'bg-orange-50 border-orange-200' : 'bg-red-50 border-red-200'}`}>
+                                 <div key={idx} className={`border rounded p-3 shadow-sm relative group flex flex-col ${isDevolucion ? 'bg-orange-50 border-orange-200' : 'bg-red-50/50 border-red-200'}`}>
                                      
-                                     {/* Lógica de Borrado */}
                                      {(!isContabilidad && !isDevolucion) && (
                                          <button type="button" onClick={() => removeAbonoLocal(idx)} className="absolute top-2 right-2 text-red-400 hover:text-red-600"><Trash2 className="h-4 w-4"/></button>
                                      )}
@@ -1576,17 +1646,37 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                          </div>
                                      </div>
                                      
+                                     {/* 🔥 FOTO VENDEDOR Y FOTO BANCO JUNTAS EN EL ABONO 🔥 */}
                                      {requiresComprobante(abono.metodoPago || abono.metodo_pago) && (
-                                         <InlineComprobanteEdit 
-                                             type="abono" 
-                                             abonoIndex={idx} 
-                                             items={(comprobantesData.abonos || {})[idx] || []} 
-                                             onAdd={handleAddComprobantes} 
-                                             onRemove={handleRemoveComprobante} 
-                                             isProcessing={isProcessingComprobantes} 
-                                             canRemove={!isContabilidad}
-                                             onClickImage={setPreviewImage} 
-                                         />
+                                         <div className="flex flex-col gap-2 bg-white p-2 rounded border border-slate-200 w-full">
+                                             <InlineComprobanteEdit 
+                                                 type="abono" 
+                                                 abonoIndex={idx} 
+                                                 items={(comprobantesData.abonos || {})[idx] || []} 
+                                                 onAdd={handleAddComprobantes} 
+                                                 onRemove={handleRemoveComprobante} 
+                                                 isProcessing={isProcessingComprobantes} 
+                                                 canRemove={!isContabilidad}
+                                                 onClickImage={setPreviewImage} 
+                                                 label="Comprobante (Vendedor)"
+                                                 Icon={User}
+                                             />
+                                             
+                                             <InlineComprobanteEdit 
+                                                 type="verificacion_abonos" 
+                                                 abonoIndex={idx} 
+                                                 items={(comprobantesData.verificacion_abonos || {})[idx] || []} 
+                                                 onAdd={handleAddComprobantes} 
+                                                 onRemove={handleRemoveComprobante} 
+                                                 isProcessing={isProcessingComprobantes} 
+                                                 disabled={!isContabilidad && !isAdmin}
+                                                 canRemove={isContabilidad || isAdmin}
+                                                 onClickImage={setPreviewImage} 
+                                                 label="Verificación Banco (Contabilidad)"
+                                                 colorClass="text-emerald-700"
+                                                 Icon={CheckCircle2}
+                                             />
+                                         </div>
                                      )}
                                  </div>
                              );

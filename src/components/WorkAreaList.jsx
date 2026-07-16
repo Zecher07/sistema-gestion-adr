@@ -3,6 +3,58 @@ import { Search, ChevronLeft, ChevronRight, Play, PackageSearch, PackageCheck, F
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
+// Helper para obtener la fecha local exacta sin errores de zona horaria
+const getLocalDate = () => {
+    const d = new Date();
+    return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
+};
+
+// 🔥 NUEVO: Calculador Inteligente de Estados Contables 🔥
+const getOrderAccountingStatus = (o) => {
+    const total = Number(o.financials?.total) || 0;
+    const anticipo = Number(o.anticipo) || 0;
+    const retencion = Number(o.retencion || o.financials?.retencion) || 0;
+    const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+    const saldoFinalReal = total - anticipo - retencion - totalAbonado;
+
+    const pSaldo = String(o.formaPagoSaldo || o.financials?.formaPagoSaldo || '').toLowerCase();
+    const pAnticipo = String(o.formaPagoAnticipo || o.forma_pago_anticipo || '').toLowerCase();
+    const isCredito = pSaldo.includes('crédit') || pSaldo.includes('credit') || 
+                      pAnticipo.includes('crédit') || pAnticipo.includes('credit');
+
+    const today = getLocalDate();
+    const fechaVence = o.financials?.creditoVenceSaldo || o.creditoVenceSaldo || o.credito_vence_saldo || o.creditoVenceAnticipo || o.credito_vence_anticipo || o.financials?.creditoVenceAnticipo || '';
+    
+    // Verifica si la fecha de hoy es mayor a la fecha límite
+    const isVencido = isCredito && fechaVence && fechaVence < today;
+
+    let retDocs = [];
+    if (o.comprobantes && !Array.isArray(o.comprobantes) && o.comprobantes.retencion) {
+        retDocs = o.comprobantes.retencion;
+    }
+    // Verifica si se restó el dinero de retención pero contabilidad aún no sube el papel
+    const isRetencionPendiente = retencion > 0 && retDocs.length === 0;
+
+    let status = '';
+    
+    if (saldoFinalReal > 0.01) {
+        if (isCredito && !isVencido) {
+            status = 'creditos'; // Está a crédito y aún tiene tiempo
+        } else {
+            status = 'impagas'; // No tiene crédito o el crédito ya venció
+        }
+    } else {
+        status = 'por_finalizar'; // Saldos cubiertos
+    }
+
+    // Regla Maestra: Si falta el comprobante de retención, vuelve a Impagas
+    if (isRetencionPendiente) {
+        status = 'impagas';
+    }
+
+    return { status, isRetencionPendiente, isVencido, saldoFinalReal, isCredito };
+};
+
 const WorkAreaList = ({ 
   orders, 
   user, 
@@ -33,14 +85,10 @@ const WorkAreaList = ({
       
       if (user.role === 'Contabilidad') {
           if (order.status !== 'CONTABILIDAD') return false;
-          const saldoCobrado = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - (Number(order.retencion) || 0);
-          const totalAbonado = (order.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
-          const saldoFinalReal = saldoCobrado - totalAbonado;
-          const isCredito = (order.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order.formaPagoSaldo || '').toLowerCase().includes('credito') || (order.formaPagoAnticipo || '').toLowerCase().includes('crédito');
-
-          if (listFilter === 'creditos') return isCredito;
-          if (listFilter === 'impagas') return saldoFinalReal > 0 && !isCredito;
-          if (listFilter === 'por_finalizar') return saldoFinalReal <= 0 && !isCredito; 
+          const { status } = getOrderAccountingStatus(order);
+          if (listFilter === 'creditos') return status === 'creditos';
+          if (listFilter === 'impagas') return status === 'impagas';
+          if (listFilter === 'por_finalizar') return status === 'por_finalizar'; 
           return false;
       }
       
@@ -59,14 +107,8 @@ const WorkAreaList = ({
 
           if (['creditos', 'impagas', 'por_finalizar'].includes(listFilter)) {
               if (order.status !== 'CONTABILIDAD') return false;
-              const saldoCobrado = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - (Number(order.retencion) || 0);
-              const totalAbonado = (order.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
-              const saldoFinalReal = saldoCobrado - totalAbonado;
-              const isCredito = (order.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order.formaPagoSaldo || '').toLowerCase().includes('credito') || (order.formaPagoAnticipo || '').toLowerCase().includes('crédito');
-
-              if (listFilter === 'creditos') return isCredito;
-              if (listFilter === 'impagas') return saldoFinalReal > 0 && !isCredito;
-              if (listFilter === 'por_finalizar') return saldoFinalReal <= 0 && !isCredito;
+              const { status } = getOrderAccountingStatus(order);
+              return status === listFilter;
           }
       }
       
@@ -118,19 +160,15 @@ const WorkAreaList = ({
       orders.forEach(o => {
           if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return;
           
-          const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
-          const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
-          const saldoFinalReal = saldoCobrado - totalAbonado;
-          const isCredito = (o.formaPagoSaldo || '').toLowerCase().includes('crédito') || (o.formaPagoSaldo || '').toLowerCase().includes('credito') || (o.formaPagoAnticipo || '').toLowerCase().includes('crédito');
-
           if (user.role === 'Administrador') {
               if (['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD'].includes(o.status)) counts.todas++;
               if (o.status === 'VENTAS') counts.ventas++;
               if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
               if (o.status === 'CONTABILIDAD') {
-                  if (isCredito) counts.creditos++;
-                  else if (saldoFinalReal > 0) counts.impagas++;
+                  const { status } = getOrderAccountingStatus(o);
+                  if (status === 'creditos') counts.creditos++;
+                  else if (status === 'impagas') counts.impagas++;
                   else counts.por_finalizar++;
               }
           }
@@ -141,8 +179,9 @@ const WorkAreaList = ({
           }
           
           if (user.role === 'Contabilidad' && o.status === 'CONTABILIDAD') {
-              if (isCredito) counts.creditos++;
-              else if (saldoFinalReal > 0) counts.impagas++;
+              const { status } = getOrderAccountingStatus(o);
+              if (status === 'creditos') counts.creditos++;
+              else if (status === 'impagas') counts.impagas++;
               else counts.por_finalizar++;
           }
       });
@@ -271,13 +310,10 @@ const WorkAreaList = ({
                           const hasProgress = stats.startedCount > 0;
                           
                           // Lógica de saldo para ocultar o mostrar el botón Cobrar
-                          const saldoCobrado = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - (Number(order.retencion) || 0);
-                          const totalAbonado = (order.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
-                          const saldoFinalReal = saldoCobrado - totalAbonado;
-                          const isCredito = (order.formaPagoSaldo || '').toLowerCase().includes('crédito') || (order.formaPagoSaldo || '').toLowerCase().includes('credito') || (order.formaPagoAnticipo || '').toLowerCase().includes('crédito');
+                          const accData = getOrderAccountingStatus(order);
                           
-                          // Mostrar el botón cobrar si hay saldo o es a crédito, ocultar si ya se liquidó
-                          const showCobrarButton = order.status === 'CONTABILIDAD' && onAbonoOrder && (saldoFinalReal > 0 || isCredito);
+                          // Mostrar el botón cobrar si hay saldo o es a crédito o falta retencion
+                          const showCobrarButton = order.status === 'CONTABILIDAD' && onAbonoOrder && (accData.saldoFinalReal > 0.01 || accData.isCredito || accData.isRetencionPendiente);
 
                           return (
                             <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer bg-white" onClick={() => onViewOrder(order)}>
@@ -285,9 +321,18 @@ const WorkAreaList = ({
                                   <span className="text-blue-600 font-bold bg-blue-50 px-2 py-1 rounded border border-blue-100 group-hover:underline shadow-sm">#{formatOrderId(order)}</span>
                                </td>
                                <td className="px-6 py-3 text-xs font-bold">
-                                   <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
-                                       {order.status}
-                                   </span>
+                                   <div className="flex flex-col gap-1 items-start">
+                                       <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
+                                           {order.status}
+                                       </span>
+                                       {/* Etiquetas visuales para impagos por vencimiento o retención */}
+                                       {order.status === 'CONTABILIDAD' && accData.isVencido && (
+                                           <span className="text-[9px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded shadow-sm">Crédito Vencido</span>
+                                       )}
+                                       {order.status === 'CONTABILIDAD' && accData.isRetencionPendiente && (
+                                           <span className="text-[9px] bg-orange-100 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded shadow-sm">Falta Retención</span>
+                                       )}
+                                   </div>
                                </td>
                                <td className="px-6 py-3 text-center text-slate-700 font-medium">
                                    <span className={cn("px-3 py-1 rounded-full text-xs font-bold inline-flex items-center border shadow-sm", isFullyCompleted ? "bg-green-100 text-green-700 border-green-200" : hasProgress ? "bg-blue-100 text-blue-700 border-blue-200" : "bg-slate-100 text-slate-500 border-slate-200")}>

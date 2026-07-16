@@ -338,8 +338,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
   const [loadingImages, setLoadingImages] = useState(false); 
   const [isAdvancing, setIsAdvancing] = useState(false);
 
-  // 🔥 AÑADIMOS RETENCION AL MODELO DE DATOS 🔥
-  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [] });
+  const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
   const [loadingComprobantes, setLoadingComprobantes] = useState(false);
   
   const printRef = useRef();
@@ -381,19 +380,21 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
               const { data } = await supabase.from('ordenes').select('comprobantes').eq('id', order.id).single();
               if (data && data.comprobantes) {
                   if (Array.isArray(data.comprobantes)) {
-                      setComprobantesData({ anticipo: data.comprobantes, saldo: [], abonos: {}, retencion: [] });
+                      setComprobantesData({ anticipo: data.comprobantes, saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
                   } else {
                       setComprobantesData({
                           anticipo: data.comprobantes.anticipo || [],
                           saldo: data.comprobantes.saldo || [],
                           abonos: data.comprobantes.abonos || {},
-                          retencion: data.comprobantes.retencion || []
+                          retencion: data.comprobantes.retencion || [],
+                          verificacion_anticipo: data.comprobantes.verificacion_anticipo || [],
+                          verificacion_abonos: data.comprobantes.verificacion_abonos || {}
                       });
                   }
               } else {
-                  setComprobantesData({ anticipo: [], saldo: [], abonos: {}, retencion: [] });
+                  setComprobantesData({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
               }
-          } catch (err) { setComprobantesData({ anticipo: [], saldo: [], abonos: {}, retencion: [] }); } 
+          } catch (err) { setComprobantesData({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} }); } 
           finally { setLoadingComprobantes(false); }
       };
 
@@ -702,19 +703,34 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
                         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                             
-                            <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
-                                <div className="flex-1 w-full">
-                                    <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
-                                        <span className="text-blue-800 font-bold text-sm">Anticipo Original</span>
-                                        <span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span>
+                            <div className="flex flex-col gap-2">
+                                <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
+                                    <div className="flex-1 w-full">
+                                        <div className="flex justify-between items-center mb-2 border-b border-blue-100 pb-2">
+                                            <span className="text-blue-800 font-bold text-sm">Anticipo Original</span>
+                                            <span className="text-lg font-bold text-slate-800">{Number(order.anticipo || 0).toFixed(2)}</span>
+                                        </div>
+                                        <div className="space-y-1 text-xs text-slate-600">
+                                             <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
+                                             {(pAnticipo.includes('crédit') || pAnticipo.includes('credit')) && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
+                                             {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
+                                        </div>
                                     </div>
-                                    <div className="space-y-1 text-xs text-slate-600">
-                                         <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
-                                         {(pAnticipo.includes('crédit') || pAnticipo.includes('credit')) && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
-                                         {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
-                                    </div>
+                                    <InlineComprobante items={comprobantesData.anticipo || []} onClickImage={setPreviewImage} />
                                 </div>
-                                <InlineComprobante items={comprobantesData.anticipo || []} onClickImage={setPreviewImage} />
+                                
+                                {comprobantesData.verificacion_anticipo?.length > 0 && (
+                                    <div className="bg-emerald-50/80 border border-emerald-300 rounded p-3 shadow-sm flex items-center justify-between gap-4 md:ml-12 ml-6 border-l-4 border-l-emerald-500">
+                                        <div className="flex items-center gap-2">
+                                            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                                            <div>
+                                                <span className="text-emerald-800 font-bold text-xs uppercase block">Verificación de Banco</span>
+                                                <span className="text-emerald-600 text-[10px]">Aprobado por Contabilidad</span>
+                                            </div>
+                                        </div>
+                                        <InlineComprobante items={comprobantesData.verificacion_anticipo} onClickImage={setPreviewImage} />
+                                    </div>
+                                )}
                             </div>
                             
                             <div className="bg-white border border-blue-200 rounded p-4 shadow-sm flex items-center justify-between gap-4">
@@ -731,7 +747,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 </div>
                             </div>
 
-                            {/* 🔥 MOSTRAR COMPROBANTE DE RETENCIÓN SI HAY 🔥 */}
                             {retencion > 0 && comprobantesData.retencion && comprobantesData.retencion.length > 0 && (
                                 <div className="bg-white border border-orange-300 rounded p-4 shadow-sm flex items-center justify-between gap-4">
                                     <div className="flex-1 w-full">
@@ -754,20 +769,35 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                     {order.abonos.map((a, i) => {
                                         const isDevolucion = a.monto < 0;
                                         return (
-                                            <div key={i} className={`border rounded p-4 shadow-sm flex items-center justify-between gap-4 ${isDevolucion ? 'bg-orange-50 border-orange-300' : 'bg-red-50/50 border-red-200'}`}>
-                                                <div className="flex-1 w-full">
-                                                    <div className="flex justify-between items-start mb-1">
-                                                        <div>
-                                                            <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
-                                                            <div className={`text-xs font-bold uppercase ${isDevolucion ? 'text-orange-700' : 'text-red-700'}`}>{a.metodoPago || a.metodo_pago}</div>
+                                            <div key={i} className="flex flex-col gap-2">
+                                                <div className={`border rounded p-4 shadow-sm flex items-center justify-between gap-4 ${isDevolucion ? 'bg-orange-50 border-orange-300' : 'bg-red-50/50 border-red-200'}`}>
+                                                    <div className="flex-1 w-full">
+                                                        <div className="flex justify-between items-start mb-1">
+                                                            <div>
+                                                                <div className="text-[10px] text-slate-500 font-bold">{a.fecha ? a.fecha.split('T')[0] : ''}</div>
+                                                                <div className={`text-xs font-bold uppercase ${isDevolucion ? 'text-orange-700' : 'text-red-700'}`}>{a.metodoPago || a.metodo_pago}</div>
+                                                            </div>
+                                                            <div className={`font-black text-lg ${isDevolucion ? 'text-orange-600' : 'text-red-600'}`}>
+                                                                {isDevolucion ? formatCurrency(a.monto) : `+${formatCurrency(a.monto)}`}
+                                                            </div>
                                                         </div>
-                                                        <div className={`font-black text-lg ${isDevolucion ? 'text-orange-600' : 'text-red-600'}`}>
-                                                            {isDevolucion ? formatCurrency(a.monto) : `+${formatCurrency(a.monto)}`}
-                                                        </div>
+                                                        {a.nota && <div className="text-[10px] text-slate-600 italic bg-white/50 p-1 rounded inline-block">{a.nota}</div>}
                                                     </div>
-                                                    {a.nota && <div className="text-[10px] text-slate-600 italic bg-white/50 p-1 rounded inline-block">{a.nota}</div>}
+                                                    <InlineComprobante items={(comprobantesData.abonos || {})[i] || []} onClickImage={setPreviewImage} />
                                                 </div>
-                                                <InlineComprobante items={(comprobantesData.abonos || {})[i] || []} onClickImage={setPreviewImage} />
+
+                                                {(comprobantesData.verificacion_abonos || {})[i]?.length > 0 && (
+                                                    <div className="bg-emerald-50/80 border border-emerald-300 rounded p-3 shadow-sm flex items-center justify-between gap-4 md:ml-12 ml-6 border-l-4 border-l-emerald-500">
+                                                        <div className="flex items-center gap-2">
+                                                            <CheckCircle2 className="h-5 w-5 text-emerald-600" />
+                                                            <div>
+                                                                <span className="text-emerald-800 font-bold text-xs uppercase block">Verificación de Banco</span>
+                                                                <span className="text-emerald-600 text-[10px]">Aprobado por Contabilidad</span>
+                                                            </div>
+                                                        </div>
+                                                        <InlineComprobante items={(comprobantesData.verificacion_abonos || {})[i]} onClickImage={setPreviewImage} />
+                                                    </div>
+                                                )}
                                             </div>
                                         );
                                     })}
@@ -911,11 +941,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
             `}</style>
 
             <div className="w-full max-w-[850px] mx-auto p-4 md:p-6 font-sans text-black">
+                
+                {/* 🔥 CABECERA CON DATOS DE LA EMPRESA AÑADIDOS 🔥 */}
                 <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-4">
-                    <div className="w-40">
-                         <img src="/logo.png" alt="Logo" className="max-w-full h-auto object-contain" />
+                    <div className="w-1/2">
+                         <img src="/logo.png" alt="Logo" className="w-40 h-auto object-contain mb-2" />
+                         <div className="text-[10px] text-slate-700 leading-tight font-medium">
+                             {/* 🔥 EDITA AQUÍ LOS DATOS DE TU EMPRESA 🔥 */}
+                             <p>📍 Av. Zenon Macias y Calle la Merced, General Villamil, Guayas, Ecuador</p>
+                             <p>📞 Tel: 099076566 - 0982657066</p>
+                             <p>🌐 Redes: @graficasadr</p>
+                         </div>
                     </div>
-                    <div className="text-right">
+                    <div className="text-right w-1/2">
                          <h1 className="text-xl font-black tracking-widest text-slate-900 mb-1 uppercase">Orden de Producción</h1>
                          <div className="text-lg font-bold text-slate-800">N° ORDEN: {formatOrderId(order.id)}</div>
                          <div className="text-[11px] font-bold text-slate-700 mt-1">FECHA INGRESO: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
@@ -925,13 +963,16 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 <div className="border-2 border-black rounded-lg p-3 mb-6 bg-gray-50">
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
                          <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{order.fechaEntrega ? order.fechaEntrega.split('T')[0] : 'Por Definir'}</span></div>
+                         {/* 🔥 CÉDULA/RUC AÑADIDA AL LADO DEL CLIENTE 🔥 */}
+                         <div><span className="font-bold">RUC/C.I.:</span> <span className="uppercase">{order.ruc || order.cedula || order.cliente_identificacion || 'CONSUMIDOR FINAL'}</span></div>
                          
                          <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                         <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
+                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{(order.fechaEntrega || order.fecha_entrega) ? formatDateFull(order.fechaEntrega || order.fecha_entrega).split(' ')[0] : 'Por Definir'}</span></div>
                          
-                         <div><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
+                         <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
                          <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{nroFacturaDisplay}</span></div>
+
+                         <div className="col-span-2"><span className="font-bold">VIENE DE PROFORMA:</span> <span className="uppercase">{order.origenProformaInfo || order.origenProformaId ? `#${order.origenProformaInfo || order.origenProformaId}` : 'NO'}</span></div>
                     </div>
                 </div>
 
@@ -983,7 +1024,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                         
                         {order.abonos && order.abonos.map((a, i) => (
                             <div key={i} className={`flex justify-between items-center border-b border-dashed pb-1 ${a.monto < 0 ? 'border-orange-300 text-orange-700' : 'border-red-300 text-red-700'}`}>
-                                <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? a.fecha.split('T')[0] : ''}):</span>
+                                <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? formatDateFull(a.fecha).split(' ')[0] : ''}):</span>
                                 <span className="font-bold">{formatCurrency(a.monto)}</span>
                             </div>
                         ))}
