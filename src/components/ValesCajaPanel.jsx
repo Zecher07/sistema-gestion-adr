@@ -25,10 +25,11 @@ const ValesCajaPanel = ({ user }) => {
   const [editingVale, setEditingVale] = useState(null); 
   const [staffList, setStaffList] = useState([]); 
 
-  const isAdmin = user?.role === 'Administrador';
+  // 🔥 NUEVO: PERMISO COMBINADO ADMIN + CONTABILIDAD 🔥
+  const isAdminOrContabilidad = user?.role === 'Administrador' || user?.role === 'Contabilidad';
 
   const [formData, setFormData] = useState({
-    fecha: getLocalDate(), // Aplicado aquí
+    fecha: getLocalDate(), 
     vendedor: user?.name || '',
     concepto: '',
     monto: '',
@@ -37,10 +38,10 @@ const ValesCajaPanel = ({ user }) => {
 
   useEffect(() => {
     fetchVales();
-    if (isAdmin) {
+    if (isAdminOrContabilidad) {
         fetchStaff();
     }
-  }, [isAdmin]);
+  }, [isAdminOrContabilidad]);
 
   const fetchStaff = async () => {
       const { data } = await supabase.from('profiles').select('full_name').order('full_name');
@@ -52,7 +53,7 @@ const ValesCajaPanel = ({ user }) => {
     try {
       let query = supabase.from('vales_caja').select('*').order('fecha', { ascending: false }).order('id', { ascending: false });
       
-      if (!isAdmin) {
+      if (!isAdminOrContabilidad) {
           query = query.eq('vendedor', user?.name);
       }
 
@@ -69,7 +70,7 @@ const ValesCajaPanel = ({ user }) => {
 
   const checkAvailableCash = async (vendedorNombre, fechaStr, montoRequerido, excludeValeId = null) => {
       let vId = user.id;
-      if (isAdmin && vendedorNombre !== user.name) {
+      if (isAdminOrContabilidad && vendedorNombre !== user.name) {
           const { data: p } = await supabase.from('profiles').select('id').eq('full_name', vendedorNombre).maybeSingle();
           if (p) vId = p.id;
       }
@@ -167,7 +168,7 @@ const ValesCajaPanel = ({ user }) => {
           });
       } else {
           setEditingVale(null);
-          setFormData({ fecha: getLocalDate(), vendedor: user?.name || '', concepto: '', monto: '', recibido_por: '' }); // Aplicado aquí
+          setFormData({ fecha: getLocalDate(), vendedor: user?.name || '', concepto: '', monto: '', recibido_por: '' }); 
       }
       setIsModalOpen(true);
   };
@@ -215,7 +216,7 @@ const ValesCajaPanel = ({ user }) => {
       } else {
           const { error } = await supabase.from('vales_caja').insert([payload]);
           if (error) throw error;
-          toast({ title: "Vale Registrado", description: "El vale está pendiente de aprobación por el Administrador." });
+          toast({ title: "Vale Registrado", description: "El vale está pendiente de aprobación." });
       }
       
       setIsModalOpen(false);
@@ -285,7 +286,7 @@ const ValesCajaPanel = ({ user }) => {
                     <Receipt className="h-6 w-6 text-red-600" /> Vales de Caja
                 </h2>
                 <p className="text-slate-500">
-                    {isAdmin ? "Administra y aprueba los vales de caja de los vendedores." : "Registra tus retiros. Un administrador debe aprobarlos para que sean válidos."}
+                    {isAdminOrContabilidad ? "Administra y aprueba los vales de caja de los vendedores." : "Registra tus retiros. Un administrador o contabilidad debe aprobarlos para que sean válidos."}
                 </p>
             </div>
             <Button onClick={() => handleOpenModal()} className="bg-red-600 hover:bg-red-700 text-white gap-2 shadow-sm">
@@ -312,14 +313,14 @@ const ValesCajaPanel = ({ user }) => {
                                     <th className="px-6 py-3 font-semibold">Concepto</th>
                                     <th className="px-6 py-3 font-semibold text-center">Estado</th>
                                     <th className="px-6 py-3 font-semibold text-right">Monto</th>
-                                    {isAdmin && <th className="px-6 py-3 font-semibold text-center">Acciones</th>}
+                                    {isAdminOrContabilidad && <th className="px-6 py-3 font-semibold text-center">Acciones</th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
                                 {loading ? (
-                                    <tr><td colSpan={isAdmin ? "7" : "6"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
+                                    <tr><td colSpan={isAdminOrContabilidad ? "7" : "6"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
                                 ) : filteredVales.length === 0 ? (
-                                    <tr><td colSpan={isAdmin ? "7" : "6"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
+                                    <tr><td colSpan={isAdminOrContabilidad ? "7" : "6"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
                                 ) : (
                                     filteredVales.map(vale => {
                                         const isAprobado = vale.status === 'APROBADO';
@@ -347,7 +348,7 @@ const ValesCajaPanel = ({ user }) => {
                                                 -$ {Number(vale.monto).toFixed(2)}
                                             </td>
                                             
-                                            {isAdmin && (
+                                            {isAdminOrContabilidad && (
                                                 <td className="px-6 py-3 text-center">
                                                     <div className="flex items-center justify-center gap-2">
                                                         {isProcessingThis ? (
@@ -396,18 +397,18 @@ const ValesCajaPanel = ({ user }) => {
                     
                     <div className="bg-yellow-50 text-yellow-800 text-xs p-3 border-b border-yellow-200 flex items-start gap-2">
                         <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                        <p>Los vales creados o editados pasarán a estado <strong>PENDIENTE</strong> hasta que un administrador los apruebe.</p>
+                        <p>Los vales creados o editados pasarán a estado <strong>PENDIENTE</strong> hasta que un administrador o contabilidad los apruebe.</p>
                     </div>
 
                     <div className="p-6 space-y-4">
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Fecha</label>
-                            <Input type="date" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} disabled={!isAdmin} className={!isAdmin ? "bg-slate-50 cursor-not-allowed" : ""} />
+                            <Input type="date" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} disabled={!isAdminOrContabilidad} className={!isAdminOrContabilidad ? "bg-slate-50 cursor-not-allowed" : ""} />
                         </div>
                         
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Caja de Origen (Vendedor)</label>
-                            {isAdmin ? (
+                            {isAdminOrContabilidad ? (
                                 <select 
                                     className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
                                     value={formData.vendedor}
