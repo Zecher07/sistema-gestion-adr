@@ -673,7 +673,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div></div>
                             {Number(fin.descuentoVal) > 0 && <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto Total</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>}
                             <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({fin.ivaPercentage || 15}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({parseFloat(Number(fin.ivaPercentage || 15).toFixed(2))}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
                             
                             <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-slate-100 text-base">
                                 <div className="px-4 py-2 text-right font-bold text-slate-800">TOTAL FACTURA</div>
@@ -682,7 +682,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             
                             {retencion > 0 && (
                                 <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-orange-50 text-sm">
-                                    <div className="px-4 py-2 text-right font-bold text-orange-800">Retención ({parsedFinancials.retentionPercent || 0}%)</div>
+                                    <div className="px-4 py-2 text-right font-bold text-orange-800">Retención ({parseFloat(Number(parsedFinancials.retentionPercent || 0).toFixed(2))}%)</div>
                                     <div className="px-4 py-2 text-right font-bold text-orange-800">-{formatCurrency(retencion)}</div>
                                 </div>
                             )}
@@ -884,15 +884,45 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                                    
                                                    const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque');
                                                    
+                                                   // 🔥 VALIDACIÓN 1: VERIFICACIÓN BANCO PARA ANTICIPOS (CONTABILIDAD) 🔥
+                                                   if (anticipoVal > 0 && checkTransfer(pAnticipoTemp)) {
+                                                       if (!comprobantesData.verificacion_anticipo || comprobantesData.verificacion_anticipo.length === 0) {
+                                                           toast({title: "Verificación de Banco Requerida", description: "Contabilidad debe adjuntar la captura del banco para el Anticipo antes de finalizar la orden.", variant: "destructive"});
+                                                           setIsAdvancing(false);
+                                                           return;
+                                                       }
+                                                   }
+
+                                                   // 🔥 VALIDACIÓN 2: VERIFICACIÓN BANCO PARA ABONOS (CONTABILIDAD) 🔥
+                                                   if (order.abonos && order.abonos.length > 0) {
+                                                       for (let i = 0; i < order.abonos.length; i++) {
+                                                           const a = order.abonos[i];
+                                                           const method = (a.metodoPago || a.metodo_pago || '').toLowerCase();
+                                                           if (a.monto > 0 && checkTransfer(method)) {
+                                                               if (!comprobantesData.verificacion_abonos || !comprobantesData.verificacion_abonos[i] || comprobantesData.verificacion_abonos[i].length === 0) {
+                                                                   toast({title: "Verificación de Banco Requerida", description: `Contabilidad debe adjuntar la captura del banco para el Abono #${i + 1} antes de finalizar.`, variant: "destructive"});
+                                                                   setIsAdvancing(false);
+                                                                   return;
+                                                               }
+                                                           }
+                                                       }
+                                                   }
+
                                                    let isTransfer = checkTransfer(pAnticipoTemp) || checkTransfer(pSaldoTemp);
                                                    if (!isTransfer && order.abonos) {
                                                        isTransfer = order.abonos.some(a => checkTransfer(a.metodoPago || a.metodo_pago));
                                                    }
                                                                                                      
                                                    if (isTransfer && (!comprobantesData.anticipo || comprobantesData.anticipo.length === 0) && (!comprobantesData.saldo || comprobantesData.saldo.length === 0) && Object.keys(comprobantesData.abonos || {}).length === 0) {
-                                                       toast({title: "Comprobante Requerido", description: "Faltan subir fotos de transferencias, depósitos o cheques. Haga clic en Editar Orden para adjuntarlos.", variant: "destructive"});
+                                                       toast({title: "Comprobante del Vendedor Requerido", description: "El vendedor no subió fotos de transferencias/depósitos. Es necesario adjuntarlos.", variant: "destructive"});
                                                        setIsAdvancing(false);
                                                        return; 
+                                                   }
+
+                                                   if (retencion > 0 && (!comprobantesData.retencion || comprobantesData.retencion.length === 0)) {
+                                                       toast({title: "Falta Retención", description: "Debe adjuntar la foto o comprobante de la retención antes de finalizar la orden.", variant: "destructive"});
+                                                       setIsAdvancing(false);
+                                                       return;
                                                    }
                                                }
 
@@ -942,15 +972,14 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
             <div className="w-full max-w-[850px] mx-auto p-4 md:p-6 font-sans text-black">
                 
-                {/* 🔥 CABECERA CON DATOS DE LA EMPRESA AÑADIDOS 🔥 */}
                 <div className="flex justify-between items-start border-b-2 border-black pb-3 mb-4">
                     <div className="w-1/2">
                          <img src="/logo.png" alt="Logo" className="w-40 h-auto object-contain mb-2" />
                          <div className="text-[10px] text-slate-700 leading-tight font-medium">
-                             {/* 🔥 EDITA AQUÍ LOS DATOS DE TU EMPRESA 🔥 */}
-                             <p>📍 Av. Zenon Macias y Calle la Merced, General Villamil, Guayas, Ecuador</p>
-                             <p>📞 Tel: 099076566 - 0982657066</p>
-                             <p>🌐 Redes: @graficasadr</p>
+                             <p>📍 Dirección de tu empresa, Ciudad</p>
+                             <p>📞 Tel: 099 999 9999 - 098 888 8888</p>
+                             <p>✉️ Email: correo@tuempresa.com</p>
+                             <p>🌐 Redes: @tuempresa</p>
                          </div>
                     </div>
                     <div className="text-right w-1/2">
@@ -963,7 +992,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 <div className="border-2 border-black rounded-lg p-3 mb-6 bg-gray-50">
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
                          <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
-                         {/* 🔥 CÉDULA/RUC AÑADIDA AL LADO DEL CLIENTE 🔥 */}
                          <div><span className="font-bold">RUC/C.I.:</span> <span className="uppercase">{order.ruc || order.cedula || order.cliente_identificacion || 'CONSUMIDOR FINAL'}</span></div>
                          
                          <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
@@ -1047,16 +1075,17 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             </div>
                         )}
                         <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
-                            <span className="font-bold">IVA {fin.ivaPercentage || 15}%</span>
+                            <span className="font-bold">IVA ({parseFloat(Number(fin.ivaPercentage || 15).toFixed(2))}%)</span>
                             <span className="font-medium">{formatCurrency(fin.iva)}</span>
                         </div>
                         <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-200">
                             <span className="font-black text-sm">TOTAL FACTURA</span>
                             <span className="font-black text-sm">{formatCurrency(fin.total)}</span>
                         </div>
+                        
                         {retencion > 0 && (
                             <div className="flex justify-between items-center p-1.5 border-b border-black bg-orange-50">
-                                <span className="font-bold text-orange-800">RETENCIÓN ({parsedFinancials.retentionPercent || 0}%)</span>
+                                <span className="font-bold text-orange-800">RETENCIÓN ({parseFloat(Number(parsedFinancials.retentionPercent || 0).toFixed(2))}%)</span>
                                 <span className="font-bold text-orange-800">-{formatCurrency(retencion)}</span>
                             </div>
                         )}

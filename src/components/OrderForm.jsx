@@ -100,7 +100,6 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing, 
     );
 });
 
-// 🔥 MODIFICADO PARA ACEPTAR LABELS E ICONOS PERSONALIZADOS 🔥
 const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, isProcessing, disabled = false, canRemove = true, onClickImage, label = "Soportes adjuntos", colorClass = "text-slate-500", Icon = FileText }) => {
     const onDrop = useCallback(files => onAdd(files, type, abonoIndex), [onAdd, type, abonoIndex]);
     const { getRootProps, getInputProps } = useDropzone({ onDrop, accept: {'image/*': []}, disabled: isProcessing || disabled });
@@ -179,7 +178,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [abonos, setAbonos] = useState([]);
   const hasAbonosExtras = abonos && abonos.length > 0; 
   
-  // 🔥 SE AÑADE VERIFICACION_ANTICIPO Y VERIFICACION_ABONOS 🔥
   const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
   const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
   
@@ -434,8 +432,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos, formData.retencion, isEditMode]);
 
-  const porcentajeAnticipoUI = financials.total > 0 ? ((formData.anticipo / financials.total) * 100).toFixed(1) : '0.0';
-  const porcentajeSaldoUI = financials.total > 0 ? ((Math.max(financials.saldoPendiente, 0) / financials.total) * 100).toFixed(1) : '0.0';
+  const totalAPagar = financials.total - formData.retencion;
+  const porcentajeAnticipoUI = totalAPagar > 0 ? ((formData.anticipo / totalAPagar) * 100).toFixed(1) : '0.0';
+  const porcentajeSaldoUI = totalAPagar > 0 ? ((Math.max(financials.saldoPendiente, 0) / totalAPagar) * 100).toFixed(1) : '0.0';
 
   const handleAnticipoChange = (e) => {
       const valStr = e.target.value;
@@ -680,11 +679,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const removeImage = (index) => { setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) })); };
 
+  // 🔥 ACTUALIZADO: Tarjeta también exige foto 🔥
   const requiresComprobante = (method) => {
-      if (!method) return false; const m = method.toLowerCase(); return !m.includes('efectivo') && !m.includes('no aplica') && !m.includes('tarjeta');
+      if (!method) return false; const m = method.toLowerCase(); 
+      return !m.includes('efectivo') && !m.includes('no aplica');
   };
 
-  // 🔥 MODIFICADO PARA SOPORTAR MULTIPLES TIPOS DE COMPROBANTES DE BANCO 🔥
   const handleAddComprobantes = async (files, type, abonoIndex = null) => {
       setIsProcessingComprobantes(true); const newImages = [];
       for (const file of files) {
@@ -753,7 +753,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setIsAbonoModalOpen(false);
   };
 
-  // 🔥 AL ELIMINAR UN ABONO, LIMPIAMOS TAMBIÉN SUS VERIFICACIONES DE BANCO 🔥
   const removeAbonoLocal = (index) => {
       setAbonos(prev => prev.filter((_, i) => i !== index));
       setComprobantesData(prev => {
@@ -1335,7 +1334,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                 </div>
                             )}
                             {applyRetention && !canEditRetention && (
-                                <span className="text-orange-700 font-bold ml-2">({formData.retentionPercent}%)</span>
+                                <span className="text-orange-700 font-bold ml-2">({parseFloat(Number(formData.retentionPercent || 0).toFixed(2))}%)</span>
                             )}
                          </td>
                          <td className="text-right py-1 px-2 text-orange-600 font-bold">
@@ -1434,7 +1433,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                        </div>
                    )}
                    
-                   {/* 🔥 NUEVO BLOQUE: FOTO VENDEDOR Y FOTO BANCO JUNTAS 🔥 */}
                    {requiresComprobante(formData.formaPagoAnticipo) && (
                        <div className="flex flex-col gap-2 bg-white p-2 rounded border border-slate-200">
                            <InlineComprobanteEdit 
@@ -1639,14 +1637,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                      <div className="flex justify-between items-start w-full pr-6 mb-2">
                                          <div>
                                              <div className="text-[10px] text-slate-500 font-bold">{abono.fecha ? abono.fecha.split('T')[0] : ''}</div>
-                                             <div className={`text-xs font-bold uppercase ${isDevolucion ? 'text-orange-700' : 'text-red-700'}`}>{abono.metodoPago || abono.metodo_pago}</div>
+                                             <div className={`text-xs font-bold uppercase ${isDevolucion ? 'text-orange-700' : 'text-red-700'}`}>{abono.metodoPago || a.metodo_pago}</div>
                                          </div>
                                          <div className={`font-black text-lg ${isDevolucion ? 'text-orange-600' : 'text-red-600'}`}>
                                              {isDevolucion ? formatCurrency(abono.monto) : `+${formatCurrency(abono.monto)}`}
                                          </div>
                                      </div>
                                      
-                                     {/* 🔥 FOTO VENDEDOR Y FOTO BANCO JUNTAS EN EL ABONO 🔥 */}
                                      {requiresComprobante(abono.metodoPago || abono.metodo_pago) && (
                                          <div className="flex flex-col gap-2 bg-white p-2 rounded border border-slate-200 w-full">
                                              <InlineComprobanteEdit 
