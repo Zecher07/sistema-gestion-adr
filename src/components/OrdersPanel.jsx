@@ -102,7 +102,6 @@ const OrdersPanel = ({
     };
   }, [isAdmin, isProduccion]);
 
-  // 🔥 PERMISOS ACTUALIZADOS PARA CONTABILIDAD 🔥
   const canModify = (order) => {
       if (isAdmin) return true;
       if (user?.role === 'Contabilidad' && order.status === 'CONTABILIDAD') return true;
@@ -202,10 +201,13 @@ const OrdersPanel = ({
       const financials = order.financials || {};
       
       const anticipoInicial = parseFloat(order.anticipo) || 0;
+      // 🔥 AHORA SÍ RESTAMOS LA RETENCIÓN DE LOS CÁLCULOS 🔥
+      const retencion = parseFloat(order.retencion || financials.retencion || 0); 
       const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
       const abonoTotal = anticipoInicial + abonosPosteriores;
       
-      const totalVal = parseFloat(financials.total) || 0;
+      const totalOriginal = parseFloat(financials.total) || 0;
+      const totalVal = Math.max(0, totalOriginal - retencion); 
       const saldoVal = Math.max(0, totalVal - abonoTotal); 
 
       return {
@@ -230,9 +232,19 @@ const OrdersPanel = ({
       let aVal = a[sortConfig.key];
       let bVal = b[sortConfig.key];
 
-      if (sortConfig.key === 'total' || sortConfig.key === 'saldo') {
-        aVal = a.financials?.[sortConfig.key] || 0;
-        bVal = b.financials?.[sortConfig.key] || 0;
+      // 🔥 ORDENAMIENTO EN BASE AL TOTAL NETO (SIN RETENCIÓN) 🔥
+      if (sortConfig.key === 'total') {
+        const retA = parseFloat(a.retencion || a.financials?.retencion || 0);
+        const retB = parseFloat(b.retencion || b.financials?.retencion || 0);
+        aVal = (a.financials?.total || 0) - retA;
+        bVal = (b.financials?.total || 0) - retB;
+      } else if (sortConfig.key === 'saldo') {
+        const retA = parseFloat(a.retencion || a.financials?.retencion || 0);
+        const retB = parseFloat(b.retencion || b.financials?.retencion || 0);
+        const abonoA = parseFloat(a.anticipo || 0) + (a.abonos || []).reduce((sum, x) => sum + Number(x.monto), 0);
+        const abonoB = parseFloat(b.anticipo || 0) + (b.abonos || []).reduce((sum, x) => sum + Number(x.monto), 0);
+        aVal = Math.max(0, (a.financials?.total || 0) - retA - abonoA);
+        bVal = Math.max(0, (b.financials?.total || 0) - retB - abonoB);
       } else if (sortConfig.key === 'orderNumber') {
         aVal = a.orderNumber || a.order_number || a.id || 0;
         bVal = b.orderNumber || b.order_number || b.id || 0;
@@ -285,6 +297,13 @@ const OrdersPanel = ({
     const rows = sortedOrders.map(o => {
         const fin = o.financials || {};
         const origen = o.origenProformaInfo || o.origenProformaId || '-';
+        
+        // 🔥 APLICADO A LA EXPORTACIÓN DE EXCEL 🔥
+        const retencion = parseFloat(o.retencion || fin.retencion || 0);
+        const totalNeto = (fin.total || 0) - retencion;
+        const abonosTotales = parseFloat(o.anticipo || 0) + (o.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
+        const saldoFinal = Math.max(0, totalNeto - abonosTotales);
+
         return [
           formatOrderId(o),
           formatDate(o.createdAt || o.created_at),
@@ -295,9 +314,9 @@ const OrdersPanel = ({
           o.status,
           origen,
           o.vendedor || '-',
-          (fin.total || 0).toFixed(2),
-          (o.anticipo || 0).toFixed(2),
-          (fin.saldo || 0).toFixed(2)
+          totalNeto.toFixed(2),
+          abonosTotales.toFixed(2),
+          saldoFinal.toFixed(2)
         ];
     });
     
@@ -346,7 +365,6 @@ const OrdersPanel = ({
     }
   };
 
-  // 🔥 ACTUALIZADO: REGLA DE EDICIÓN PARA CONTABILIDAD 🔥
   const canEdit = (status) => {
     if (status === 'ANULADA' || status === 'ARCHIVADA') return false;
     if (isAdmin) return true;
@@ -535,9 +553,13 @@ const OrdersPanel = ({
                   const typeLabel = getOrderTypeLabel(order);
                   
                   const anticipoInicial = parseFloat(order.anticipo) || 0;
+                  const retencion = parseFloat(order.retencion || financials.retencion || 0);
                   const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
                   const abonoTotal = anticipoInicial + abonosPosteriores;
-                  const saldoReal = Math.max(0, (parseFloat(financials.total) || 0) - abonoTotal);
+                  
+                  // 🔥 APLICADO A LA COLUMNA DE LA TABLA 🔥
+                  const totalNeto = Math.max(0, (parseFloat(financials.total) || 0) - retencion);
+                  const saldoReal = Math.max(0, totalNeto - abonoTotal);
 
                   return (
                     <tr key={order.id} className={`transition-colors ${isAnulada ? 'bg-red-50 hover:bg-red-100' : isArchivada ? 'bg-slate-100 opacity-75' : 'hover:bg-slate-50'}`}>
@@ -575,7 +597,7 @@ const OrdersPanel = ({
                       )}
                       {!isProduccion && (
                           <td className="px-2 py-3 text-right font-semibold text-slate-800 whitespace-nowrap">
-                            {formatCurrency(financials.total)}
+                            {formatCurrency(totalNeto)}
                           </td>
                       )}
 

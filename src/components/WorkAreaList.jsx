@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Search, ChevronLeft, ChevronRight, Play, PackageSearch, PackageCheck, FileSignature, AlertOctagon, Wallet, DollarSign, Globe, Wrench, ShoppingCart } from 'lucide-react';
+import { Search, ChevronLeft, ChevronRight, Play, PackageSearch, PackageCheck, FileSignature, AlertOctagon, Wallet, DollarSign, Globe, Wrench, ShoppingCart, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
 
@@ -9,7 +9,7 @@ const getLocalDate = () => {
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 };
 
-// 🔥 NUEVO: Calculador Inteligente de Estados Contables 🔥
+// 🔥 Calculador Inteligente de Estados Contables Actualizado 🔥
 const getOrderAccountingStatus = (o) => {
     const total = Number(o.financials?.total) || 0;
     const anticipo = Number(o.anticipo) || 0;
@@ -25,31 +25,31 @@ const getOrderAccountingStatus = (o) => {
     const today = getLocalDate();
     const fechaVence = o.financials?.creditoVenceSaldo || o.creditoVenceSaldo || o.credito_vence_saldo || o.creditoVenceAnticipo || o.credito_vence_anticipo || o.financials?.creditoVenceAnticipo || '';
     
-    // Verifica si la fecha de hoy es mayor a la fecha límite
     const isVencido = isCredito && fechaVence && fechaVence < today;
 
     let retDocs = [];
     if (o.comprobantes && !Array.isArray(o.comprobantes) && o.comprobantes.retencion) {
         retDocs = o.comprobantes.retencion;
     }
-    // Verifica si se restó el dinero de retención pero contabilidad aún no sube el papel
     const isRetencionPendiente = retencion > 0 && retDocs.length === 0;
 
     let status = '';
     
-    if (saldoFinalReal > 0.01) {
-        if (isCredito && !isVencido) {
-            status = 'creditos'; // Está a crédito y aún tiene tiempo
-        } else {
-            status = 'impagas'; // No tiene crédito o el crédito ya venció
-        }
-    } else {
-        status = 'por_finalizar'; // Saldos cubiertos
-    }
-
-    // Regla Maestra: Si falta el comprobante de retención, vuelve a Impagas
-    if (isRetencionPendiente) {
+    // 1. Prioridad: Si debe dinero y NO es un crédito vigente -> Impagas
+    if (saldoFinalReal > 0.01 && (!isCredito || isVencido)) {
         status = 'impagas';
+    } 
+    // 2. Prioridad: Si no debe dinero, pero falta la foto de retención -> Retenciones
+    else if (isRetencionPendiente) {
+        status = 'retenciones';
+    } 
+    // 3. Prioridad: Si debe dinero, pero es un crédito a tiempo -> Créditos
+    else if (saldoFinalReal > 0.01 && isCredito && !isVencido) {
+        status = 'creditos';
+    } 
+    // 4. Si todo está cuadrado y con documentos -> Por Finalizar
+    else {
+        status = 'por_finalizar';
     }
 
     return { status, isRetencionPendiente, isVencido, saldoFinalReal, isCredito };
@@ -88,6 +88,7 @@ const WorkAreaList = ({
           const { status } = getOrderAccountingStatus(order);
           if (listFilter === 'creditos') return status === 'creditos';
           if (listFilter === 'impagas') return status === 'impagas';
+          if (listFilter === 'retenciones') return status === 'retenciones';
           if (listFilter === 'por_finalizar') return status === 'por_finalizar'; 
           return false;
       }
@@ -105,7 +106,7 @@ const WorkAreaList = ({
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR';
 
-          if (['creditos', 'impagas', 'por_finalizar'].includes(listFilter)) {
+          if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
               if (order.status !== 'CONTABILIDAD') return false;
               const { status } = getOrderAccountingStatus(order);
               return status === listFilter;
@@ -155,7 +156,7 @@ const WorkAreaList = ({
   };
 
   const getOrderCounts = () => {
-      let counts = { todas: 0, ventas: 0, produccion: 0, por_retirar: 0, por_finalizar: 0, creditos: 0, impagas: 0 };
+      let counts = { todas: 0, ventas: 0, produccion: 0, por_retirar: 0, por_finalizar: 0, creditos: 0, impagas: 0, retenciones: 0 };
       
       orders.forEach(o => {
           if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return;
@@ -169,6 +170,7 @@ const WorkAreaList = ({
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
                   else if (status === 'impagas') counts.impagas++;
+                  else if (status === 'retenciones') counts.retenciones++;
                   else counts.por_finalizar++;
               }
           }
@@ -182,6 +184,7 @@ const WorkAreaList = ({
               const { status } = getOrderAccountingStatus(o);
               if (status === 'creditos') counts.creditos++;
               else if (status === 'impagas') counts.impagas++;
+              else if (status === 'retenciones') counts.retenciones++;
               else counts.por_finalizar++;
           }
       });
@@ -225,6 +228,9 @@ const WorkAreaList = ({
                         <button onClick={() => setListFilter('creditos')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'creditos' ? "bg-amber-500 text-white border-amber-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                             <Wallet className="h-4 w-4" /> CRÉDITOS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.creditos}</span>
                         </button>
+                        <button onClick={() => setListFilter('retenciones')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'retenciones' ? "bg-orange-500 text-white border-orange-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <FileText className="h-4 w-4" /> RETENCIONES <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.retenciones}</span>
+                        </button>
                         <button onClick={() => setListFilter('impagas')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'impagas' ? "bg-red-600 text-white border-red-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                             <AlertOctagon className="h-4 w-4" /> IMPAGAS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.impagas}</span>
                         </button>
@@ -254,6 +260,10 @@ const WorkAreaList = ({
                     <button onClick={() => setListFilter('creditos')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'creditos' ? "bg-amber-500 text-white border-amber-600 shadow-amber-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                         <Wallet className="h-5 w-5" /> CRÉDITOS
                         <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'creditos' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.creditos}</span>
+                    </button>
+                    <button onClick={() => setListFilter('retenciones')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'retenciones' ? "bg-orange-500 text-white border-orange-600 shadow-orange-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                        <FileText className="h-5 w-5" /> RETENCIONES
+                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'retenciones' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.retenciones}</span>
                     </button>
                     <button onClick={() => setListFilter('impagas')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'impagas' ? "bg-red-600 text-white border-red-700 shadow-red-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                         <AlertOctagon className="h-5 w-5" /> IMPAGAS
@@ -309,10 +319,8 @@ const WorkAreaList = ({
                           const isFullyCompleted = stats.total > 0 && stats.completed === stats.total;
                           const hasProgress = stats.startedCount > 0;
                           
-                          // Lógica de saldo para ocultar o mostrar el botón Cobrar
                           const accData = getOrderAccountingStatus(order);
                           
-                          // Mostrar el botón cobrar si hay saldo o es a crédito o falta retencion
                           const showCobrarButton = order.status === 'CONTABILIDAD' && onAbonoOrder && (accData.saldoFinalReal > 0.01 || accData.isCredito || accData.isRetencionPendiente);
 
                           return (
