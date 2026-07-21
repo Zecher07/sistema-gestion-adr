@@ -178,6 +178,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [abonos, setAbonos] = useState([]);
   const hasAbonosExtras = abonos && abonos.length > 0; 
   
+  // 🔥 ESTADO DEL HISTORIAL DE CRÉDITOS INCUMPLIDOS 🔥
+  const [historialCredito, setHistorialCredito] = useState([]);
+
   const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
   const [isProcessingComprobantes, setIsProcessingComprobantes] = useState(false);
   
@@ -272,6 +275,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       const savedRetPercent = finData.retentionPercent || initialData.retentionPercent || 0;
       setLocalRetencionPercent(savedRetPercent > 0 ? savedRetPercent.toString() : '');
 
+      // 🔥 CARGAMOS EL HISTORIAL DE CRÉDITO EXISTENTE 🔥
+      setHistorialCredito(finData.historialFechasCredito || []);
+
       const savedAnticipo = initialData.anticipo || finData.anticipo || 0;
       const savedDescuentoMonto = initialData.descuentoMonto || finData.descuentoMonto || 0;
       
@@ -362,6 +368,18 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       }
     }
   }, [initialData, nextOrderNumber, currentUser]);
+
+  // 🔥 VALIDADORES DE SEGURIDAD PARA BLOQUEAR EDICIÓN DE FECHAS DE CRÉDITO A NO ADMINS 🔥
+  const isAnticipoDateLocked = isBottomReadOnly || hasAbonosExtras || (isEditMode && !isAdmin && !!(initialData?.creditoVenceAnticipo || initialData?.credito_vence_anticipo));
+  
+  let initialSaldoDate = '';
+  if (initialData?.financials) {
+      try {
+          const parsedFin = typeof initialData.financials === 'string' ? JSON.parse(initialData.financials) : initialData.financials;
+          initialSaldoDate = parsedFin.creditoVenceSaldo || '';
+      } catch(e) {}
+  }
+  const isSaldoDateLocked = isBottomReadOnly || (isEditMode && !isAdmin && !!(initialSaldoDate || initialData?.creditoVenceSaldo));
 
   const currentDatePart = formData.fechaEntrega ? formData.fechaEntrega.split('T')[0] : '';
   const currentTimePart = formData.fechaEntrega && formData.fechaEntrega.includes('T') ? formData.fechaEntrega.split('T')[1].slice(0,5) : '12:00';
@@ -679,7 +697,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   const removeImage = (index) => { setFormData(prev => ({ ...prev, imagenes: prev.imagenes.filter((_, i) => i !== index) })); };
 
-  // 🔥 ACTUALIZADO: Tarjeta también exige foto 🔥
   const requiresComprobante = (method) => {
       if (!method) return false; const m = method.toLowerCase(); 
       return !m.includes('efectivo') && !m.includes('no aplica');
@@ -830,6 +847,38 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         if (montoUsandoCredito > creditoDisponible + 0.05) { toast({ title: "Límite de crédito excedido", description: `El cliente solo dispone de $${creditoDisponible.toFixed(2)}. Intentas aplicar $${montoUsandoCredito.toFixed(2)} a crédito.`, variant: "destructive" }); setLoading(false); return; }
     }
 
+    // 🔥 ACTUALIZANDO EL HISTORIAL DE FECHAS SI FUERON CAMBIADAS 🔥
+    const newHistorial = [...historialCredito];
+    const origVenceAnticipo = initialData?.credito_vence_anticipo || initialData?.creditoVenceAnticipo || '';
+    if (isEditMode && origVenceAnticipo && formData.creditoVenceAnticipo && formData.creditoVenceAnticipo !== origVenceAnticipo) {
+        newHistorial.push({
+            tipo: 'Anticipo',
+            fechaAnterior: origVenceAnticipo,
+            nuevaFecha: formData.creditoVenceAnticipo,
+            modificadoPor: currentUser.name,
+            fechaModificacion: getLocalDate()
+        });
+    }
+    
+    let origVenceSaldo = '';
+    if (initialData?.financials) {
+       try {
+           const parsedFin = typeof initialData.financials === 'string' ? JSON.parse(initialData.financials) : initialData.financials;
+           origVenceSaldo = parsedFin.creditoVenceSaldo || '';
+       } catch(e) {}
+    }
+    origVenceSaldo = origVenceSaldo || initialData?.creditoVenceSaldo || '';
+    
+    if (isEditMode && origVenceSaldo && formData.creditoVenceSaldo && formData.creditoVenceSaldo !== origVenceSaldo) {
+        newHistorial.push({
+            tipo: 'Saldo',
+            fechaAnterior: origVenceSaldo,
+            nuevaFecha: formData.creditoVenceSaldo,
+            modificadoPor: currentUser.name,
+            fechaModificacion: getLocalDate()
+        });
+    }
+
     let finalPaymentString = formData.formaPagoAnticipo;
     if (requiresComprobante(formData.formaPagoAnticipo) && formData.referenciaPago) finalPaymentString = `${formData.formaPagoAnticipo} - Ref: ${formData.referenciaPago}`;
 
@@ -857,7 +906,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 ivaPercentage: formData.ivaPercentage, retentionPercent: formData.retentionPercent, retencion: formData.retencion,
                 formaPagoSaldo: formData.formaPagoSaldo, creditoVenceSaldo: formData.creditoVenceSaldo, notaSaldo: formData.notaSaldo,
                 aplicarIva: formData.aplicarIva, observaciones: formData.observaciones,
-                nroFactura: formData.nroFactura 
+                nroFactura: formData.nroFactura,
+                historialFechasCredito: newHistorial // 🔥 GUARDAMOS EL HISTORIAL 🔥
             },
             anticipo: formData.anticipo, retencion: formData.retencion, forma_pago_anticipo: finalPaymentString,
             nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
@@ -868,6 +918,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
         if (initialData?.id && initialData.status !== 'BORRADOR') { const { error } = await supabase.from('ordenes').update(payload).eq('id', initialData.id); if(error) throw error; } 
         else { const { error } = await supabase.from('ordenes').insert([payload]); if(error) throw error; }
+
+        setHistorialCredito(newHistorial); // Actualizamos la vista por si acaso
 
         toast({ title: "✅ Orden Guardada", description: `Total a Pagar: $${(financials.total - formData.retencion).toFixed(2)}` });
         if(onSuccess) onSuccess();
@@ -1465,12 +1517,32 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                    )}
 
                    {formData.formaPagoAnticipo === 'Crédito' && (
-                       <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1">
-                           <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                           {isBottomReadOnly || hasAbonosExtras ? (
-                               <div className="flex-1 px-2 py-1 text-sm bg-slate-100 border border-slate-200 rounded text-slate-600 font-bold">{formData.creditoVenceAnticipo || '-'}</div>
-                           ) : (
-                               <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceAnticipo} onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} />
+                       <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-1">
+                           <div className="flex items-center gap-2">
+                               <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
+                               <div className="flex-1 relative">
+                                   <input 
+                                       type="date" 
+                                       className="w-full border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500" 
+                                       value={formData.creditoVenceAnticipo} 
+                                       onChange={e => setFormData({...formData, creditoVenceAnticipo: e.target.value})} 
+                                       disabled={isBottomReadOnly || hasAbonosExtras || (isEditMode && !isAdmin && !!(initialData?.credito_vence_anticipo || initialData?.creditoVenceAnticipo))}
+                                   />
+                                   {(isEditMode && !isAdmin && !!(initialData?.credito_vence_anticipo || initialData?.creditoVenceAnticipo)) && !isBottomReadOnly && !hasAbonosExtras && (
+                                       <Lock className="absolute right-2 top-1.5 h-4 w-4 text-orange-400" title="Solo un Administrador puede extender una fecha de crédito." />
+                                   )}
+                               </div>
+                           </div>
+                           {historialCredito.filter(h => h.tipo === 'Anticipo').length > 0 && (
+                               <div className="ml-22 bg-red-50 border border-red-200 text-red-700 p-2 rounded text-[10px] shadow-inner">
+                                   <span className="font-bold block mb-1 flex items-center gap-1"><AlertOctagon className="h-3 w-3"/> Prórrogas (Incumplimientos):</span>
+                                   {historialCredito.filter(h => h.tipo === 'Anticipo').map((h, i) => (
+                                       <div key={i} className="flex justify-between border-b border-red-100 last:border-0 py-0.5">
+                                           <span>Se extendió del {h.fechaAnterior} al {h.nuevaFecha}</span>
+                                           <span className="text-red-400">por {h.modificadoPor}</span>
+                                       </div>
+                                   ))}
+                               </div>
                            )}
                        </div>
                    )}
@@ -1530,9 +1602,33 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                 )}
 
                                 {formData.formaPagoSaldo === 'Crédito' && (
-                                   <div className="flex items-center gap-2 animate-in fade-in slide-in-from-top-1 mt-2">
-                                       <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
-                                       <input type="date" className="flex-1 border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none" value={formData.creditoVenceSaldo} onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} />
+                                   <div className="flex flex-col gap-2 animate-in fade-in slide-in-from-top-1 mt-2">
+                                       <div className="flex items-center gap-2">
+                                           <label className="text-xs font-bold w-20 text-orange-600">Vence el:</label>
+                                           <div className="flex-1 relative">
+                                               <input 
+                                                   type="date" 
+                                                   className="w-full border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500" 
+                                                   value={formData.creditoVenceSaldo} 
+                                                   onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} 
+                                                   disabled={isBottomReadOnly || (isEditMode && !isAdmin && !!(initialData?.financials?.creditoVenceSaldo || initialData?.creditoVenceSaldo))}
+                                               />
+                                               {(isEditMode && !isAdmin && !!(initialData?.financials?.creditoVenceSaldo || initialData?.creditoVenceSaldo)) && !isBottomReadOnly && (
+                                                   <Lock className="absolute right-2 top-1.5 h-4 w-4 text-orange-400" title="Solo un Administrador puede extender una fecha de crédito." />
+                                               )}
+                                           </div>
+                                       </div>
+                                       {historialCredito.filter(h => h.tipo === 'Saldo').length > 0 && (
+                                           <div className="ml-22 bg-red-50 border border-red-200 text-red-700 p-2 rounded text-[10px] shadow-inner">
+                                               <span className="font-bold block mb-1 flex items-center gap-1"><AlertOctagon className="h-3 w-3"/> Prórrogas (Incumplimientos):</span>
+                                               {historialCredito.filter(h => h.tipo === 'Saldo').map((h, i) => (
+                                                   <div key={i} className="flex justify-between border-b border-red-100 last:border-0 py-0.5">
+                                                       <span>Se extendió del {h.fechaAnterior} al {h.nuevaFecha}</span>
+                                                       <span className="text-red-400">por {h.modificadoPor}</span>
+                                                   </div>
+                                               ))}
+                                           </div>
+                                       )}
                                    </div>
                                 )}
 
@@ -1621,7 +1717,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                  )}
                  
                  {abonos.length > 0 ? (
-                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                     <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                          {abonos.map((abono, idx) => {
                              const isDevolucion = abono.monto < 0;
                              return (

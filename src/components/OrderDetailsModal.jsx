@@ -446,6 +446,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
   const lockToContabilidad = isGoingToContabilidad && !isCredito && saldoCalculado > 0 && !isAdmin;
 
+  // 🔥 HISTORIAL DE CRÉDITO PARA MOSTRAR LA ALERTA ROJA EN VISTA 🔥
+  const historialCredito = parsedFinancials.historialFechasCredito || [];
+
   const canAdvance = useMemo(() => {
       if (!order) return false;
       if (isAdmin) return true;
@@ -712,7 +715,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                         </div>
                                         <div className="space-y-1 text-xs text-slate-600">
                                              <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
-                                             {(pAnticipo.includes('crédit') || pAnticipo.includes('credit')) && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span></div>)}
+                                             {(pAnticipo.includes('crédit') || pAnticipo.includes('credit')) && (
+                                                <div className="flex justify-between items-center border-t border-slate-100 pt-1 mt-1">
+                                                    <span>Vence el:</span> 
+                                                    <div className="text-right">
+                                                        <span className="font-bold text-orange-600">{order.creditoVenceAnticipo || order.credito_vence_anticipo || '-'}</span>
+                                                        {historialCredito.filter(h => h.tipo === 'Anticipo').length > 0 && (
+                                                            <div className="text-[9px] text-red-600 font-medium bg-red-50 border border-red-100 px-1 rounded mt-0.5" title="Muestra las fechas pasadas que no se cumplieron">
+                                                                {historialCredito.filter(h => h.tipo === 'Anticipo').length} prórroga(s) registradas
+                                                            </div>
+                                                        )}
+                                                    </div>
+                                                </div>
+                                             )}
                                              {(order.notaAnticipo || order.nota_anticipo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaAnticipo || order.nota_anticipo}</div>}
                                         </div>
                                     </div>
@@ -741,7 +756,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                     </div>
                                     <div className="space-y-1 text-xs text-slate-600 mb-2">
                                          <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoSaldo || parsedFinancials.formaPagoSaldo || '-'}</span></div>
-                                         {(pSaldo.includes('crédit') || pSaldo.includes('credit')) && (<div className="flex justify-between"><span>Vence:</span> <span>{order.creditoVenceSaldo || parsedFinancials.creditoVenceSaldo || '-'}</span></div>)}
+                                         {(pSaldo.includes('crédit') || pSaldo.includes('credit')) && (
+                                            <div className="flex justify-between items-center border-t border-slate-100 pt-1 mt-1">
+                                                <span>Vence el:</span> 
+                                                <div className="text-right">
+                                                    <span className="font-bold text-orange-600">{order.creditoVenceSaldo || parsedFinancials.creditoVenceSaldo || '-'}</span>
+                                                    {historialCredito.filter(h => h.tipo === 'Saldo').length > 0 && (
+                                                        <div className="text-[9px] text-red-600 font-medium bg-red-50 border border-red-100 px-1 rounded mt-0.5" title="Muestra las fechas pasadas que no se cumplieron">
+                                                            {historialCredito.filter(h => h.tipo === 'Saldo').length} prórroga(s) registradas
+                                                        </div>
+                                                    )}
+                                                </div>
+                                            </div>
+                                         )}
                                          {(order.notaSaldo || parsedFinancials.notaSaldo) && <div className="mt-1 p-1 bg-yellow-50 text-yellow-800 rounded border border-yellow-100">{order.notaSaldo || parsedFinancials.notaSaldo}</div>}
                                     </div>
                                 </div>
@@ -882,9 +909,8 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                                    const pAnticipoTemp = (order.formaPagoAnticipo || order.forma_pago_anticipo || '').toLowerCase();
                                                    const pSaldoTemp = (order.formaPagoSaldo || fin.formaPagoSaldo || '').toLowerCase();
                                                    
-                                                   const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque');
+                                                   const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque') || method.includes('tarjeta');
                                                    
-                                                   // 🔥 VALIDACIÓN 1: VERIFICACIÓN BANCO PARA ANTICIPOS (CONTABILIDAD) 🔥
                                                    if (anticipoVal > 0 && checkTransfer(pAnticipoTemp)) {
                                                        if (!comprobantesData.verificacion_anticipo || comprobantesData.verificacion_anticipo.length === 0) {
                                                            toast({title: "Verificación de Banco Requerida", description: "Contabilidad debe adjuntar la captura del banco para el Anticipo antes de finalizar la orden.", variant: "destructive"});
@@ -893,14 +919,13 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                                        }
                                                    }
 
-                                                   // 🔥 VALIDACIÓN 2: VERIFICACIÓN BANCO PARA ABONOS (CONTABILIDAD) 🔥
                                                    if (order.abonos && order.abonos.length > 0) {
                                                        for (let i = 0; i < order.abonos.length; i++) {
                                                            const a = order.abonos[i];
                                                            const method = (a.metodoPago || a.metodo_pago || '').toLowerCase();
                                                            if (a.monto > 0 && checkTransfer(method)) {
                                                                if (!comprobantesData.verificacion_abonos || !comprobantesData.verificacion_abonos[i] || comprobantesData.verificacion_abonos[i].length === 0) {
-                                                                   toast({title: "Verificación de Banco Requerida", description: `Contabilidad debe adjuntar la captura del banco para el Abono #${i + 1} antes de finalizar.`, variant: "destructive"});
+                                                                   toast({title: "Verificación de Banco Requerida", description: `Contabilidad debe adjuntar la captura del banco/tarjeta para el Abono #${i + 1} antes de finalizar.`, variant: "destructive"});
                                                                    setIsAdvancing(false);
                                                                    return;
                                                                }
@@ -914,7 +939,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                                    }
                                                                                                      
                                                    if (isTransfer && (!comprobantesData.anticipo || comprobantesData.anticipo.length === 0) && (!comprobantesData.saldo || comprobantesData.saldo.length === 0) && Object.keys(comprobantesData.abonos || {}).length === 0) {
-                                                       toast({title: "Comprobante del Vendedor Requerido", description: "El vendedor no subió fotos de transferencias/depósitos. Es necesario adjuntarlos.", variant: "destructive"});
+                                                       toast({title: "Comprobante del Vendedor Requerido", description: "El vendedor no subió fotos de transferencias, depósitos, cheques o tarjetas. Es necesario adjuntarlos.", variant: "destructive"});
                                                        setIsAdvancing(false);
                                                        return; 
                                                    }
