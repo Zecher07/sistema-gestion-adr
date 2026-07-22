@@ -97,8 +97,8 @@ const OrdersPanel = ({
       showEdit: true,
       showClone: !isProduccion, 
       showPayment: isAdmin,
-      showArchive: isAdmin,
-      showUnarchive: isAdmin
+      showArchive: isAdmin
+      // 🔥 Se eliminó showUnarchive para que nadie pueda desarchivar
     };
   }, [isAdmin, isProduccion]);
 
@@ -108,7 +108,9 @@ const OrdersPanel = ({
       return (order.vendedor || '').includes(user?.name);
   };
 
+  // 🔥 VALIDACIÓN DE BORRADO: Si está anulada o archivada, NO se puede anular/borrar
   const canCancel = (order) => {
+      if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return false;
       if (isAdmin) return true;
       if (user?.role === 'Vendedor') {
           return (order.vendedor || '').includes(user?.name) && order.status === 'VENTAS';
@@ -201,7 +203,6 @@ const OrdersPanel = ({
       const financials = order.financials || {};
       
       const anticipoInicial = parseFloat(order.anticipo) || 0;
-      // 🔥 AHORA SÍ RESTAMOS LA RETENCIÓN DE LOS CÁLCULOS 🔥
       const retencion = parseFloat(order.retencion || financials.retencion || 0); 
       const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
       const abonoTotal = anticipoInicial + abonosPosteriores;
@@ -232,7 +233,6 @@ const OrdersPanel = ({
       let aVal = a[sortConfig.key];
       let bVal = b[sortConfig.key];
 
-      // 🔥 ORDENAMIENTO EN BASE AL TOTAL NETO (SIN RETENCIÓN) 🔥
       if (sortConfig.key === 'total') {
         const retA = parseFloat(a.retencion || a.financials?.retencion || 0);
         const retB = parseFloat(b.retencion || b.financials?.retencion || 0);
@@ -298,7 +298,6 @@ const OrdersPanel = ({
         const fin = o.financials || {};
         const origen = o.origenProformaInfo || o.origenProformaId || '-';
         
-        // 🔥 APLICADO A LA EXPORTACIÓN DE EXCEL 🔥
         const retencion = parseFloat(o.retencion || fin.retencion || 0);
         const totalNeto = (fin.total || 0) - retencion;
         const abonosTotales = parseFloat(o.anticipo || 0) + (o.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
@@ -373,7 +372,6 @@ const OrdersPanel = ({
   };
   
   const canArchive = (status) => isAdmin && status === 'FINALIZADA';
-  const canUnarchive = (status) => isAdmin && status === 'ARCHIVADA';
 
   const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
       <th 
@@ -557,7 +555,6 @@ const OrdersPanel = ({
                   const abonosPosteriores = (order.abonos || []).reduce((sum, a) => sum + Number(a.monto), 0);
                   const abonoTotal = anticipoInicial + abonosPosteriores;
                   
-                  // 🔥 APLICADO A LA COLUMNA DE LA TABLA 🔥
                   const totalNeto = Math.max(0, (parseFloat(financials.total) || 0) - retencion);
                   const saldoReal = Math.max(0, totalNeto - abonoTotal);
 
@@ -620,23 +617,26 @@ const OrdersPanel = ({
                       
                       <td className="px-2 py-3 print:hidden whitespace-nowrap">
                         <div className="flex gap-1 justify-center">
+                          {/* SIEMPRE SE PUEDE VISUALIZAR */}
                           {actionConfig.showView && (
                             <Button variant="ghost" size="icon" onClick={() => onViewOrder(order)} className="h-7 w-7 text-blue-600 hover:bg-blue-50" title="Ver detalles">
                               <Eye className="h-3.5 w-3.5" />
                             </Button>
                           )}
 
-                          {!isAnulada && (
+                          {/* SIEMPRE SE PUEDE CLONAR (Incluso anuladas o archivadas, para recuperar info) */}
+                          {actionConfig.showClone && (
+                            <Button variant="ghost" size="icon" onClick={() => handleCloneClick(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
+                              <Copy className="h-3.5 w-3.5" />
+                            </Button>
+                          )}
+
+                          {/* 🔥 ESTOS BOTONES ESTÁN BLOQUEADOS SI LA ORDEN ESTÁ ANULADA O ARCHIVADA 🔥 */}
+                          {!isAnulada && !isArchivada && (
                               <>
                                 {actionConfig.showEdit && canEdit(order.status) && canModify(order) && (
                                   <Button variant="ghost" size="icon" onClick={() => onEditOrder(order)} className="h-7 w-7 text-amber-600 hover:bg-amber-50" title="Editar orden">
                                     <Edit className="h-3.5 w-3.5" />
-                                  </Button>
-                                )}
-                                
-                                {actionConfig.showClone && (
-                                  <Button variant="ghost" size="icon" onClick={() => handleCloneClick(order)} className="h-7 w-7 text-purple-600 hover:bg-purple-50" title="Clonar orden">
-                                    <Copy className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
                                 
@@ -661,11 +661,6 @@ const OrdersPanel = ({
                                 {actionConfig.showArchive && canArchive(order.status) && (
                                   <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'ARCHIVADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Archivar orden">
                                     <Archive className="h-3.5 w-3.5" />
-                                  </Button>
-                                )}
-                                {actionConfig.showUnarchive && canUnarchive(order.status) && (
-                                  <Button variant="ghost" size="icon" onClick={() => onUpdateStatus(order.id, 'FINALIZADA')} className="h-7 w-7 text-slate-600 hover:bg-slate-100" title="Desarchivar orden">
-                                    <RotateCw className="h-3.5 w-3.5" />
                                   </Button>
                                 )}
                               </>
@@ -751,4 +746,4 @@ const OrdersPanel = ({
   );
 };
 
-export default OrdersPanel;
+export default OrdersPanel; 

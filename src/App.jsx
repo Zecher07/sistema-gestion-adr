@@ -33,6 +33,7 @@ import ValesCajaPanel from './components/ValesCajaPanel';
 import AccountingPanel from '@/components/AccountingPanel'; 
 import AbonosModal from '@/components/AbonosModal'; 
 import GeneralLedgerPanel from './components/GeneralLedgerPanel';
+import NotificationsPanel from './components/NotificationsPanel'; // 🔥 NUEVO PANEL DE NOTIFICACIONES
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -98,7 +99,6 @@ function App() {
 
       const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, abonos, motivoAnulacion';
       
-      // 🔥 AHORA TODOS DESCARGAN TODAS LAS ÓRDENES PARA PODER VERLAS EN LA TABLA 🔥
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
       const { data: ordenesData } = await ordersQuery;
       
@@ -154,7 +154,12 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    const intervalId = setInterval(() => { fetchAllData(user); }, 5000); 
+    // 🔧 FIX EGRESS: se eliminó el setInterval de 5s que recargaba TODA la base de datos
+    // (clientes + profiles + ordenes + proformas) cada 5 segundos por cada usuario conectado.
+    // Ya no hace falta: Realtime (más abajo) actualiza el estado local al instante cuando
+    // hay un cambio real, y cada 5 minutos se hace un refresco de respaldo por si algo se
+    // perdiera (ej. reconexión de red).
+    const intervalId = setInterval(() => { fetchAllData(user); }, 5 * 60 * 1000); // cada 5 minutos, no cada 5s
 
     const channel = supabase
       .channel('realtime_ordenes_global')
@@ -214,7 +219,12 @@ function App() {
             return prevOrders;
         });
 
-        setTimeout(() => fetchAllData(user), 1000);
+        // 🔧 FIX EGRESS: se eliminó el fetchAllData() completo que se disparaba aquí
+        // 1 segundo después de CADA cambio en 'ordenes'. El estado ya se actualiza
+        // arriba con setOrders usando el payload que Realtime ya trae (newRecord/oldRecord),
+        // así que no hace falta volver a descargar toda la tabla.
+        // Si en el futuro necesitas datos derivados (ej. el cruce con 'clientes' para
+        // ruc/telefono), hazlo solo sobre el registro afectado, no sobre toda la tabla.
       })
       .subscribe();
 
@@ -289,12 +299,7 @@ function App() {
   const handleViewChange = (v) => { if (v === 'ordenes-nueva') { setCurrentView('ordenes-todas'); setShowForm(true); } else setCurrentView(v); };
   const handleArchiveNotification = (id) => { setArchivedNotifications(prev => [...prev, id]); };
   
-  // Visualizar ordenes NUNCA bloquea a nadie (es tu requerimiento)
   const handleViewOrder = (o, src) => { setViewOrder(o); setViewOrderSource(src); };
-
-  // =======================================================================
-  // 🔥 ESCUDOS DE PROTECCIÓN PARA ACCIONES (EDITAR, ABONAR, ANULAR, ELIMINAR)
-  // =======================================================================
 
   const handleEditOrderRequest = (o) => {
       const isContabilidadAllowed = user.role === 'Contabilidad' && o.status === 'CONTABILIDAD';
@@ -406,8 +411,6 @@ function App() {
 
   const handleArchiveOrder = async (order) => { await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id); setViewOrder(null); toast({ title: "Orden Archivada" }); };
 
-  // =======================================================================
-
   if (!user) return <><Login onLogin={handleLogin} /><Toaster /></>;
 
   const renderContent = () => {
@@ -421,6 +424,20 @@ function App() {
     if (currentView === 'configuracion') return <AnulationConfig />;
     if (currentView === 'vales') return <ValesCajaPanel user={user} />;
     if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
+    
+    // 🔥 NUEVA VISTA: PANEL DE NOTIFICACIONES 🔥
+    if (currentView === 'notificaciones') {
+        return (
+            <NotificationsPanel 
+                user={user} 
+                orders={orders} 
+                realtimeEvents={realtimeEvents} 
+                onClearEvent={handleClearEvent} 
+                onViewOrder={(o) => handleViewOrder(o, 'notifications')} 
+                onViewChange={handleViewChange}
+            />
+        );
+    }
 
     if (currentView.startsWith('ordenes-')) {
        let filtered = orders.filter(o => o.status !== 'ARCHIVADA');
@@ -516,8 +533,6 @@ function App() {
         onAdvanceWorkflow={handleAdvanceWorkflow} 
         onRegressWorkflow={handleRegressWorkflow}
         onArchiveOrder={handleArchiveOrder} 
-        
-        // 🔥 VALIDACIONES DE SEGURIDAD PASADAS AL MODAL 🔥
         onUpdateOrder={() => { handleEditOrderRequest(viewOrder); setViewOrder(null); }} 
         onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
         onAnulateOrder={handleAnulateOrderRequest} 

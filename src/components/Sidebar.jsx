@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package, ShieldCheck, BookOpen } from 'lucide-react';
+import { Home, Users, FileText, Briefcase, Settings, BarChart2, LogOut, ChevronRight, ChevronDown, UserCircle, Shield, Receipt, FileSpreadsheet, Package, ShieldCheck, BookOpen, Bell } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
 const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
@@ -42,6 +42,7 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
   
   const allMenuItems = [
     { id: 'inicio', label: 'Inicio', icon: Home }, 
+    { id: 'notificaciones', label: 'Notificaciones', icon: Bell }, // 🔥 NUEVA PESTAÑA AÑADIDA
     { id: 'clientes', label: 'Clientes', icon: Users, submenu: [
         { label: 'Lista de Clientes', id: 'clientes-lista' },
         { label: 'Nuevo Cliente', id: 'clientes-nuevo' }
@@ -50,7 +51,7 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
     { id: 'proformas', label: 'Cotizaciones', icon: FileSpreadsheet },
     { id: 'ordenes', label: 'Órdenes Producción', icon: FileText, submenu: [
         { label: 'Ver Todas', id: 'ordenes-todas' },
-        { label: 'Activas', id: 'ordenes-activas' }, // <-- NUEVA SUB-CATEGORÍA
+        { label: 'Activas', id: 'ordenes-activas' }, 
         { label: 'Nueva Orden', id: 'ordenes-nueva' },
         { label: 'Sin Factura', id: 'ordenes-sin-factura' },
         { label: 'Con Factura', id: 'ordenes-con-factura' },
@@ -96,10 +97,9 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
       if (user?.role === 'Administrador') return true;
       
       // 2. Vistas básicas permitidas para todos
-      if (id === 'salir' || id === 'inicio' || id === 'mi-perfil') return true;
+      if (id === 'salir' || id === 'inicio' || id === 'mi-perfil' || id === 'notificaciones') return true;
       
-      // 3. 🔥 REGLA ESPECIAL PARA 'ACTIVAS': 
-      // Si el rol tiene permiso para ver cualquier cosa de órdenes, se le permite ver Activas automáticamente
+      // 3. REGLA ESPECIAL PARA 'ACTIVAS': 
       if (id === 'ordenes-activas' && allowedViews.some(v => String(v).startsWith('ordenes'))) {
           return true;
       }
@@ -109,7 +109,7 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
   };
 
   const visibleItems = allMenuItems.map(item => {
-    if (item.id === 'salir' || item.id === 'inicio' || item.id === 'mi-perfil') return item;
+    if (item.id === 'salir' || item.id === 'inicio' || item.id === 'mi-perfil' || item.id === 'notificaciones') return item;
     if (user?.role === 'Administrador') return item; 
 
     if (item.submenu) {
