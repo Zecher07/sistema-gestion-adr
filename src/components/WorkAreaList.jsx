@@ -93,9 +93,11 @@ const WorkAreaList = ({
           return false;
       }
       
+      // 🔥 APLICADO FIX DE LECTURA DE RESPONSABLES PARA VENDEDORES 🔥
       if (user.role === 'Vendedor') {
-          if (order.vendedor !== user.name) return false; 
+          if (!(order.vendedor || '').includes(user.name)) return false; 
           if (listFilter === 'ventas') return order.status === 'VENTAS'; 
+          if (listFilter === 'produccion') return order.status === 'PRODUCCION'; // Pestaña nueva para vendedor
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR'; 
       }
 
@@ -155,6 +157,7 @@ const WorkAreaList = ({
     return { total, completed, inProcess, startedCount };
   };
 
+  // 🔥 APLICADO FIX EN CONTEOS GENERALES DE VENDEDOR 🔥
   const getOrderCounts = () => {
       let counts = { todas: 0, ventas: 0, produccion: 0, por_retirar: 0, por_finalizar: 0, creditos: 0, impagas: 0, retenciones: 0 };
       
@@ -175,8 +178,9 @@ const WorkAreaList = ({
               }
           }
           
-          if (user.role === 'Vendedor' && o.vendedor === user.name) {
+          if (user.role === 'Vendedor' && (o.vendedor || '').includes(user.name)) {
               if (o.status === 'VENTAS') counts.ventas++;
+              if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
           }
           
@@ -243,6 +247,11 @@ const WorkAreaList = ({
                     <button onClick={() => setListFilter('ventas')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'ventas' ? "bg-blue-600 text-white border-blue-700 shadow-blue-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                         <ShoppingCart className="h-5 w-5" /> EN VENTAS
                         <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'ventas' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.ventas}</span>
+                    </button>
+                    {/* 🔥 CAJITA DE PRODUCCIÓN AÑADIDA PARA VENDEDOR 🔥 */}
+                    <button onClick={() => setListFilter('produccion')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'produccion' ? "bg-amber-500 text-white border-amber-600 shadow-amber-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                        <Wrench className="h-5 w-5" /> EN PRODUCCIÓN
+                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'produccion' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.produccion}</span>
                     </button>
                     <button onClick={() => setListFilter('por_retirar')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'por_retirar' ? "bg-green-600 text-white border-green-700 shadow-green-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                         <PackageCheck className="h-5 w-5" /> POR RETIRAR
@@ -333,7 +342,6 @@ const WorkAreaList = ({
                                        <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
                                            {order.status}
                                        </span>
-                                       {/* Etiquetas visuales para impagos por vencimiento o retención */}
                                        {order.status === 'CONTABILIDAD' && accData.isVencido && (
                                            <span className="text-[9px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded shadow-sm">Crédito Vencido</span>
                                        )}
