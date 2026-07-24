@@ -1090,14 +1090,22 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 <div className="flex border-2 border-black text-xs bg-white mb-8" style={{ pageBreakInside: 'avoid' }}>
                     
                     <div className="flex-1 border-r-2 border-black p-4 flex flex-col justify-center gap-3">
+                        {/* 🔥 MUESTRA FORMA DE PAGO EN ANTICIPO 🔥 */}
                         <div className="flex justify-between items-center border-b border-dashed border-gray-400 pb-1">
-                            <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
+                            <div className="flex flex-col">
+                                <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
+                                <span className="text-[10px] text-slate-600 uppercase font-medium">PAGO: {order.formaPagoAnticipo || order.forma_pago_anticipo || 'Efectivo'}</span>
+                            </div>
                             <span className="font-bold text-sm text-slate-800">{formatCurrency(anticipoVal)}</span>
                         </div>
                         
+                        {/* 🔥 MUESTRA FORMA DE PAGO EN ABONOS 🔥 */}
                         {order.abonos && order.abonos.map((a, i) => (
                             <div key={i} className={`flex justify-between items-center border-b border-dashed pb-1 ${a.monto < 0 ? 'border-orange-300 text-orange-700' : 'border-red-300 text-red-700'}`}>
-                                <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? formatDateFull(a.fecha).split(' ')[0] : ''}):</span>
+                                <div className="flex flex-col">
+                                    <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? formatDateFull(a.fecha).split(' ')[0] : ''}):</span>
+                                    <span className="text-[10px] uppercase font-medium">PAGO: {a.metodoPago || a.metodo_pago || '-'}</span>
+                                </div>
                                 <span className="font-bold">{formatCurrency(a.monto)}</span>
                             </div>
                         ))}
