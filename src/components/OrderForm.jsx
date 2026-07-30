@@ -11,6 +11,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Input } from '@/components/ui/Text';
 import { Card, CardContent } from '@/components/ui/card';
 import { supabase } from '../supabaseClient';
+import { isUserInList, buildVendedorFields } from '@/utils/userMatch';
 import ClientForm from './ClientForm';
 import {
   AlertDialog,
@@ -178,6 +179,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [abonos, setAbonos] = useState([]);
   const hasAbonosExtras = abonos && abonos.length > 0; 
   
+  // 🔥 ESTADO DEL HISTORIAL DE CRÉDITOS INCUMPLIDOS 🔥
   const [historialCredito, setHistorialCredito] = useState([]);
 
   const [comprobantesData, setComprobantesData] = useState({ anticipo: [], saldo: [], abonos: {}, retencion: [], verificacion_anticipo: [], verificacion_abonos: {} });
@@ -208,13 +210,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [localAnticipo, setLocalAnticipo] = useState(''); 
 
   const [formData, setFormData] = useState({
-    orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
+    orderNumber: nextOrderNumber, vendedor: currentUser?.name || '', vendedor_ids: currentUser?.id ? [currentUser.id] : [], cliente: '', clienteId: '', tipoLetrero: '', tipoOrden: 'VENTA CON PRODUCCION (VPVC) (4 pasos)', fechaEntrega: '',
     productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
     descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
-    esMayorista: false, nroFactura: '',
-    preciosIncluyenIva: true // 🔥 NUEVO ESTADO: POR DEFECTO SÍ INCLUYEN IVA 🔥
+    esMayorista: false, nroFactura: ''
   });
 
   const [financials, setFinancials] = useState({ subtotal: 0, descuentoVal: 0, baseImponible: 0, iva: 0, total: 0, saldoPendiente: 0 });
@@ -265,15 +266,6 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           } else { finData = initialData.financials; }
       }
 
-      // 🔥 LECTURA DEL ESTADO DEL IVA INCLUIDO 🔥
-      let savedPreciosIncluyenIva = true;
-      if (finData.preciosIncluyenIva !== undefined) {
-          savedPreciosIncluyenIva = finData.preciosIncluyenIva;
-      } else if (initialData.id) {
-          // Órdenes legacy (viejas) no tenían IVA incluido en el precio unitario
-          savedPreciosIncluyenIva = false;
-      }
-
       const saldoDB = finData.saldo || initialData.saldo || 0;
       const isFull = saldoDB <= 0.01; 
       setPaymentMode(isFull ? 'full' : 'partial');
@@ -284,6 +276,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       const savedRetPercent = finData.retentionPercent || initialData.retentionPercent || 0;
       setLocalRetencionPercent(savedRetPercent > 0 ? savedRetPercent.toString() : '');
 
+      // 🔥 CARGAMOS EL HISTORIAL DE CRÉDITO EXISTENTE 🔥
       setHistorialCredito(finData.historialFechasCredito || []);
 
       const savedAnticipo = initialData.anticipo || finData.anticipo || 0;
@@ -335,8 +328,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         })),
         fechaEntrega: calculatedFechaEntrega,
         vendedor: initialData.vendedor || initialData.responsable_nombre || currentUser.name,
+        vendedor_ids: (initialData.vendedor_ids && initialData.vendedor_ids.length > 0) ? initialData.vendedor_ids : (currentUser?.id ? [currentUser.id] : []),
         aplicarIva: shouldApplyIva,
-        preciosIncluyenIva: savedPreciosIncluyenIva, // 🔥 CARGADO 🔥
         anticipo: savedAnticipo, formaPagoAnticipo: savedPaymentMethod, referenciaPago: savedReference, notaAnticipo: initialData.notaAnticipo || '', creditoVenceAnticipo: initialData.creditoVenceAnticipo || '',
         retencion: retentionVal, retentionPercent: savedRetPercent,
         formaPagoSaldo: finData.formaPagoSaldo || 'No aplica', creditoVenceSaldo: finData.creditoVenceSaldo || '', notaSaldo: finData.notaSaldo || '',
@@ -378,6 +371,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
   }, [initialData, nextOrderNumber, currentUser]);
 
+  // 🔥 VALIDADORES DE SEGURIDAD PARA BLOQUEAR EDICIÓN DE FECHAS DE CRÉDITO A NO ADMINS 🔥
   const isAnticipoDateLocked = isBottomReadOnly || hasAbonosExtras || (isEditMode && !isAdmin && !!(initialData?.creditoVenceAnticipo || initialData?.credito_vence_anticipo));
   
   let initialSaldoDate = '';
@@ -404,40 +398,19 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
   }, []);
 
-  // 🔥 NUEVA MATEMÁTICA CON OPCIÓN DE IVA INCLUIDO EN EL PRECIO 🔥
   useEffect(() => {
-    const subtotalProductos = formData.productos.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
+    const subtotal = formData.productos.reduce((sum, p) => sum + (Number(p.total) || 0), 0);
     const descuentoDirectoTotal = Number(formData.descuentoMonto) || 0;
     const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
-    const isIvaIncluded = formData.preciosIncluyenIva;
+    const descuentoBase = formData.aplicarIva ? (descuentoDirectoTotal / (1 + tasaIva)) : descuentoDirectoTotal;
+    
+    const baseImponible = Number(Math.max(0, subtotal - descuentoBase).toFixed(2));
+    const iva = Number((formData.aplicarIva ? baseImponible * tasaIva : 0).toFixed(2));
+    const total = Number((baseImponible + iva).toFixed(2));
 
-    let baseImponible = 0;
-    let iva = 0;
-    let total = 0;
-
-    if (formData.aplicarIva) {
-        if (isIvaIncluded) {
-            // El Total a pagar es directamente la suma de los productos menos el descuento
-            total = Math.max(0, subtotalProductos - descuentoDirectoTotal);
-            // El sistema despeja cuál fue la base imponible y el IVA
-            baseImponible = total / (1 + tasaIva);
-            iva = total - baseImponible;
-        } else {
-            // Funcionamiento clásico: Los precios son netos, el IVA se suma al final
-            baseImponible = Math.max(0, subtotalProductos - descuentoDirectoTotal);
-            iva = baseImponible * tasaIva;
-            total = baseImponible + iva;
-        }
-    } else {
-        baseImponible = Math.max(0, subtotalProductos - descuentoDirectoTotal);
-        iva = 0;
-        total = baseImponible;
-    }
-
-    // La retención SIEMPRE se aplica sobre la Base Imponible según la ley tributaria
     let retencionValor = 0;
     if (applyRetention && formData.retentionPercent > 0) {
-        retencionValor = baseImponible * (formData.retentionPercent / 100);
+        retencionValor = Number((baseImponible * (formData.retentionPercent / 100)).toFixed(2));
     } else if (applyRetention) {
         retencionValor = parseFloat(formData.retencion) || 0;
     }
@@ -450,28 +423,23 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
 
     let anticipoCalculado = parseFloat(formData.anticipo) || 0;
+    
     if (paymentMode === 'full' && !isEditMode) {
-        anticipoCalculado = total - retencionValor;
+        anticipoCalculado = Number((total - retencionValor).toFixed(2));
         if (Math.abs(parseFloat(localAnticipo || 0) - anticipoCalculado) > 0.01) { 
             setLocalAnticipo(anticipoCalculado > 0 ? anticipoCalculado.toFixed(2) : ''); 
         }
     }
 
     const abonosTotal = abonos.reduce((sum, a) => sum + (parseFloat(a.monto) || 0), 0);
+    
     const saldoRealBruto = total - anticipoCalculado - retencionValor - abonosTotal;
-    const saldoPendiente = saldoRealBruto;
+    const saldoPendiente = Number(saldoRealBruto.toFixed(2));
 
-    setFinancials({ 
-        subtotal: subtotalProductos, 
-        descuentoVal: descuentoDirectoTotal, 
-        baseImponible, 
-        iva, 
-        total, 
-        saldoPendiente 
-    });
+    setFinancials({ subtotal, descuentoVal: descuentoBase, baseImponible, iva, total, saldoPendiente });
     
     if (document.activeElement?.name !== 'discountPercentInput') {
-        const perc = subtotalProductos > 0 ? (descuentoDirectoTotal / subtotalProductos) * 100 : 0;
+        const perc = subtotal > 0 ? (descuentoBase / subtotal) * 100 : 0;
         setLocalDiscountPercent(perc > 0 ? perc.toFixed(2) : '');
     }
 
@@ -482,7 +450,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         return prev;
     });
 
-  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.preciosIncluyenIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos, formData.retencion, isEditMode]);
+  }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos, formData.retencion, isEditMode]);
 
   const totalAPagar = financials.total - formData.retencion;
   const porcentajeAnticipoUI = totalAPagar > 0 ? ((formData.anticipo / totalAPagar) * 100).toFixed(1) : '0.0';
@@ -705,12 +673,20 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     }
   };
 
-  const handleResponsableToggle = (sellerName) => {
+  // 🔧 REFACTOR: ahora togglea por el ID del vendedor (estable) y reconstruye
+  // tanto el string de nombres (para mostrar) como el arreglo de ids (para filtrar),
+  // usando validSellers como fuente de verdad de nombre<->id.
+  const handleResponsableToggle = (seller) => {
     setFormData(prev => {
-        let currentSellers = prev.vendedor ? prev.vendedor.split(',').map(s => s.trim()).filter(Boolean) : [];
-        if (currentSellers.includes(sellerName)) currentSellers = currentSellers.filter(s => s !== sellerName);
-        else currentSellers.push(sellerName);
-        return { ...prev, vendedor: currentSellers.join(', ') };
+        let currentIds = prev.vendedor_ids ? [...prev.vendedor_ids] : [];
+        if (currentIds.includes(seller.id)) currentIds = currentIds.filter(id => id !== seller.id);
+        else currentIds.push(seller.id);
+
+        const { vendedor, vendedor_ids } = buildVendedorFields(
+            currentIds,
+            validSellers.map(u => ({ id: u.id, full_name: u.name }))
+        );
+        return { ...prev, vendedor, vendedor_ids };
     });
   };
 
@@ -795,7 +771,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       let metodoFinal = abonoFormData.metodoPago;
       if (requiresComprobante(abonoFormData.metodoPago) && abonoFormData.referencia.trim()) metodoFinal = `${abonoFormData.metodoPago} - Ref: ${abonoFormData.referencia}`;
 
-      const nuevoAbono = { monto: montoNum, metodoPago: metodoFinal, fecha: `${abonoFormData.fecha}T12:00:00`, nota: abonoFormData.nota, cobrador: currentUser.name };
+      const nuevoAbono = { monto: montoNum, metodoPago: metodoFinal, fecha: `${abonoFormData.fecha}T12:00:00`, nota: abonoFormData.nota, cobrador: currentUser.name, cobrador_id: currentUser.id };
       const newAbonos = [...abonos, nuevoAbono]; setAbonos(newAbonos);
 
       if (abonoComprobantes.length > 0) {
@@ -830,7 +806,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
           metodoPago: 'Efectivo',
           fecha: `${getLocalDate()}T12:00:00`, 
           nota: 'Devolución automática de efectivo por ajuste de Retención tardía', 
-          cobrador: currentUser.name 
+          cobrador: currentUser.name,
+          cobrador_id: currentUser.id
       };
       
       setAbonos([...abonos, nuevoAbono]);
@@ -881,6 +858,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         if (montoUsandoCredito > creditoDisponible + 0.05) { toast({ title: "Límite de crédito excedido", description: `El cliente solo dispone de $${creditoDisponible.toFixed(2)}. Intentas aplicar $${montoUsandoCredito.toFixed(2)} a crédito.`, variant: "destructive" }); setLoading(false); return; }
     }
 
+    // 🔥 ACTUALIZANDO EL HISTORIAL DE FECHAS SI FUERON CAMBIADAS 🔥
     const newHistorial = [...historialCredito];
     const origVenceAnticipo = initialData?.credito_vence_anticipo || initialData?.creditoVenceAnticipo || '';
     if (isEditMode && origVenceAnticipo && formData.creditoVenceAnticipo && formData.creditoVenceAnticipo !== origVenceAnticipo) {
@@ -932,27 +910,27 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     try {
         const payload = {
             cliente_id: formData.clienteId, cliente_nombre: formData.cliente, tipo_trabajo: finalTitle, tipoOrden: formData.tipoOrden, fecha_entrega: formData.fechaEntrega || null,
-            vendedor: formData.vendedor, notas: formData.notas, prioridad: 'Normal', origenProformaInfo: formData.origenProformaInfo,
+            vendedor: formData.vendedor, vendedor_ids: formData.vendedor_ids || [], notas: formData.notas, prioridad: 'Normal', origenProformaInfo: formData.origenProformaInfo,
             productos: processedProducts, abonos: abonos, comprobantes: comprobantesData,
             financials: { 
-                ...financials, saldo: financials.saldoPendiente, descuentoMonto: formData.descuentoMonto, descuentoVal: formData.descuentoMonto, 
+                ...financials, saldo: financials.saldoPendiente, descuentoMonto: formData.descuentoMonto, descuentoVal: financials.descuentoVal, 
                 ivaPercentage: formData.ivaPercentage, retentionPercent: formData.retentionPercent, retencion: formData.retencion,
                 formaPagoSaldo: formData.formaPagoSaldo, creditoVenceSaldo: formData.creditoVenceSaldo, notaSaldo: formData.notaSaldo,
-                aplicarIva: formData.aplicarIva, preciosIncluyenIva: formData.preciosIncluyenIva, observaciones: formData.observaciones,
+                aplicarIva: formData.aplicarIva, observaciones: formData.observaciones,
                 nroFactura: formData.nroFactura,
-                historialFechasCredito: newHistorial
+                historialFechasCredito: newHistorial // 🔥 GUARDAMOS EL HISTORIAL 🔥
             },
             anticipo: formData.anticipo, retencion: formData.retencion, forma_pago_anticipo: finalPaymentString,
             nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
         };
 
-        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') { payload.status = 'VENTAS'; payload.created_at = new Date().toISOString(); payload.recibido_por_anticipo = currentUser.name; } 
+        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') { payload.status = 'VENTAS'; payload.created_at = new Date().toISOString(); payload.recibido_por_anticipo = currentUser.name; payload.recibido_por_anticipo_id = currentUser.id; } 
         else if (isAdmin && initialData.vendedor !== formData.vendedor) { toast({ title: "Orden Reasignada", description: `Vendedores actualizados.` }); }
 
         if (initialData?.id && initialData.status !== 'BORRADOR') { const { error } = await supabase.from('ordenes').update(payload).eq('id', initialData.id); if(error) throw error; } 
         else { const { error } = await supabase.from('ordenes').insert([payload]); if(error) throw error; }
 
-        setHistorialCredito(newHistorial);
+        setHistorialCredito(newHistorial); // Actualizamos la vista por si acaso
 
         toast({ title: "✅ Orden Guardada", description: `Total a Pagar: $${(financials.total - formData.retencion).toFixed(2)}` });
         if(onSuccess) onSuccess();
@@ -969,7 +947,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const canCancelOrder = useMemo(() => {
       if (!initialData || !initialData.id || initialData.status === 'ANULADA') return false;
       if (isAdmin) return true;
-      if (currentUser?.role === 'Vendedor') return (initialData.vendedor || '').includes(currentUser?.name) && initialData.status === 'VENTAS';
+      if (currentUser?.role === 'Vendedor') return isUserInList(initialData.vendedor_ids, initialData.vendedor, currentUser) && initialData.status === 'VENTAS';
       return false;
   }, [initialData, isAdmin, currentUser]);
 
@@ -1055,13 +1033,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                         <Button variant="ghost" size="sm" className="h-5 w-5 p-0" onClick={() => setIsSellerDropdownOpen(false)}><X className="h-4 w-4"/></Button>
                                     </div>
                                     {validSellers.map(u => {
-                                        const isAssigned = (formData.vendedor || '').includes(u.name);
+                                        const isAssigned = (formData.vendedor_ids || []).includes(u.id);
                                         return (
                                             <label key={u.id} className="flex items-center gap-2 p-1.5 hover:bg-blue-50 rounded cursor-pointer border border-transparent hover:border-blue-100 transition-colors">
                                                 <input 
                                                    type="checkbox" 
                                                    checked={isAssigned}
-                                                   onChange={() => handleResponsableToggle(u.name)}
+                                                   onChange={() => handleResponsableToggle(u)}
                                                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-500 h-4 w-4"
                                                 />
                                                 <span className="text-sm font-medium text-slate-700">{u.name}</span>
@@ -1327,13 +1305,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                       })}
                    </tbody>
 
-                   {/* 🔥 ESTRUCTURA FINANCIERA ACTUALIZADA (NUEVA OPCION DE IVA) 🔥 */}
                    <tfoot className="bg-slate-100 font-medium text-slate-700 border-t border-slate-300 text-xs">
-                      <tr>
-                          <td colSpan="4" className="text-right py-1 px-2">SubTotal (Bruto)</td>
-                          <td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td>
-                          <td></td>
-                      </tr>
+                      <tr><td colSpan="4" className="text-right py-1 px-2">SubTotal</td><td className="text-right py-1 px-2">$ {financials.subtotal.toFixed(2)}</td><td></td></tr>
                       <tr>
                          <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2">
                             <span className="text-slate-500 font-bold" title="Este valor se restará directamente del Total Final">Ajuste al Total ($)</span>
@@ -1359,9 +1332,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                             setLocalDiscountPercent(e.target.value);
                                             const perc = parseFloat(e.target.value) || 0;
                                             const subtotal = financials.subtotal || 0;
+                                            const tasaIva = formData.aplicarIva ? (formData.ivaPercentage / 100) : 0;
                                             const baseDesc = subtotal * (perc / 100);
-                                            setLocalDiscountVal(baseDesc > 0 ? baseDesc.toFixed(2) : '');
-                                            setFormData(prev => ({...prev, descuentoMonto: baseDesc}));
+                                            const finalDesc = formData.aplicarIva ? baseDesc * (1 + tasaIva) : baseDesc;
+                                            setLocalDiscountVal(finalDesc > 0 ? finalDesc.toFixed(2) : '');
+                                            setFormData(prev => ({...prev, descuentoMonto: finalDesc}));
                                         }} 
                                     />
                                 </>
@@ -1369,35 +1344,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                          </td>
                          <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuentoVal.toFixed(2)}</td><td></td>
                       </tr>
-
-                      {/* FILA DE BASE IMPONIBLE */}
                       <tr>
-                         <td colSpan="4" className="text-right py-1 px-2 font-bold text-slate-500">Base Imponible</td>
-                         <td className="text-right py-1 px-2 font-bold text-slate-800">$ {financials.baseImponible.toFixed(2)}</td>
-                         <td></td>
-                      </tr>
-
-                      <tr>
-                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-3 whitespace-nowrap">
-                            {/* NUEVO CHECKBOX: PRECIOS INCLUYEN IVA */}
-                            {formData.aplicarIva && (
-                                <div className="flex items-center gap-1 border-r border-slate-300 pr-3">
-                                    <Checkbox 
-                                        id="iva-incluido-check" 
-                                        checked={formData.preciosIncluyenIva} 
-                                        onCheckedChange={(c) => setFormData({...formData, preciosIncluyenIva: c})} 
-                                        disabled={isBottomReadOnly}
-                                    />
-                                    <label htmlFor="iva-incluido-check" className={`cursor-pointer text-blue-700 font-bold ${isBottomReadOnly ? 'opacity-50' : ''}`}>Precios incluyen IVA</label>
-                                </div>
-                            )}
-
-                            <div className="flex items-center gap-1">
-                                <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isBottomReadOnly}/>
-                                <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>
-                                    IVA {isAdmin && !isBottomReadOnly ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}
-                                </label>
-                            </div>
+                         <td colSpan="4" className="text-right py-1 px-2 flex items-center justify-end gap-2 whitespace-nowrap">
+                            <Checkbox id="iva-check" checked={formData.aplicarIva} onCheckedChange={(c) => setFormData({...formData, aplicarIva: c})} disabled={isBottomReadOnly}/>
+                            <label htmlFor="iva-check" className={`cursor-pointer flex items-center gap-1 ${isBottomReadOnly ? 'opacity-50' : ''}`}>IVA {isAdmin && !isBottomReadOnly ? (<span className="flex items-center">(<input type="number" className="w-8 text-center bg-transparent border-b border-slate-400 text-xs focus:outline-none focus:border-blue-600" value={formData.ivaPercentage} onChange={(e) => setFormData({...formData, ivaPercentage: parseFloat(e.target.value) || 0})} />%)</span>) : (<span>({formData.ivaPercentage}%)</span>)}</label>
                          </td>
                          <td className="text-right py-1 px-2">$ {financials.iva.toFixed(2)}</td><td></td>
                       </tr>
@@ -2045,6 +1995,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
         </AlertDialogContent>
       </AlertDialog>
 
+      {/* 🔥 MODAL PARA VISUALIZAR LA IMAGEN EN GRANDE 🔥 */}
       <AnimatePresence>
         {previewImage && (
           <motion.div 

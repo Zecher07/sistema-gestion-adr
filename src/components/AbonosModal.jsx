@@ -8,15 +8,9 @@ import { useDropzone } from 'react-dropzone';
 // 🔥 Métodos de pago (con Tarjeta y Cheque) 🔥
 const PAYMENT_METHODS = ['Efectivo', 'Transferencia', 'Depósito', 'Tarjeta', 'Cheque'];
 
-// 🔧 FIX EGRESS: Antes esta función devolvía un dataURL base64 gigante que se guardaba
-// directamente en la columna 'comprobantes'/'abonos' de la tabla 'ordenes'. Eso hacía que
-// CADA vez que alguien traía la orden (o, peor, con el polling que traía TODAS las órdenes),
-// se re-descargaran todas esas imágenes en base64 una y otra vez, disparando el egress.
-//
-// Ahora comprimimos la imagen a un Blob JPEG y la subimos a Supabase Storage. En la base de
-// datos solo guardamos la URL pública (unos bytes), no la imagen completa.
-const compressImageToBlob = async (file) => {
-    return new Promise((resolve, reject) => {
+// Función para comprimir imágenes antes de subirlas a la base de datos
+const compressImage = async (file) => {
+    return new Promise((resolve) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
         reader.onload = (event) => {
@@ -24,7 +18,7 @@ const compressImageToBlob = async (file) => {
             img.src = event.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 1024;
+                const MAX_WIDTH = 1024; 
                 let width = img.width;
                 let height = img.height;
                 if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
@@ -32,41 +26,11 @@ const compressImageToBlob = async (file) => {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                canvas.toBlob(
-                    (blob) => {
-                        if (!blob) { reject(new Error('No se pudo comprimir la imagen')); return; }
-                        resolve({ name: file.name, blob });
-                    },
-                    'image/jpeg',
-                    0.7
-                );
+                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                resolve({ name: file.name, url: dataUrl });
             };
-            img.onerror = reject;
         };
-        reader.onerror = reject;
     });
-};
-
-// Sube el blob comprimido al bucket 'comprobantes' y devuelve { name, url } con la URL pública.
-// Requiere que exista un bucket público llamado 'comprobantes' en Supabase Storage
-// (Dashboard → Storage → New bucket → nombre: comprobantes → Public bucket: ON).
-const uploadComprobante = async (orderId, blobData) => {
-    const fileExt = 'jpg';
-    const fileName = `${orderId}/${Date.now()}-${Math.random().toString(36).slice(2)}.${fileExt}`;
-
-    const { error: uploadError } = await supabase
-        .storage
-        .from('comprobantes')
-        .upload(fileName, blobData.blob, { contentType: 'image/jpeg', upsert: false });
-
-    if (uploadError) throw uploadError;
-
-    const { data: publicUrlData } = supabase
-        .storage
-        .from('comprobantes')
-        .getPublicUrl(fileName);
-
-    return { name: blobData.name, url: publicUrlData.publicUrl };
 };
 
 const AbonosModal = ({ order, user, onClose, onSuccess }) => {
@@ -105,10 +69,8 @@ const AbonosModal = ({ order, user, onClose, onSuccess }) => {
       for (const file of acceptedFiles) {
           if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
           try {
-              const compressed = await compressImageToBlob(file);
-              // previewUrl es solo para mostrar la miniatura en este navegador (no se sube a la BD)
-              const previewUrl = URL.createObjectURL(compressed.blob);
-              newImages.push({ ...compressed, previewUrl });
+              const compressed = await compressImage(file);
+              newImages.push(compressed);
           } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
       }
       setComprobantesFiles(prev => [...prev, ...newImages]);
@@ -148,7 +110,8 @@ const AbonosModal = ({ order, user, onClose, onSuccess }) => {
             metodoPago: metodoFinal,
             fecha: `${formData.fecha}T12:00:00`,
             nota: formData.nota,
-            cobrador: user.name
+            cobrador: user.name,
+            cobrador_id: user.id, // 🔧 REFACTOR: id estable para reportes, además del nombre para mostrar
         };
 
         // 1. Obtenemos la orden FRESCA de la base de datos para no borrar otros comprobantes
@@ -165,13 +128,9 @@ const AbonosModal = ({ order, user, onClose, onSuccess }) => {
         }
         if (!currentComprobantes.abonos) currentComprobantes.abonos = {};
 
-        // 3. Si subieron la foto, la subimos a Supabase Storage y guardamos solo las URLs
-        //    (no el blob/base64 completo) vinculadas al índice de este nuevo abono.
+        // 3. Si subieron la foto, la guardamos vinculada al índice de este nuevo abono
         if (comprobantesFiles.length > 0) {
-            const comprobantesSubidos = await Promise.all(
-                comprobantesFiles.map(img => uploadComprobante(order.id, img))
-            );
-            currentComprobantes.abonos[abonosActualizados.length - 1] = comprobantesSubidos;
+            currentComprobantes.abonos[abonosActualizados.length - 1] = comprobantesFiles;
         }
 
         // 4. Subimos todo a la base de datos
@@ -252,7 +211,7 @@ const AbonosModal = ({ order, user, onClose, onSuccess }) => {
                     <div className="border border-slate-300 p-2 rounded-md bg-slate-50 flex flex-wrap gap-2 items-center">
                         {comprobantesFiles.map((img, i) => (
                             <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm">
-                                <img src={img.previewUrl} className="w-full h-full object-cover" alt="Comprobante" />
+                                <img src={img.url} className="w-full h-full object-cover" alt="Comprobante" />
                                 <button type="button" onClick={() => setComprobantesFiles(prev => prev.filter((_, idx) => idx !== i))} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                     <X className="h-3 w-3" />
                                 </button>

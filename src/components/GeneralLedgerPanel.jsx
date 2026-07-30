@@ -72,6 +72,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           tipo: 'VENTA',
           cliente, titulo, orden: numOrden,
           vendedor: o.recibido_por_anticipo || o.vendedor || 'Sistema',
+          vendedorId: o.recibido_por_anticipo_id || (o.vendedor_ids && o.vendedor_ids[0]) || null,
           metodo: o.formaPagoAnticipo || o.forma_pago_anticipo || 'Efectivo',
           ingreso: Number(o.anticipo), egreso: 0
         });
@@ -85,6 +86,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
             tipo: 'ABONO',
             cliente, titulo, orden: numOrden,
             vendedor: abono.cobrador || 'Sistema',
+            vendedorId: abono.cobrador_id || null,
             metodo: abono.metodoPago || 'Efectivo',
             ingreso: Number(abono.monto), egreso: 0
           });
@@ -104,6 +106,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           tipo: 'RETIRO',
           cliente, titulo, orden: numOrden,
           vendedor: o.recibido_por_saldo || o.vendedor || 'Sistema',
+          vendedorId: o.recibido_por_saldo_id || (o.vendedor_ids && o.vendedor_ids[0]) || null,
           metodo: o.formaPagoSaldo || 'Efectivo',
           ingreso: saldoFinalReal, egreso: 0
         });
@@ -116,6 +119,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           tipo: 'ANULACIÓN',
           cliente, titulo, orden: numOrden,
           vendedor: o.recibido_por_anticipo || o.vendedor || 'Sistema',
+          vendedorId: o.recibido_por_anticipo_id || (o.vendedor_ids && o.vendedor_ids[0]) || null,
           metodo: o.formaPagoAnticipo || 'Efectivo',
           ingreso: 0, egreso: Number(o.anticipo)
         });
@@ -129,6 +133,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
         tipo: 'VALE DE CAJA',
         cliente: 'USO INTERNO', titulo: vale.concepto, orden: `VC-${String(vale.id).padStart(5, '0')}`,
         vendedor: vale.vendedor || 'Sistema',
+        vendedorId: vale.vendedor_id || null,
         metodo: 'Efectivo', 
         ingreso: 0, egreso: Number(vale.monto)
       });
@@ -150,11 +155,12 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       const entregado = Number(c.amount_to_accounting || 0);
 
       // Calculamos cuánto sumó o restó EN EFECTIVO este vendedor durante el día
+      // 🔧 REFACTOR: agrupamos por id (c.user_id) primero, que es inmune a cambios de
+      // nombre. Solo caemos al nombre normalizado para transacciones viejas sin vendedorId.
       const normalize = (s) => (s || '').toLowerCase().trim();
       const txsVendedor = transactions.filter(tx => 
-          normalize(tx.vendedor) === normalize(vendedorName) && 
-          tx.metodo.toLowerCase().includes('efectivo')
-      );
+          tx.vendedorId ? tx.vendedorId === c.user_id : normalize(tx.vendedor) === normalize(vendedorName)
+      ).filter(tx => tx.metodo.toLowerCase().includes('efectivo'));
 
       let ingresosEfectivo = 0;
       let egresosEfectivo = 0;

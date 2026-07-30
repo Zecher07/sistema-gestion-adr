@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
 import { Card, CardContent } from '@/components/ui/card';
+import { isUserInList } from '@/utils/userMatch';
 
 // 🔥 BÚSQUEDA INTELIGENTE DE NOMBRES 🔥
 const normalizeName = (name) => {
@@ -12,7 +13,11 @@ const normalizeName = (name) => {
     return String(name).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
 };
 
-const isUserMatch = (name1, name2) => {
+// 🔧 REFACTOR: ahora acepta los ids opcionales (idA, idB). Si AMBOS existen, compara por
+// id (inmune a que alguien cambie su nombre completo). Si falta alguno, cae al matching
+// difuso de nombres de siempre (para filas viejas creadas antes de la migración).
+const isUserMatch = (name1, name2, idA, idB) => {
+    if (idA && idB) return idA === idB;
     const n1 = normalizeName(name1);
     const n2 = normalizeName(name2);
     if (!n1 || !n2) return false;
@@ -105,7 +110,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
           const fechaValeLimpia = v.fecha ? v.fecha.split('T')[0] : "";
           const coincideFecha = fechaValeLimpia === date;
           const estaAprobado = v.status === 'APROBADO'; 
-          return coincideFecha && isUserMatch(v.vendedor, userName) && estaAprobado;
+          return coincideFecha && isUserMatch(v.vendedor, userName, v.vendedor_id, userId) && estaAprobado;
       });
       setValesDelDia(valesFiltrados);
 
@@ -125,8 +130,11 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       if (lastReport) { baseCash = Number(lastReport.final_balance); lastReportDateStr = lastReport.date; foundPrevious = true; }
 
       const shortName = (userName || '').substring(0, 4);
+      // 🔧 REFACTOR: agregamos condiciones por ID (recibido_por_*_id, vendedor_ids) para
+      // que la orden se encuentre aunque el nombre del usuario haya cambiado desde que
+      // se creó/cobró. El filtro por nombre parcial se deja como respaldo para filas viejas.
       const { data: userOrders } = await supabase.from('ordenes').select('*')
-          .or(`recibido_por_anticipo.ilike.%${shortName}%,recibido_por_saldo.ilike.%${shortName}%,vendedor.ilike.%${shortName}%`) 
+          .or(`recibido_por_anticipo.ilike.%${shortName}%,recibido_por_saldo.ilike.%${shortName}%,vendedor.ilike.%${shortName}%,recibido_por_anticipo_id.eq.${userId},recibido_por_saldo_id.eq.${userId},vendedor_ids.cs.{${userId}}`) 
           .order('created_at', { ascending: false }).limit(1000);
 
       let floatingSum = 0; let floatingCount = 0;
@@ -139,7 +147,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
               const isAfterLastReport = createdDateStr > lastReportDateStr;
               const isBeforeToday = createdDateStr < date;
-              const recibioAnticipo = isUserMatch(o.recibido_por_anticipo, userName) || (!o.recibido_por_anticipo && isUserMatch(o.vendedor, userName));
+              const recibioAnticipo = isUserMatch(o.recibido_por_anticipo, userName, o.recibido_por_anticipo_id, userId)
+                  || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: userId, name: userName }));
               
               const formaAnticipo = formatPaymentMethod(o.formaPagoAnticipo || o.forma_pago_anticipo);
               if (isAfterLastReport && isBeforeToday && recibioAnticipo && formaAnticipo === 'EFECTIVO') {
@@ -152,7 +161,8 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
               // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
               const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
               
-              const recibioSaldo = isUserMatch(o.recibido_por_saldo, userName) || (!o.recibido_por_saldo && isUserMatch(o.vendedor, userName));
+              const recibioSaldo = isUserMatch(o.recibido_por_saldo, userName, o.recibido_por_saldo_id, userId)
+                  || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: userId, name: userName }));
               const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
               
               const formaSaldo = formatPaymentMethod(o.formaPagoSaldo || o.forma_pago_saldo);
@@ -165,7 +175,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       let floatingValesSum = 0;
       const valesFlotantes = (todosLosValesDB || []).filter(v => {
           const fechaVale = v.fecha ? v.fecha.split('T')[0] : "";
-          return isUserMatch(v.vendedor, userName) && v.status === 'APROBADO' && fechaVale > lastReportDateStr && fechaVale < date;
+          return isUserMatch(v.vendedor, userName, v.vendedor_id, userId) && v.status === 'APROBADO' && fechaVale > lastReportDateStr && fechaVale < date;
       });
       floatingValesSum = valesFlotantes.reduce((sum, v) => sum + Number(v.monto), 0);
 
@@ -199,14 +209,16 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
         const { data } = await supabase.from('daily_closings').select('date').eq('user_id', targetUserId).gte('date', firstDay).lte('date', lastDay);
         if (data) data.forEach(item => activityDates.add(item.date));
         
-        const { data: vales } = await supabase.from('vales_caja').select('fecha, vendedor, status').gte('fecha', firstDay).lte('fecha', lastDay);
+        const { data: vales } = await supabase.from('vales_caja').select('fecha, vendedor, vendedor_id, status').gte('fecha', firstDay).lte('fecha', lastDay);
         if (vales) {
-            vales.forEach(v => { if (isUserMatch(v.vendedor, targetUserName) && v.status === 'APROBADO') { activityDates.add(v.fecha); } });
+            vales.forEach(v => { if (isUserMatch(v.vendedor, targetUserName, v.vendedor_id, targetUserId) && v.status === 'APROBADO') { activityDates.add(v.fecha); } });
         }
     } catch (e) {}
 
     orders.forEach(o => {
-        const tocoDinero = isUserMatch(o.vendedor, targetUserName) || isUserMatch(o.recibido_por_anticipo, targetUserName) || isUserMatch(o.recibido_por_saldo, targetUserName);
+        const tocoDinero = isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName })
+            || isUserMatch(o.recibido_por_anticipo, targetUserName, o.recibido_por_anticipo_id, targetUserId)
+            || isUserMatch(o.recibido_por_saldo, targetUserName, o.recibido_por_saldo_id, targetUserId);
         if (tocoDinero) { const dateStr = toLocalDateStr(o.created_at || o.createdAt); if (dateStr >= firstDay && dateStr <= lastDay) activityDates.add(dateStr); }
     });
     setDaysWithReport(activityDates);
@@ -235,13 +247,18 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
 
   const automaticTransactions = useMemo(() => {
     const txs = [];
-    const relevantOrders = orders.filter(o => isUserMatch(o.vendedor, targetUserName) || isUserMatch(o.recibido_por_anticipo, targetUserName) || isUserMatch(o.recibido_por_saldo, targetUserName));
+    const relevantOrders = orders.filter(o =>
+        isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName })
+        || isUserMatch(o.recibido_por_anticipo, targetUserName, o.recibido_por_anticipo_id, targetUserId)
+        || isUserMatch(o.recibido_por_saldo, targetUserName, o.recibido_por_saldo_id, targetUserId)
+    );
 
     relevantOrders.forEach(o => {
       const creationDate = toLocalDateStr(o.createdAt || o.created_at);
       if (creationDate === selectedDate) {
-          const quienCobro = o.recibido_por_anticipo || o.vendedor;
-          if (isUserMatch(quienCobro, targetUserName) && Number(o.anticipo) > 0) {
+          const cobroAnticipo = isUserMatch(o.recibido_por_anticipo, targetUserName, o.recibido_por_anticipo_id, targetUserId)
+              || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName }));
+          if (cobroAnticipo && Number(o.anticipo) > 0) {
               const numOrden = o.order_number || o.orderNumber || o.id;
               txs.push({
                 id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`, orderNumber: numOrden, income: Number(o.anticipo), expense: 0, balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' 
@@ -251,7 +268,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       
       (o.abonos || []).forEach(abono => {
           const abonoDateStr = toLocalDateStr(abono.fecha);
-          if (abonoDateStr === selectedDate && isUserMatch(abono.cobrador, targetUserName)) {
+          if (abonoDateStr === selectedDate && isUserMatch(abono.cobrador, targetUserName, abono.cobrador_id, targetUserId)) {
                const numOrden = o.order_number || o.orderNumber || o.id;
                txs.push({
                   id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`, orderNumber: numOrden, income: Number(abono.monto), expense: 0, balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: abono.metodoPago || abono.metodo_pago || abono.forma_pago || abono.formaPago || 'EFECTIVO' 
@@ -272,8 +289,9 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
       const saldoFinalReal = saldoCobrado - totalAbonado;
 
       if (paymentDate === selectedDate && isRelevantStatus && saldoFinalReal > 0) {
-          const quienCobroSaldo = o.recibido_por_saldo || o.vendedor;
-          if (isUserMatch(quienCobroSaldo, targetUserName)) {
+          const cobroSaldo = isUserMatch(o.recibido_por_saldo, targetUserName, o.recibido_por_saldo_id, targetUserId)
+              || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName }));
+          if (cobroSaldo) {
               const numOrden = o.order_number || o.orderNumber || o.id;
               txs.push({ id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`, orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' });
           }
@@ -283,8 +301,9 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
     relevantOrders.forEach(o => {
         const updatedDate = toLocalDateStr(o.updatedAt || o.updated_at);
         if (o.status === 'ANULADA' && updatedDate === selectedDate) {
-            const quienCobroOriginalmente = o.recibido_por_anticipo || o.vendedor;
-            if (isUserMatch(quienCobroOriginalmente, targetUserName) && Number(o.anticipo) > 0) {
+            const cobroOriginal = isUserMatch(o.recibido_por_anticipo, targetUserName, o.recibido_por_anticipo_id, targetUserId)
+                || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName }));
+            if (cobroOriginal && Number(o.anticipo) > 0) {
                 const numOrden = o.order_number || o.orderNumber || o.id;
                 txs.push({ id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Anulación #${numOrden}`, orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' });
             }
