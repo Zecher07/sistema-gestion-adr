@@ -1,5 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
+import { isUserInList } from '@/utils/userMatch';
 import { Menu, Settings, X } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
@@ -97,7 +98,9 @@ function App() {
           setStaffUsers(profilesData.map(p => ({ id: p.id, name: p.full_name, role: p.role })));
       }
 
-      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, abonos, motivoAnulacion';
+      // 🔧 REFACTOR: agregamos vendedor_ids / recibido_por_*_id para que el filtrado
+      // de "mis órdenes" funcione por ID en vez de por nombre (ver src/utils/userMatch.js)
+      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion';
       
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
       const { data: ordenesData } = await ordersQuery;
@@ -154,12 +157,7 @@ function App() {
   useEffect(() => {
     if (!user) return;
 
-    // 🔧 FIX EGRESS: se eliminó el setInterval de 5s que recargaba TODA la base de datos
-    // (clientes + profiles + ordenes + proformas) cada 5 segundos por cada usuario conectado.
-    // Ya no hace falta: Realtime (más abajo) actualiza el estado local al instante cuando
-    // hay un cambio real, y cada 5 minutos se hace un refresco de respaldo por si algo se
-    // perdiera (ej. reconexión de red).
-    const intervalId = setInterval(() => { fetchAllData(user); }, 5 * 60 * 1000); // cada 5 minutos, no cada 5s
+    const intervalId = setInterval(() => { fetchAllData(user); }, 5000); 
 
     const channel = supabase
       .channel('realtime_ordenes_global')
@@ -169,8 +167,8 @@ function App() {
 
         if (eventType === 'UPDATE') {
             const numOrden = newRecord.order_number || newRecord.id;
-            const isMineNow = newRecord.vendedor?.includes(user.name);
-            const wasMine = oldRecord.vendedor?.includes(user.name);
+            const isMineNow = isUserInList(newRecord?.vendedor_ids, newRecord?.vendedor, user);
+            const wasMine = isUserInList(oldRecord?.vendedor_ids, oldRecord?.vendedor, user);
 
             if (isMineNow && !wasMine) {
                 const notif = {
@@ -188,7 +186,7 @@ function App() {
 
             if (newRecord.status !== oldRecord.status) {
                 let relevant = false;
-                if (newRecord.vendedor?.includes(user.name)) relevant = true;
+                if (isUserInList(newRecord?.vendedor_ids, newRecord?.vendedor, user)) relevant = true;
                 if (user.role === 'Producción' && newRecord.status === 'PRODUCCION') relevant = true;
                 if (user.role === 'Contabilidad' && newRecord.status === 'CONTABILIDAD') relevant = true;
 
@@ -219,12 +217,7 @@ function App() {
             return prevOrders;
         });
 
-        // 🔧 FIX EGRESS: se eliminó el fetchAllData() completo que se disparaba aquí
-        // 1 segundo después de CADA cambio en 'ordenes'. El estado ya se actualiza
-        // arriba con setOrders usando el payload que Realtime ya trae (newRecord/oldRecord),
-        // así que no hace falta volver a descargar toda la tabla.
-        // Si en el futuro necesitas datos derivados (ej. el cruce con 'clientes' para
-        // ruc/telefono), hazlo solo sobre el registro afectado, no sobre toda la tabla.
+        setTimeout(() => fetchAllData(user), 1000);
       })
       .subscribe();
 
@@ -304,7 +297,7 @@ function App() {
   const handleEditOrderRequest = (o) => {
       const isContabilidadAllowed = user.role === 'Contabilidad' && o.status === 'CONTABILIDAD';
 
-      if (user.role !== 'Administrador' && !isContabilidadAllowed && !o.vendedor?.includes(user.name)) {
+      if (user.role !== 'Administrador' && !isContabilidadAllowed && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "Solo puedes editar las órdenes donde estés asignado.", variant: "destructive" });
           return;
       }
@@ -312,7 +305,7 @@ function App() {
   };
 
   const handleAbonoOrderRequest = (o) => {
-      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !o.vendedor?.includes(user.name)) {
+      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "Solo puedes registrar abonos en tus propias órdenes.", variant: "destructive" });
           return;
       }
@@ -320,7 +313,7 @@ function App() {
   };
 
   const handlePaymentOrderRequest = (o) => {
-      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !o.vendedor?.includes(user.name)) {
+      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "No tienes permisos para cobrar en esta orden.", variant: "destructive" });
           return;
       }
@@ -329,7 +322,7 @@ function App() {
 
   const handleDeleteOrderRequest = async (id) => {
       const orderToDelete = orders.find(o => o.id === id);
-      if (user.role !== 'Administrador' && !orderToDelete?.vendedor?.includes(user.name)) {
+      if (user.role !== 'Administrador' && !isUserInList(orderToDelete?.vendedor_ids, orderToDelete?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "No puedes eliminar órdenes de otros vendedores.", variant: "destructive" });
           return;
       }
@@ -338,7 +331,7 @@ function App() {
 
   const handleAnulateOrderRequest = async (orderId) => { 
       const orderToAnulate = orders.find(o => o.id === orderId) || viewOrder;
-      if (user.role !== 'Administrador' && !orderToAnulate?.vendedor?.includes(user.name)) {
+      if (user.role !== 'Administrador' && !isUserInList(orderToAnulate?.vendedor_ids, orderToAnulate?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "No puedes anular órdenes de otros vendedores.", variant: "destructive" });
           return;
       }
@@ -353,7 +346,7 @@ function App() {
   };
 
   const handleAdvanceWorkflow = async (order) => {
-    if (user.role !== 'Administrador' && user.role !== 'Producción' && user.role !== 'Contabilidad' && !order.vendedor?.includes(user.name)) {
+    if (user.role !== 'Administrador' && user.role !== 'Producción' && user.role !== 'Contabilidad' && !isUserInList(order?.vendedor_ids, order?.vendedor, user)) {
         toast({ title: "Acceso Denegado", description: "No tienes permisos para avanzar esta orden.", variant: "destructive" });
         return;
     }
@@ -536,11 +529,11 @@ function App() {
         onUpdateOrder={() => { handleEditOrderRequest(viewOrder); setViewOrder(null); }} 
         onGenerateInvoice={(o) => { setInitialInvoiceOrder(o); setViewOrder(null); setShowInvoiceForm(true); }} 
         onAnulateOrder={handleAnulateOrderRequest} 
-        canAnulate={user.role === 'Administrador' || (canUserAnulate && viewOrder?.vendedor?.includes(user.name))} 
+        canAnulate={user.role === 'Administrador' || (canUserAnulate && isUserInList(viewOrder?.vendedor_ids, viewOrder?.vendedor, user))} 
         canEdit={
           user.role === 'Administrador' || 
           (user.role === 'Contabilidad' && viewOrder?.status === 'CONTABILIDAD') || 
-          (canUserEdit && viewOrder?.vendedor?.includes(user.name))
+          (canUserEdit && isUserInList(viewOrder?.vendedor_ids, viewOrder?.vendedor, user))
         } 
         onAbonoOrder={handleAbonoOrderRequest} 
       />
