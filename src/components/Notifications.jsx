@@ -3,6 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { Bell, ExternalLink, X, UserPlus, FileText, Info, Receipt } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { supabase } from '../supabaseClient'; // 🔥 IMPORTAMOS SUPABASE PARA BUSCAR VALES PENDIENTES
+import { isUserInList } from '@/utils/userMatch';
 
 const Notifications = ({ 
   user, 
@@ -65,7 +66,7 @@ const Notifications = ({
       if (user.role === 'Administrador') return order.status === 'FINALIZADA';
       
       if (user.role === 'Vendedor') {
-        const isMyOrder = order.vendedor === user.name;
+        const isMyOrder = isUserInList(order.vendedor_ids, order.vendedor, user);
         const isRelevantStatus = order.status === 'VENTAS' || order.status === 'VENTAS POR RETIRAR';
         return isMyOrder && isRelevantStatus;
       }

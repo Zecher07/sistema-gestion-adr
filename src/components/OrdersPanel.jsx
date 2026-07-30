@@ -10,6 +10,7 @@ import { Button } from '@/components/ui/button';
 import StatusBadge from '@/components/StatusBadge';
 import { useToast } from '@/components/ui/use-toast';
 import { supabase } from '../supabaseClient';
+import { isUserInList } from '@/utils/userMatch';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -105,7 +106,7 @@ const OrdersPanel = ({
   const canModify = (order) => {
       if (isAdmin) return true;
       if (user?.role === 'Contabilidad' && order.status === 'CONTABILIDAD') return true;
-      return (order.vendedor || '').includes(user?.name);
+      return isUserInList(order.vendedor_ids, order.vendedor, user);
   };
 
   // 🔥 VALIDACIÓN DE BORRADO: Si está anulada o archivada, NO se puede anular/borrar
@@ -113,7 +114,7 @@ const OrdersPanel = ({
       if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return false;
       if (isAdmin) return true;
       if (user?.role === 'Vendedor') {
-          return (order.vendedor || '').includes(user?.name) && order.status === 'VENTAS';
+          return isUserInList(order.vendedor_ids, order.vendedor, user) && order.status === 'VENTAS';
       }
       return false;
   };

@@ -2,6 +2,7 @@ import React, { useState, useEffect } from 'react';
 import { Bell, UserPlus, Info, Receipt, FileText, ExternalLink, X, CheckCircle2, ArrowRight, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '../supabaseClient';
+import { isUserInList } from '@/utils/userMatch';
 
 const NotificationsPanel = ({ 
   user, 
@@ -52,7 +53,7 @@ const NotificationsPanel = ({
       if (user.role === 'Administrador') return order.status === 'FINALIZADA';
       
       if (user.role === 'Vendedor') {
-        const isMyOrder = order.vendedor === user.name;
+        const isMyOrder = isUserInList(order.vendedor_ids, order.vendedor, user);
         const isRelevantStatus = order.status === 'VENTAS' || order.status === 'VENTAS POR RETIRAR';
         return isMyOrder && isRelevantStatus;
       }

@@ -1,5 +1,6 @@
 import React from 'react';
 import { motion } from 'framer-motion';
+import { isUserInList } from '@/utils/userMatch';
 import { 
   ShoppingCart, 
   Settings, 
@@ -68,7 +69,7 @@ const Stats = ({ orders, user }) => {
       // Admin y Contabilidad ven el global de la empresa
       if (isAdmin || user?.role === 'Contabilidad') return true;
       // Los vendedores solo ven las órdenes donde estén asignados
-      return (o.vendedor || '').includes(user?.name);
+      return isUserInList(o.vendedor_ids, o.vendedor, user);
   });
 
   // Función para obtener el desglose por vendedor (Solo para Admin)

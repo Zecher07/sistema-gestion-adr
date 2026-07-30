@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { isUserMatch } from '@/utils/userMatch';
 
 const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) => {
   const { toast } = useToast();
@@ -139,7 +140,11 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
 
             if (createdDateStr === selectedDate) {
                 const cobradorAnt = o.recibido_por_anticipo || o.vendedor;
-                if (cobradorAnt?.toLowerCase().trim() === sellerName?.toLowerCase().trim()) {
+                const cobradorAntId = o.recibido_por_anticipo_id;
+                const matchesAnt = cobradorAntId
+                    ? (sellerUser && cobradorAntId === sellerUser.id)
+                    : (cobradorAnt?.toLowerCase().trim() === sellerName?.toLowerCase().trim());
+                if (matchesAnt) {
                     processPayment(o.anticipo, o.forma_pago_anticipo, 'Anticipo');
                 }
             }
@@ -148,15 +153,22 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
             const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
             if (balanceDateStr === selectedDate && isClosed) {
                 const cobradorSal = o.recibido_por_saldo || o.vendedor;
+                const cobradorSalId = o.recibido_por_saldo_id;
                 const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
-                if (cobradorSal?.toLowerCase().trim() === sellerName?.toLowerCase().trim()) {
+                const matchesSal = cobradorSalId
+                    ? (sellerUser && cobradorSalId === sellerUser.id)
+                    : (cobradorSal?.toLowerCase().trim() === sellerName?.toLowerCase().trim());
+                if (matchesSal) {
                     processPayment(saldoCobrado, o.forma_pago_saldo, 'Saldo');
                 }
             }
          });
 
          const savedDetails = accountingReport?.detalles_vendedores || [];
-         const verification = savedDetails.find(d => d.vendedor?.toLowerCase().trim() === sellerName?.toLowerCase().trim()) || { status: 'PENDIENTE', cash_ok: false };
+         const verification = savedDetails.find(d =>
+             sellerUser && d.vendedor_id ? d.vendedor_id === sellerUser.id
+             : d.vendedor?.toLowerCase().trim() === sellerName?.toLowerCase().trim()
+         ) || { status: 'PENDIENTE', cash_ok: false };
 
          return {
              name: sellerName,
@@ -193,11 +205,15 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
   };
 
   const handleSaveSellerVerification = async () => {
+      const sellerUser = staffUsers.find(su => su.name?.toLowerCase().trim() === verifyModal.name?.toLowerCase().trim());
       const currentDetails = accountingReport.detalles_vendedores || [];
-      const newDetails = currentDetails.filter(d => d.vendedor !== verifyModal.name);
+      const newDetails = currentDetails.filter(d =>
+          sellerUser && d.vendedor_id ? d.vendedor_id !== sellerUser.id : d.vendedor !== verifyModal.name
+      );
       
       newDetails.push({
           vendedor: verifyModal.name,
+          vendedor_id: sellerUser?.id || null,
           status: 'VERIFICADO',
           cash_ok: verifyModal.cash_ok
       });
@@ -210,6 +226,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
           const payload = {
               fecha: selectedDate,
               responsable: user.name,
+              responsable_id: user.id,
               detalles_vendedores: newDetails,
               estado: accountingReport?.estado || 'PENDIENTE',
               updated_at: new Date().toISOString()
@@ -240,6 +257,7 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
           const payload = {
               fecha: selectedDate,
               responsable: user.name,
+              responsable_id: user.id,
               total_efectivo_esperado: globalTotals.cash,
               total_transferencias_esperado: globalTotals.transfers,
               detalles_vendedores: accountingReport.detalles_vendedores,
