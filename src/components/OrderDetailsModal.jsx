@@ -420,10 +420,12 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
   const fin = {
       subtotal: Number(parsedFinancials.subtotal || 0),
+      baseImponible: Number(parsedFinancials.baseImponible || parsedFinancials.subtotal || 0),
       iva: Number(parsedFinancials.iva || 0),
       total: Number(parsedFinancials.total || order?.financials?.total || 0),
       descuentoVal: Number(parsedFinancials.descuentoMonto || parsedFinancials.descuentoVal || parsedFinancials.descuento || 0),
-      ivaPercentage: Number(parsedFinancials.ivaPercentage || 15)
+      ivaPercentage: Number(parsedFinancials.ivaPercentage || 15),
+      preciosIncluyenIva: parsedFinancials.preciosIncluyenIva
   };
 
   const nroFacturaDisplay = order?.nro_factura || order?.numero_factura || parsedFinancials.nroFactura || order?.numeroFactura || order?.facturaNumber || order?.invoiceNumber || 'PENDIENTE';
@@ -447,7 +449,6 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
   const lockToContabilidad = isGoingToContabilidad && !isCredito && saldoCalculado > 0 && !isAdmin;
 
-  // 🔥 HISTORIAL DE CRÉDITO PARA MOSTRAR LA ALERTA ROJA EN VISTA 🔥
   const historialCredito = parsedFinancials.historialFechasCredito || [];
 
   const canAdvance = useMemo(() => {
@@ -682,10 +683,29 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 {showFinancials && (
                     <div className="mb-6 flex justify-end">
                         <div className="w-full max-w-sm bg-white border border-slate-300 rounded-sm shadow-sm overflow-hidden">
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div></div>
-                            {Number(fin.descuentoVal) > 0 && <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto Total</div><div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div></div>}
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible || fin.subtotal)}</div></div>
-                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm"><div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">IVA ({parseFloat(Number(fin.ivaPercentage || 15).toFixed(2))}%)</div><div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div></div>
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm">
+                                <div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">SubTotal</div>
+                                <div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.subtotal)}</div>
+                            </div>
+                            {Number(fin.descuentoVal) > 0 && (
+                                <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm">
+                                    <div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Dscto Total</div>
+                                    <div className="px-4 py-2 text-right text-red-500">-{formatCurrency(fin.descuentoVal)}</div>
+                                </div>
+                            )}
+                            
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm">
+                                <div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">Base Imponible</div>
+                                <div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.baseImponible)}</div>
+                            </div>
+                            
+                            <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 text-sm">
+                                <div className="px-4 py-2 text-right bg-slate-50 font-semibold text-slate-600">
+                                    IVA ({parseFloat(Number(fin.ivaPercentage || 15).toFixed(2))}%)
+                                    {fin.preciosIncluyenIva && <span className="block text-[9px] font-normal text-slate-400 leading-tight mt-0.5">Extraído del precio final</span>}
+                                </div>
+                                <div className="px-4 py-2 text-right font-medium text-slate-900">{formatCurrency(fin.iva)}</div>
+                            </div>
                             
                             <div className="grid grid-cols-2 divide-x divide-slate-200 border-b border-slate-200 bg-slate-100 text-base">
                                 <div className="px-4 py-2 text-right font-bold text-slate-800">TOTAL FACTURA</div>
@@ -1010,10 +1030,10 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     <div className="w-1/2">
                          <img src="/logo.png" alt="Logo" className="w-40 h-auto object-contain mb-2" />
                          <div className="text-[10px] text-slate-700 leading-tight font-medium">
-                             <p>📍 Dirección de tu empresa, Ciudad</p>
-                             <p>📞 Tel: 099 999 9999 - 098 888 8888</p>
-                             <p>✉️ Email: correo@tuempresa.com</p>
-                             <p>🌐 Redes: @tuempresa</p>
+                             <p className="font-bold text-black text-xs mb-0.5">RUC: 0941251845001</p>
+                             <p>📍 Av. Zenon Macias y calle la Merced, General Villamil, Guayas, Ecuador</p>
+                             <p>📞 Tel: 0990761566 - 0982657066</p>
+                             <p>🌐 Redes: @graficasadr</p>
                          </div>
                     </div>
                     <div className="text-right w-1/2">
@@ -1079,14 +1099,22 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                 <div className="flex border-2 border-black text-xs bg-white mb-8" style={{ pageBreakInside: 'avoid' }}>
                     
                     <div className="flex-1 border-r-2 border-black p-4 flex flex-col justify-center gap-3">
+                        {/* 🔥 MUESTRA FORMA DE PAGO EN ANTICIPO 🔥 */}
                         <div className="flex justify-between items-center border-b border-dashed border-gray-400 pb-1">
-                            <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
+                            <div className="flex flex-col">
+                                <span className="font-bold text-sm text-slate-700">ANTICIPO INICIAL:</span>
+                                <span className="text-[10px] text-slate-600 uppercase font-medium">PAGO: {order.formaPagoAnticipo || order.forma_pago_anticipo || 'Efectivo'}</span>
+                            </div>
                             <span className="font-bold text-sm text-slate-800">{formatCurrency(anticipoVal)}</span>
                         </div>
                         
+                        {/* 🔥 MUESTRA FORMA DE PAGO EN ABONOS 🔥 */}
                         {order.abonos && order.abonos.map((a, i) => (
                             <div key={i} className={`flex justify-between items-center border-b border-dashed pb-1 ${a.monto < 0 ? 'border-orange-300 text-orange-700' : 'border-red-300 text-red-700'}`}>
-                                <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? formatDateFull(a.fecha).split(' ')[0] : ''}):</span>
+                                <div className="flex flex-col">
+                                    <span className="font-bold">{a.monto < 0 ? 'DEVOLUCIÓN' : 'ABONO'} {i+1} ({a.fecha ? formatDateFull(a.fecha).split(' ')[0] : ''}):</span>
+                                    <span className="text-[10px] uppercase font-medium">PAGO: {a.metodoPago || a.metodo_pago || '-'}</span>
+                                </div>
                                 <span className="font-bold">{formatCurrency(a.monto)}</span>
                             </div>
                         ))}
@@ -1108,10 +1136,17 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                                 <span className="font-medium">-{formatCurrency(fin.descuentoVal)}</span>
                             </div>
                         )}
+                        
+                        <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
+                            <span className="font-bold">BASE IMPONIBLE</span>
+                            <span className="font-medium">{formatCurrency(fin.baseImponible)}</span>
+                        </div>
+                        
                         <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-50">
                             <span className="font-bold">IVA ({parseFloat(Number(fin.ivaPercentage || 15).toFixed(2))}%)</span>
                             <span className="font-medium">{formatCurrency(fin.iva)}</span>
                         </div>
+                        
                         <div className="flex justify-between items-center p-1.5 border-b border-black bg-gray-200">
                             <span className="font-black text-sm">TOTAL FACTURA</span>
                             <span className="font-black text-sm">{formatCurrency(fin.total)}</span>
