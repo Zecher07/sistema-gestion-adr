@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Undo2, Edit2, Bug, Trash2, ExternalLink, Receipt } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Undo2, Edit2, Bug, Trash2, ExternalLink, Receipt, Users } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
@@ -24,7 +24,7 @@ const isUserMatch = (name1, name2, idA, idB) => {
     return n1 === n2 || n1.includes(n2) || n2.includes(n1) || n1.substring(0, 4) === n2.substring(0, 4);
 };
 
-const DailyReport = ({ orders = [], user, onViewOrder }) => {
+const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
   if (!user) return <div className="p-10 text-center text-slate-500">Cargando perfil...</div>;
 
   const { toast } = useToast();
@@ -46,9 +46,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const [saving, setSaving] = useState(false);
   const [recalculating, setRecalculating] = useState(false);
   
-  const [targetUserId, setTargetUserId] = useState(user.id);
+  // 🔧 FIX: antes, targetUserId/targetUserName arrancaban con los datos del
+  // propio Admin, así que al abrir la pantalla se disparaba una consulta
+  // (costosa) buscando "Administrador" antes de que el Admin eligiera a
+  // alguien. Ahora, si es Admin, arranca vacío hasta que elija un vendedor.
+  const [targetUserId, setTargetUserId] = useState(isAdmin ? null : user.id);
   const [staffList, setStaffList] = useState([]);
-  const [targetUserName, setTargetUserName] = useState(user.name);
+  const [targetUserName, setTargetUserName] = useState(isAdmin ? '' : user.name);
 
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [daysWithReport, setDaysWithReport] = useState(new Set()); 
@@ -82,9 +86,13 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   }, [isAdmin]);
 
   useEffect(() => {
-      if (isAdmin && staffList.length > 0) {
-          const selectedUser = staffList.find(u => u.id === targetUserId);
-          if (selectedUser) setTargetUserName(selectedUser.full_name);
+      if (isAdmin) {
+          // Mientras el Admin no elija a nadie, targetUserId es null y no
+          // hacemos nada — así evitamos disparar consultas de "Administrador".
+          if (staffList.length > 0 && targetUserId) {
+              const selectedUser = staffList.find(u => u.id === targetUserId);
+              if (selectedUser) setTargetUserName(selectedUser.full_name);
+          }
       } else {
           setTargetUserName(user.name);
       }
@@ -271,7 +279,7 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
           if (abonoDateStr === selectedDate && isUserMatch(abono.cobrador, targetUserName, abono.cobrador_id, targetUserId)) {
                const numOrden = o.order_number || o.orderNumber || o.id;
                txs.push({
-                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`, orderNumber: numOrden, income: Number(abono.monto), expense: 0, balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: abono.metodoPago || abono.metodo_pago || abono.forma_pago || abono.formaPago || 'EFECTIVO' 
+                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`, orderNumber: numOrden, income: Number(abono.monto), expense: 0, balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false, originalOrder: o, abonoId: abono.id, paymentMethod: abono.metodoPago || abono.metodo_pago || abono.forma_pago || abono.formaPago || 'EFECTIVO' 
                });
           }
       });
@@ -364,6 +372,58 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
   const removeManualTransaction = (id) => {
     const updated = ledgerData.manualTransactions.filter(tx => tx.id !== id);
     updateLedger({ ...ledgerData, manualTransactions: updated });
+  };
+
+  // 🔧 NUEVO: reasignar un cobro (venta, saldo, abono o anulación) a otro
+  // usuario. Útil cuando una orden quedó registrada con la persona
+  // equivocada y por eso no aparecía en el reporte del vendedor correcto.
+  const [reassigningTxId, setReassigningTxId] = useState(null);
+  const [reassigning, setReassigning] = useState(false);
+
+  const handleReassignTx = async (tx, newUserId) => {
+    const newUser = staffList.find(u => u.id === newUserId);
+    if (!newUser) return;
+
+    setReassigning(true);
+    try {
+      const orderId = tx.originalOrder.id;
+
+      if (tx.type === 'VENTA' || tx.type === 'ANULACIÓN') {
+          const { error } = await supabase.from('ordenes').update({
+              recibido_por_anticipo: newUser.full_name,
+              recibido_por_anticipo_id: newUser.id,
+          }).eq('id', orderId);
+          if (error) throw error;
+
+      } else if (tx.type === 'COBRO SALDO') {
+          const { error } = await supabase.from('ordenes').update({
+              recibido_por_saldo: newUser.full_name,
+              recibido_por_saldo_id: newUser.id,
+          }).eq('id', orderId);
+          if (error) throw error;
+
+      } else if (tx.type === 'ABONO') {
+          // Traemos los abonos frescos para no pisar cambios de otra persona
+          const { data: dbOrder, error: fetchError } = await supabase.from('ordenes').select('abonos').eq('id', orderId).single();
+          if (fetchError) throw fetchError;
+
+          const abonosActualizados = (dbOrder.abonos || []).map(a =>
+              a.id === tx.abonoId ? { ...a, cobrador: newUser.full_name, cobrador_id: newUser.id } : a
+          );
+
+          const { error } = await supabase.from('ordenes').update({ abonos: abonosActualizados }).eq('id', orderId);
+          if (error) throw error;
+      }
+
+      toast({ title: "Reasignado", description: `Este cobro ahora aparece en el reporte de ${newUser.full_name}.` });
+      setReassigningTxId(null);
+      if (onDataChanged) await onDataChanged(); // 🔧 refresca 'orders' en App.jsx de inmediato, sin esperar a Realtime
+      await loadDailyData(selectedDate, targetUserId, targetUserName);
+    } catch (error) {
+      toast({ title: "Error al reasignar", description: error.message, variant: "destructive" });
+    } finally {
+      setReassigning(false);
+    }
   };
 
   return (
@@ -519,8 +579,41 @@ const DailyReport = ({ orders = [], user, onViewOrder }) => {
                                    {tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none text-center" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : <span className={cn(tx.balanceNote?.includes('DEBE') ? "text-red-600 bg-red-50 px-1 rounded" : "text-green-700")}>{tx.balanceNote}</span>}
                                 </div>
                                 
-                                <div className="flex items-center justify-center bg-slate-50 print:hidden">
-                                    {tx.isManual && isEditable ? ( <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button> ) : ( !tx.isManual && !tx.isVale && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" /> )}
+                                <div className="flex items-center justify-center bg-slate-50 print:hidden gap-1">
+                                    {tx.isManual && isEditable ? (
+                                        <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button>
+                                    ) : (
+                                        <>
+                                            {!tx.isManual && !tx.isVale && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />}
+                                            {/* 🔧 NUEVO: reasignar el cobro a otro usuario (solo Admin, solo si viene de una orden real) */}
+                                            {isAdmin && !tx.isManual && !tx.isVale && tx.originalOrder && (
+                                                reassigningTxId === tx.id ? (
+                                                    <select
+                                                        autoFocus
+                                                        disabled={reassigning}
+                                                        className="text-[9px] border border-blue-400 rounded bg-white outline-none"
+                                                        onClick={(e) => e.stopPropagation()}
+                                                        onChange={(e) => { e.stopPropagation(); if (e.target.value) handleReassignTx(tx, e.target.value); }}
+                                                        onBlur={() => setReassigningTxId(null)}
+                                                        defaultValue=""
+                                                    >
+                                                        <option value="" disabled>Mover a...</option>
+                                                        {staffList.map(u => (
+                                                            <option key={u.id} value={u.id}>{u.full_name}</option>
+                                                        ))}
+                                                    </select>
+                                                ) : (
+                                                    <button
+                                                        title="Reasignar a otro usuario"
+                                                        onClick={(e) => { e.stopPropagation(); setReassigningTxId(tx.id); }}
+                                                        className="text-slate-400 hover:text-blue-600"
+                                                    >
+                                                        <Users className="h-3.5 w-3.5" />
+                                                    </button>
+                                                )
+                                            )}
+                                        </>
+                                    )}
                                 </div>
                             </div>
                         )})}
