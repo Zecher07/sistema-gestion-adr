@@ -956,7 +956,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
             nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
         };
 
-        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') { payload.status = 'VENTAS'; payload.created_at = new Date().toISOString(); payload.recibido_por_anticipo = currentUser.name; payload.recibido_por_anticipo_id = currentUser.id; } 
+        if (!initialData || !initialData.id || initialData.status === 'BORRADOR') { 
+            payload.status = 'VENTAS'; 
+            payload.created_at = new Date().toISOString(); 
+            // 🔧 FIX: acreditamos el anticipo al VENDEDOR ASIGNADO a la orden, no a quien
+            // esté logueado guardándola (ej. un Admin ayudando a un vendedor). Si por algo
+            // no hay ningún vendedor asignado, usamos a quien está logueado como respaldo.
+            const primerVendedorId = (formData.vendedor_ids || [])[0];
+            const vendedorAsignado = primerVendedorId ? validSellers.find(u => u.id === primerVendedorId) : null;
+            payload.recibido_por_anticipo = vendedorAsignado ? vendedorAsignado.name : currentUser.name;
+            payload.recibido_por_anticipo_id = vendedorAsignado ? vendedorAsignado.id : currentUser.id;
+        } 
         else if (isAdmin && initialData.vendedor !== formData.vendedor) { toast({ title: "Orden Reasignada", description: `Vendedores actualizados.` }); }
 
         if (initialData?.id && initialData.status !== 'BORRADOR') { const { error } = await supabase.from('ordenes').update(payload).eq('id', initialData.id); if(error) throw error; } 
