@@ -78,7 +78,9 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
   useEffect(() => {
     if (isAdmin) {
         const fetchStaff = async () => {
-            const { data } = await supabase.from('profiles').select('id, full_name, role').order('full_name');
+            // 🔧 Solo Vendedores: así el reporte diario y el botón de "Reasignar"
+            // nunca permiten dejar un cobro a nombre de Admin/Contabilidad/Producción.
+            const { data } = await supabase.from('profiles').select('id, full_name, role').eq('role', 'Vendedor').order('full_name');
             if (data) setStaffList(data);
         };
         fetchStaff();
@@ -137,13 +139,15 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
       let baseCash = 0; let lastReportDateStr = '2000-01-01'; let foundPrevious = false;
       if (lastReport) { baseCash = Number(lastReport.final_balance); lastReportDateStr = lastReport.date; foundPrevious = true; }
 
-      const shortName = (userName || '').substring(0, 4);
-      // 🔧 REFACTOR: agregamos condiciones por ID (recibido_por_*_id, vendedor_ids) para
-      // que la orden se encuentre aunque el nombre del usuario haya cambiado desde que
-      // se creó/cobró. El filtro por nombre parcial se deja como respaldo para filas viejas.
-      const { data: userOrders } = await supabase.from('ordenes').select('*')
-          .or(`recibido_por_anticipo.ilike.%${shortName}%,recibido_por_saldo.ilike.%${shortName}%,vendedor.ilike.%${shortName}%,recibido_por_anticipo_id.eq.${userId},recibido_por_saldo_id.eq.${userId},vendedor_ids.cs.{${userId}}`) 
-          .order('created_at', { ascending: false }).limit(1000);
+      // 🔧 FIX TIMEOUT DE RAÍZ: en vez de volver a pedirle esto a la base de datos
+      // (que seguía dando timeout incluso ya optimizado), filtramos directamente
+      // sobre las órdenes que YA tenemos en memoria (el prop 'orders' que App.jsx
+      // ya trae completo, sin límite). Cero consultas nuevas = cero riesgo de timeout.
+      const userOrders = orders.filter(o =>
+          o.recibido_por_anticipo_id === userId ||
+          o.recibido_por_saldo_id === userId ||
+          (Array.isArray(o.vendedor_ids) && o.vendedor_ids.includes(userId))
+      ).sort((a, b) => new Date(b.created_at || b.createdAt) - new Date(a.created_at || a.createdAt)).slice(0, 1000);
 
       let floatingSum = 0; let floatingCount = 0;
 
