@@ -7,6 +7,7 @@ import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent } from '@/components/ui/card';
 import { motion } from 'framer-motion';
 import { cn } from '@/lib/utils';
+import { isUserMatch } from '@/utils/userMatch';
 
 // 🔥 FUNCIÓN QUE OBLIGA AL SISTEMA A USAR LA HORA LOCAL DE ECUADOR 🔥
 const getLocalDate = () => {
@@ -14,7 +15,7 @@ const getLocalDate = () => {
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 };
 
-const ValesCajaPanel = ({ user }) => {
+const ValesCajaPanel = ({ user, orders = [] }) => {
   const { toast } = useToast();
   const [vales, setVales] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -31,6 +32,7 @@ const ValesCajaPanel = ({ user }) => {
   const [formData, setFormData] = useState({
     fecha: getLocalDate(), 
     vendedor: user?.name || '',
+    vendedor_id: user?.id || '',
     concepto: '',
     monto: '',
     recibido_por: '' 
@@ -44,7 +46,8 @@ const ValesCajaPanel = ({ user }) => {
   }, [isAdminOrContabilidad]);
 
   const fetchStaff = async () => {
-      const { data } = await supabase.from('profiles').select('full_name').order('full_name');
+      // 🔧 Solo Vendedores, y con id (antes solo traía el nombre)
+      const { data } = await supabase.from('profiles').select('id, full_name').eq('role', 'Vendedor').order('full_name');
       if (data) setStaffList(data);
   };
 
@@ -54,7 +57,8 @@ const ValesCajaPanel = ({ user }) => {
       let query = supabase.from('vales_caja').select('*').order('fecha', { ascending: false }).order('id', { ascending: false });
       
       if (!isAdminOrContabilidad) {
-          query = query.eq('vendedor', user?.name);
+          // 🔧 FIX: filtrar por id, no por nombre (así no se rompe si cambia el nombre)
+          query = query.eq('vendedor_id', user?.id);
       }
 
       const { data, error } = await query;
@@ -68,22 +72,22 @@ const ValesCajaPanel = ({ user }) => {
     }
   };
 
-  const checkAvailableCash = async (vendedorNombre, fechaStr, montoRequerido, excludeValeId = null) => {
-      let vId = user.id;
-      if (isAdminOrContabilidad && vendedorNombre !== user.name) {
-          const { data: p } = await supabase.from('profiles').select('id').eq('full_name', vendedorNombre).maybeSingle();
-          if (p) vId = p.id;
-      }
-
+  const checkAvailableCash = async (vendedorId, vendedorNombre, fechaStr, montoRequerido, excludeValeId = null) => {
       const { data: lastReport } = await supabase.from('daily_closings')
-          .select('date, final_balance').eq('user_id', vId).lt('date', fechaStr)
+          .select('date, final_balance').eq('user_id', vendedorId).lt('date', fechaStr)
           .order('date', { ascending: false }).limit(1).maybeSingle();
 
       const baseCash = lastReport ? Number(lastReport.final_balance) : 0;
       const lastDate = lastReport ? lastReport.date : '2000-01-01';
 
-      const { data: userOrders } = await supabase.from('ordenes')
-          .select('*').or(`recibido_por_anticipo.eq.${vendedorNombre},recibido_por_saldo.eq.${vendedorNombre},vendedor.eq.${vendedorNombre}`);
+      // 🔧 FIX TIMEOUT: en vez de volver a pedirle 'ordenes' a la base de datos (lo
+      // cual causaba timeout), filtramos sobre las órdenes que la app ya tiene
+      // cargadas en memoria (prop 'orders'). Cero consultas nuevas, cero riesgo.
+      const userOrders = orders.filter(o =>
+          o.recibido_por_anticipo_id === vendedorId ||
+          o.recibido_por_saldo_id === vendedorId ||
+          (Array.isArray(o.vendedor_ids) && o.vendedor_ids.includes(vendedorId))
+      );
 
       let floatingSum = 0;
       let todayIncome = 0;
@@ -101,8 +105,12 @@ const ValesCajaPanel = ({ user }) => {
               const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
               const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
 
-              const recibioAnticipo = o.recibido_por_anticipo === vendedorNombre || (!o.recibido_por_anticipo && o.vendedor === vendedorNombre);
-              const recibioSaldo = o.recibido_por_saldo === vendedorNombre || (!o.recibido_por_saldo && o.vendedor === vendedorNombre);
+              // 🔧 FIX: comparar por id primero (inmune a cambios de nombre), con
+              // respaldo al nombre solo si la orden todavía no tiene id guardado.
+              const recibioAnticipo = isUserMatch(o.recibido_por_anticipo_id, o.recibido_por_anticipo, { id: vendedorId, name: vendedorNombre })
+                  || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && o.vendedor === vendedorNombre);
+              const recibioSaldo = isUserMatch(o.recibido_por_saldo_id, o.recibido_por_saldo, { id: vendedorId, name: vendedorNombre })
+                  || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && o.vendedor === vendedorNombre);
               const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
               const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
               const saldoFinalReal = saldoCobrado - totalAbonado;
@@ -118,7 +126,7 @@ const ValesCajaPanel = ({ user }) => {
                   todayIncome += Number(o.anticipo);
               }
               (o.abonos || []).forEach(abono => {
-                  if (toLocalDateStr(abono.fecha) === fechaStr && abono.cobrador === vendedorNombre) {
+                  if (toLocalDateStr(abono.fecha) === fechaStr && isUserMatch(abono.cobrador_id, abono.cobrador, { id: vendedorId, name: vendedorNombre })) {
                       todayIncome += Number(abono.monto);
                   }
               });
@@ -132,9 +140,14 @@ const ValesCajaPanel = ({ user }) => {
           });
       }
 
-      const { data: valesAprobados } = await supabase.from('vales_caja')
-          .select('id, monto, fecha').eq('vendedor', vendedorNombre).eq('status', 'APROBADO')
-          .gt('fecha', lastDate).lte('fecha', fechaStr);
+      // 🔧 FIX TIMEOUT: reutilizamos 'vales' (ya cargado en el estado) en vez de
+      // hacer otra consulta. Para Admin/Contabilidad ya trae TODOS los vales;
+      // para un vendedor normal, ya trae solo los suyos (ver fetchVales arriba).
+      const valesAprobados = vales.filter(v =>
+          v.status === 'APROBADO' &&
+          (v.vendedor_id ? v.vendedor_id === vendedorId : v.vendedor === vendedorNombre) &&
+          v.fecha > lastDate && v.fecha <= fechaStr
+      );
       
       if (valesAprobados) {
           valesAprobados.forEach(v => {
@@ -162,13 +175,14 @@ const ValesCajaPanel = ({ user }) => {
           setFormData({
               fecha: vale.fecha,
               vendedor: vale.vendedor,
+              vendedor_id: vale.vendedor_id || '',
               concepto: vale.concepto,
               monto: vale.monto,
               recibido_por: vale.recibido_por || '' 
           });
       } else {
           setEditingVale(null);
-          setFormData({ fecha: getLocalDate(), vendedor: user?.name || '', concepto: '', monto: '', recibido_por: '' }); 
+          setFormData({ fecha: getLocalDate(), vendedor: user?.name || '', vendedor_id: user?.id || '', concepto: '', monto: '', recibido_por: '' }); 
       }
       setIsModalOpen(true);
   };
@@ -180,7 +194,7 @@ const ValesCajaPanel = ({ user }) => {
     if (!formData.concepto.trim() || !formData.monto || formData.monto <= 0) {
         return toast({ title: "Atención", description: "Ingrese un concepto y un monto válido.", variant: "destructive" });
     }
-    if (!formData.vendedor) {
+    if (!formData.vendedor || !formData.vendedor_id) {
         return toast({ title: "Atención", description: "Debe asignar un vendedor de origen.", variant: "destructive" });
     }
 
@@ -188,7 +202,7 @@ const ValesCajaPanel = ({ user }) => {
     try {
       const montoRequerido = parseFloat(formData.monto);
       const excludeId = editingVale ? editingVale.id : null;
-      const { isValid, cashInHand } = await checkAvailableCash(formData.vendedor, formData.fecha, montoRequerido, excludeId);
+      const { isValid, cashInHand } = await checkAvailableCash(formData.vendedor_id, formData.vendedor, formData.fecha, montoRequerido, excludeId);
 
       if (!isValid) {
           toast({ 
@@ -203,6 +217,7 @@ const ValesCajaPanel = ({ user }) => {
       const payload = {
           fecha: formData.fecha,
           vendedor: formData.vendedor,
+          vendedor_id: formData.vendedor_id,
           concepto: formData.concepto.trim(),
           monto: montoRequerido,
           recibido_por: formData.recibido_por.trim(),
@@ -244,7 +259,7 @@ const ValesCajaPanel = ({ user }) => {
     setApprovingId(vale.id);
     try {
       if (newStatus === 'APROBADO') {
-          const { isValid, cashInHand } = await checkAvailableCash(vale.vendedor, vale.fecha, vale.monto, vale.id);
+          const { isValid, cashInHand } = await checkAvailableCash(vale.vendedor_id, vale.vendedor, vale.fecha, vale.monto, vale.id);
           if (!isValid) {
               toast({ 
                   title: "No se puede aprobar", 
@@ -411,12 +426,15 @@ const ValesCajaPanel = ({ user }) => {
                             {isAdminOrContabilidad ? (
                                 <select 
                                     className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
-                                    value={formData.vendedor}
-                                    onChange={e => setFormData({...formData, vendedor: e.target.value})}
+                                    value={formData.vendedor_id}
+                                    onChange={e => {
+                                        const seller = staffList.find(s => s.id === e.target.value);
+                                        setFormData({...formData, vendedor: seller ? seller.full_name : '', vendedor_id: e.target.value});
+                                    }}
                                 >
                                     <option value="">Seleccione origen</option>
                                     {staffList.map(s => (
-                                        <option key={s.full_name} value={s.full_name}>{s.full_name}</option>
+                                        <option key={s.id} value={s.id}>{s.full_name}</option>
                                     ))}
                                 </select>
                             ) : (

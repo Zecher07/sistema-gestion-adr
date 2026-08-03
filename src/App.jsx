@@ -415,7 +415,7 @@ function App() {
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
     if (currentView === 'clientes-lista') return ( <ClientsPanel clients={clients} orders={orders} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }} onViewOrder={(o) => handleViewOrder(o, 'clientes')} /> );
     if (currentView === 'configuracion') return <AnulationConfig />;
-    if (currentView === 'vales') return <ValesCajaPanel user={user} />;
+    if (currentView === 'vales') return <ValesCajaPanel user={user} orders={orders} />;
     if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
     
     // 🔥 NUEVA VISTA: PANEL DE NOTIFICACIONES 🔥
