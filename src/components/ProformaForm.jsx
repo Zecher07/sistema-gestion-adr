@@ -51,7 +51,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const [selectedClient, setSelectedClient] = useState({ nombre: '', identificacion: '', telefono: '', direccion: '', email: '' });
 
   const [products, setProducts] = useState([
-    { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }
+    { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }
   ]);
   
   const [imagenes, setImagenes] = useState([]);
@@ -67,6 +67,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const [notes, setNotes] = useState('');
   const [ivaPercentage, setIvaPercentage] = useState(15); 
   const [applyIva, setApplyIva] = useState(true);
+  const [preciosIncluyenIva, setPreciosIncluyenIva] = useState(true); // 🔧 SINCRONIZADO CON ORDERFORM: por defecto sí incluyen IVA
 
   const [localDiscountVal, setLocalDiscountVal] = useState('');
   const [localDiscountPercent, setLocalDiscountPercent] = useState('');
@@ -88,7 +89,15 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   useEffect(() => {
     const fetchGlobalConfig = async () => {
       try {
-        if (initialData) { setIvaPercentage(initialData.ivaPercentage || initialData.iva_percentage || 15); setApplyIva((initialData.iva_total || initialData.iva) > 0); return; }
+        if (initialData) { 
+            setIvaPercentage(initialData.ivaPercentage || initialData.iva_percentage || 15); 
+            setApplyIva((initialData.iva_total || initialData.iva) > 0); 
+            // 🔧 SINCRONIZADO CON ORDERFORM: proformas viejas (antes de este cambio) no
+            // tenían precios incluidos, así que por defecto se leen como "no incluido"
+            // salvo que el campo ya exista guardado explícitamente.
+            setPreciosIncluyenIva(initialData.preciosIncluyenIva !== undefined ? initialData.preciosIncluyenIva : false);
+            return; 
+        }
         const { data } = await supabase.from('configuracion_global').select('iva_porcentaje').single(); if (data) setIvaPercentage(data.iva_porcentaje);
       } catch (error) { console.error(error); }
     }; fetchGlobalConfig();
@@ -106,7 +115,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
           base: p.base || '',
           altura: p.altura || '',
           cantidad: p.cantidad !== undefined ? p.cantidad : 1
-      })) : [{ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false }]);
+      })) : [{ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, precios_escalonados: [], precioBaseOriginal: 0, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }]);
       
       setNotes(initialData.notas || ''); setDiasEntrega(initialData.financials?.diasEntrega || initialData.dias_entrega || '');
       setResponsable(initialData.responsable_nombre || user?.name || '');
@@ -127,17 +136,41 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
     }
   }, [initialData, user]);
 
+  // 🔧 SINCRONIZADO CON ORDERFORM: misma matemática de "precios incluyen IVA",
+  // adaptada al sistema de descuentos propio de Proforma (que Orden no tiene).
   useEffect(() => {
     const subtotalBruto = products.reduce((acc, item) => acc + (Number(item.total) || 0), 0);
-    
     const descuentoDirectoTotal = Number(financials.descuentoMonto) || 0;
     const tasaIva = applyIva ? (ivaPercentage / 100) : 0;
-    
-    const descuentoBase = applyIva ? (descuentoDirectoTotal / (1 + tasaIva)) : descuentoDirectoTotal;
-    const subtotalNeto = Math.max(0, subtotalBruto - descuentoBase);
-    
-    const iva = applyIva ? subtotalNeto * tasaIva : 0; 
-    const total = subtotalNeto + iva;
+    const isIvaIncluded = preciosIncluyenIva;
+
+    let subtotalNeto = 0;
+    let iva = 0;
+    let total = 0;
+    let descuentoBase = 0;
+
+    if (applyIva) {
+        if (isIvaIncluded) {
+            // Los precios ingresados YA incluyen IVA: el total es directo,
+            // y el sistema despeja cuál fue la base imponible y el IVA.
+            total = Math.max(0, subtotalBruto - descuentoDirectoTotal);
+            subtotalNeto = total / (1 + tasaIva);
+            iva = total - subtotalNeto;
+            descuentoBase = descuentoDirectoTotal / (1 + tasaIva);
+        } else {
+            // Funcionamiento clásico: los precios son netos, el IVA se suma al final
+            descuentoBase = descuentoDirectoTotal;
+            subtotalNeto = Math.max(0, subtotalBruto - descuentoBase);
+            iva = subtotalNeto * tasaIva;
+            total = subtotalNeto + iva;
+        }
+    } else {
+        descuentoBase = descuentoDirectoTotal;
+        subtotalNeto = Math.max(0, subtotalBruto - descuentoBase);
+        iva = 0;
+        total = subtotalNeto;
+    }
+
     const anticipoValor = total * ((financials.anticipoPorc || 0) / 100);
     const saldoPorc = 100 - (financials.anticipoPorc || 0); 
     const saldoValor = total - anticipoValor;
@@ -157,7 +190,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
         const perc = subtotalBruto > 0 ? (descuentoBase / subtotalBruto) * 100 : 0;
         setLocalDiscountPercent(perc > 0 ? perc.toFixed(2) : '');
     }
-  }, [products, ivaPercentage, applyIva, financials.descuentoMonto, financials.anticipoPorc]);
+  }, [products, ivaPercentage, applyIva, preciosIncluyenIva, financials.descuentoMonto, financials.anticipoPorc]);
 
   const handleAddImages = async (e) => {
       const files = Array.from(e.target.files);
@@ -180,6 +213,10 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
 
   const filteredClients = localClients.filter(c => c.nombre.toLowerCase().includes(clientSearch.toLowerCase()) || (c.empresa && c.empresa.toLowerCase().includes(clientSearch.toLowerCase())));
   
+  // 🔧 SINCRONIZADO CON ORDERFORM: redondea hacia arriba en incrementos de $0.50,
+  // para que los totales por metro cuadrado se vean igual que en una orden real.
+  const roundUpToHalf = (num) => Math.ceil(num * 2) / 2;
+
   const getPriceForQty = (qty, item, applyMayorista = false) => {
       if (applyMayorista) {
           const tiersDist = [...(item.precios_distribuidor || [])].sort((a,b) => b.cantidad - a.cantidad);
@@ -201,7 +238,9 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
       return itemsList.map(p => {
           if (!p.descripcion) return p;
           const q = parseFloat(p.cantidad) || 0;
-          const PRECIO_MINIMO_ITEM = getPriceForQty(1, p, isWholesale);
+          const minCatalogo = Number(p.precio_minimo) > 0 ? Number(p.precio_minimo) : getPriceForQty(1, p, isWholesale);
+          const PRECIO_MINIMO_ITEM = p.precioMinimoManual !== undefined && p.precioMinimoManual !== ''
+              ? parseFloat(p.precioMinimoManual) : minCatalogo;
           
           if (p.es_por_metro) {
               const b = parseFloat(p.base) || 0;
@@ -216,7 +255,10 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                   precioPorPieza = PRECIO_MINIMO_ITEM;
               }
               
-              return { ...p, precioUnitario: areaTotal > 0 ? newPrice : '', total: parseFloat((precioPorPieza * q).toFixed(2)) };
+              let calcTotal = precioPorPieza * q;
+              if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
+              
+              return { ...p, precioUnitario: areaTotal > 0 ? newPrice : '', total: calcTotal };
           } else {
               const newPrice = getPriceForQty(q, p, isWholesale);
               return { ...p, precioUnitario: newPrice, total: parseFloat((q * newPrice).toFixed(2)) };
@@ -280,6 +322,9 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
     let finalDesc = item.nombre;
     if (item.descripcion) finalDesc += ` - ${item.descripcion}`;
 
+    // 🔧 NUEVO: precio mínimo editable, precargado con el del catálogo
+    const minCatalogoItem = Number(item.precio_minimo) > 0 ? Number(item.precio_minimo) : getPriceForQty(1, item, esMayorista);
+
     setProducts(prev => {
         const newProducts = [...prev];
         const emptyIndex = newProducts.findIndex(p => !p.descripcion || p.descripcion.trim() === '');
@@ -296,16 +341,18 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
             precioDistribuidorBase: Number(item.precio_distribuidor) || 0,
             precios_distribuidor: item.precios_distribuidor || [],
             es_por_metro: item.es_por_metro || false,
+            precio_minimo: Number(item.precio_minimo) || 0,
+            precioMinimoManual: item.es_por_metro ? minCatalogoItem : '',
             total: item.es_por_metro ? 0 : parseFloat((computedPrice * (minQty > 0 ? minQty : 1)).toFixed(2))
         };
 
         if (emptyIndex !== -1) { 
             newProducts[emptyIndex] = newProduct; 
-            if (emptyIndex === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false }); 
+            if (emptyIndex === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }); 
         } 
         else { 
             newProducts.push(newProduct); 
-            newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false }); 
+            newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }); 
         }
         return newProducts;
     });
@@ -336,6 +383,9 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
       let finalDesc = product.nombre;
       if (product.descripcion) finalDesc += ` - ${product.descripcion}`;
 
+      // 🔧 NUEVO: precio mínimo editable, precargado con el del catálogo
+      const minCatalogoProduct = Number(product.precio_minimo) > 0 ? Number(product.precio_minimo) : getPriceForQty(minQty, product, esMayorista);
+
       setProducts(prev => {
           const newProducts = [...prev];
           newProducts[index] = { 
@@ -349,9 +399,11 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
               venta_minima: minQty > 0 ? minQty : 1, 
               cantidad: minQty > 0 ? minQty : 1, 
               base: '', altura: '', es_por_metro: product.es_por_metro || false,
+              precio_minimo: Number(product.precio_minimo) || 0,
+              precioMinimoManual: product.es_por_metro ? minCatalogoProduct : '',
               total: product.es_por_metro ? 0 : parseFloat(((minQty > 0 ? minQty : 1) * computedPrice).toFixed(2))
           };
-          if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false });
+          if (index === newProducts.length - 1) newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
           return newProducts;
       });
       setProductSuggestions([]); setActiveProductSearchRow(null);
@@ -365,13 +417,17 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
         const q = parseFloat(item.cantidad) || 0; 
         const b = parseFloat(item.base) || 0; 
         const a = parseFloat(item.altura) || 0; 
-        const PRECIO_MINIMO_ITEM = getPriceForQty(1, item, esMayorista);
+        // 🔧 NUEVO: si el usuario editó el precio mínimo manualmente, ese manda;
+        // si no, usamos el mínimo del catálogo (precio_minimo) o el precio base.
+        const minCatalogo = Number(item.precio_minimo) > 0 ? Number(item.precio_minimo) : getPriceForQty(1, item, esMayorista);
+        const PRECIO_MINIMO_ITEM = item.precioMinimoManual !== undefined && item.precioMinimoManual !== '' 
+            ? parseFloat(item.precioMinimoManual) : minCatalogo;
 
         if (item.es_por_metro) {
             const areaIndividual = (b / 100) * (a / 100); 
             const areaTotal = parseFloat((areaIndividual * q).toFixed(2));
             
-            if (['base', 'altura', 'cantidad'].includes(field) && item.precioBaseOriginal !== undefined) {
+            if (['base', 'altura', 'cantidad', 'precioMinimoManual'].includes(field) && item.precioBaseOriginal !== undefined) {
                 if (areaTotal > 0) {
                     item.precioUnitario = getPriceForQty(areaTotal, item, esMayorista);
                 } else {
@@ -386,7 +442,9 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                 precioPorPieza = PRECIO_MINIMO_ITEM;
             }
 
-            item.total = parseFloat((precioPorPieza * q).toFixed(2));
+            let calcTotal = precioPorPieza * q;
+            if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
+            item.total = calcTotal;
 
         } else {
             if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
@@ -406,11 +464,13 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
             if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
                 precioPorPieza = PRECIO_MINIMO_ITEM;
             }
-            item.total = parseFloat((precioPorPieza * q).toFixed(2));
+            let calcTotal = precioPorPieza * q;
+            if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
+            item.total = calcTotal;
         }
 
         if (field === 'descripcion' && index === newProducts.length - 1 && value !== '') {
-            newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false });
+            newProducts.push({ cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' });
         }
         
         newProducts[index] = item; return newProducts;
@@ -431,7 +491,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
       }
   };
 
-  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false }]);
+  const addProduct = () => setProducts(prev => [...prev, { cantidad: 1, descripcion: '', observaciones: '', precioUnitario: 0, total: 0, base: '', altura: '', venta_minima: 1, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }]);
   const removeProduct = (idx) => setProducts(prev => prev.length > 1 ? prev.filter((_, i) => i !== idx) : prev);
 
   const handleSubmit = async () => {
@@ -470,6 +530,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
             descuento: financials.descuento, descuentoMonto: financials.descuentoMonto, 
             anticipoPorc: financials.anticipoPorc, anticipoValor: financials.anticipoValor, saldoPorc: financials.saldoPorc, saldoValor: financials.saldoValor
         },
+        aplicarIva: applyIva, preciosIncluyenIva: preciosIncluyenIva, // 🔧 SINCRONIZADO CON ORDERFORM
         notas: notes, responsable_nombre: responsable, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
         imagenes: imagenes 
       };
@@ -561,7 +622,9 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                         
                         const areaIndividual = (b / 100) * (a / 100);
                         const areaTotalCalculada = areaIndividual * q;
-                        const precioMinimoCatalogo = getPriceForQty(1, row, esMayorista);
+                        const minCatalogoRow = Number(row.precio_minimo) > 0 ? Number(row.precio_minimo) : getPriceForQty(1, row, esMayorista);
+                        const precioMinimoCatalogo = row.precioMinimoManual !== undefined && row.precioMinimoManual !== ''
+                            ? parseFloat(row.precioMinimoManual) : minCatalogoRow;
                         const precioPorPieza = areaIndividual * pUnitario;
                         
                         const aplicaMinimo = row.es_por_metro && areaIndividual > 0 && precioPorPieza > 0 && precioPorPieza < precioMinimoCatalogo;
@@ -607,6 +670,17 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                                       <span className="text-[10px] font-black text-indigo-800 ml-2 pl-2 border-l border-purple-300">
                                           Total: {areaTotalCalculada.toFixed(2)} m²
                                       </span>
+
+                                      {/* 🔧 NUEVO: precio mínimo EDITABLE (a diferencia de Orden, aquí sí se puede cambiar) */}
+                                      <div className="flex items-center gap-1 ml-2 pl-2 border-l border-purple-300">
+                                          <span className="text-[10px] font-bold text-purple-700">P. Mín: $</span>
+                                          <Input
+                                              type="number" step="0.01" min="0"
+                                              className="h-6 w-16 text-xs text-center px-1 py-0 border-purple-300 font-bold text-purple-900"
+                                              value={row.precioMinimoManual !== undefined ? row.precioMinimoManual : ''}
+                                              onChange={e => updateProduct(idx, 'precioMinimoManual', e.target.value)}
+                                          />
+                                      </div>
                                       
                                       {aplicaMinimo && (
                                           <span className="text-[9px] font-bold text-red-600 ml-2 bg-red-100 px-1.5 py-0.5 rounded border border-red-200">
@@ -745,6 +819,18 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
               <CardContent className="p-5 space-y-3">
                 <div className="flex justify-between text-sm text-slate-600"><span>Subtotal:</span><span className="font-medium">${financials.subtotal.toFixed(2)}</span></div>
                 
+                {/* 🔧 SINCRONIZADO CON ORDERFORM: checkbox de precios incluyen IVA */}
+                {applyIva && (
+                    <div className="flex items-center gap-2 text-xs bg-blue-50 border border-blue-100 p-2 rounded">
+                        <Checkbox
+                            id="proforma-iva-incluido-check"
+                            checked={preciosIncluyenIva}
+                            onCheckedChange={(c) => setPreciosIncluyenIva(c)}
+                        />
+                        <label htmlFor="proforma-iva-incluido-check" className="cursor-pointer text-blue-700 font-bold">Precios incluyen IVA</label>
+                    </div>
+                )}
+
                 <div className="flex justify-between items-center text-sm text-slate-600 bg-white p-2 rounded border border-slate-100 mt-2">
                   <div className="flex items-center gap-2"><Switch checked={applyIva} onCheckedChange={setApplyIva} className="scale-75 data-[state=checked]:bg-blue-600" /><span className={!applyIva ? 'text-slate-400 line-through' : 'font-medium'}>IVA ({ivaPercentage}%)</span></div>
                   <span className={`font-medium ${!applyIva ? 'text-slate-300' : ''}`}>${financials.iva.toFixed(2)}</span>
