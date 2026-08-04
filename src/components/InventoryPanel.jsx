@@ -23,7 +23,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   
   const [sortConfig, setSortConfig] = useState({ key: 'nombre', direction: 'asc' });
 
-  const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [itemsPerPage, setItemsPerPage] = useState(100);
   const [currentPage, setCurrentPage] = useState(1);
   
   const canEditInventory = user?.role === 'Administrador' || user?.role === 'Producción';
@@ -84,7 +84,10 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
       const { data: bodData, error: bodError } = await supabase.from('bodegas').select('*').order('nombre');
       if (bodError) throw bodError;
-      setBodegasList(bodData || [{ id: 1, nombre: 'PRINCIPAL' }]);
+      // 🔧 FIX: un arreglo vacío [] es "verdadero" en JS, así que "bodData || fallback"
+      // nunca usaba el respaldo si la tabla 'bodegas' existía pero estaba vacía —
+      // dejando el selector de bodega sin ninguna opción para elegir.
+      setBodegasList(bodData && bodData.length > 0 ? bodData : [{ id: 1, nombre: 'PRINCIPAL' }]);
 
     } catch (error) {
       console.error("Error fetching data:", error);
@@ -481,17 +484,17 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           return matchSearch && matchCategory && matchBodega;
       });
 
+      // 🔧 CAMBIO DE DISEÑO: siempre alfabético (categoría, luego nombre) — ya no se
+      // puede reordenar haciendo click en cada columna, para que la agrupación por
+      // categoría (más abajo) siempre tenga sentido visual.
       filtered.sort((a, b) => {
-          const aVal = a[sortConfig.key]; const bVal = b[sortConfig.key];
-          if (aVal === bVal) return 0;
-          if (aVal === null || aVal === undefined) return 1;
-          if (bVal === null || bVal === undefined) return -1;
-          if (typeof aVal === 'number' && typeof bVal === 'number') return sortConfig.direction === 'asc' ? aVal - bVal : bVal - aVal;
-          const aStr = String(aVal).toLowerCase(); const bStr = String(bVal).toLowerCase();
-          return sortConfig.direction === 'asc' ? aStr.localeCompare(bStr) : bStr.localeCompare(aStr);
+          const catA = (a.categoria || '').toLowerCase();
+          const catB = (b.categoria || '').toLowerCase();
+          if (catA !== catB) return catA.localeCompare(catB);
+          return (a.nombre || '').toLowerCase().localeCompare((b.nombre || '').toLowerCase());
       });
       return filtered;
-  }, [items, searchTerm, selectedCategory, selectedBodega, sortConfig]);
+  }, [items, searchTerm, selectedCategory, selectedBodega]);
 
   const totalItems = processedItems.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage) || 1;
@@ -499,12 +502,11 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
   const paginatedItems = processedItems.slice(startIndex, endIndex);
 
-  const SortableHeader = ({ label, sortKey, align = 'left', width }) => (
-      <th className={`px-4 py-3 whitespace-nowrap cursor-pointer hover:bg-slate-50 transition-colors select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`} onClick={() => requestSort(sortKey)}>
-          <div className={`flex items-center gap-1 ${align === 'center' ? 'justify-center' : align === 'right' ? 'justify-end' : 'justify-start'}`}>
-              {label}
-              <ArrowUpDown className={`h-3 w-3 ${sortConfig.key === sortKey ? 'text-orange-600 font-bold' : 'text-slate-400'}`} />
-          </div>
+  // 🔧 CAMBIO DE DISEÑO: ya no es "clickeable" por columna (se quitó el ícono de
+  // ordenar tipo tabla dinámica) — el orden ahora es siempre alfabético fijo.
+  const SortableHeader = ({ label, align = 'left', width }) => (
+      <th className={`px-2 py-2 whitespace-nowrap select-none ${align === 'center' ? 'text-center' : align === 'right' ? 'text-right' : 'text-left'} ${width ? width : ''}`}>
+          {label}
       </th>
   );
 
@@ -573,37 +575,37 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
           {activeTab === 'inventory' && (
               <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden min-h-[600px] flex flex-col animate-in fade-in duration-300">
-                  <div className="px-4 py-3 bg-slate-50 border-b border-slate-200 flex items-center gap-2 overflow-x-auto">
-                      <Warehouse className="h-4 w-4 text-slate-500 mr-1 shrink-0" />
-                      <span className="text-xs font-bold text-slate-600 mr-2 uppercase tracking-wider shrink-0">Bodega:</span>
-                      <button onClick={() => setSelectedBodega('')} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase transition-all whitespace-nowrap ${selectedBodega === '' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-orange-50 hover:text-orange-600'}`}>Todas</button>
+                  <div className="px-3 py-2 bg-slate-50 border-b border-slate-200 flex items-center gap-1.5 overflow-x-auto">
+                      <Warehouse className="h-3.5 w-3.5 text-slate-500 mr-0.5 shrink-0" />
+                      <span className="text-[10px] font-bold text-slate-600 mr-1 uppercase tracking-wider shrink-0">Bodega:</span>
+                      <button onClick={() => setSelectedBodega('')} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-all whitespace-nowrap ${selectedBodega === '' ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-orange-50 hover:text-orange-600'}`}>Todas</button>
                       {bodegasList.map(bod => (
-                          <button key={bod.id} onClick={() => setSelectedBodega(bod.nombre)} className={`px-4 py-1.5 rounded-full text-xs font-bold uppercase transition-all whitespace-nowrap ${selectedBodega === bod.nombre ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-orange-50 hover:text-orange-600'}`}>{bod.nombre}</button>
+                          <button key={bod.id} onClick={() => setSelectedBodega(bod.nombre)} className={`px-3 py-1 rounded-full text-[10px] font-bold uppercase transition-all whitespace-nowrap ${selectedBodega === bod.nombre ? 'bg-orange-600 text-white shadow-md' : 'bg-white text-slate-600 border border-slate-300 hover:bg-orange-50 hover:text-orange-600'}`}>{bod.nombre}</button>
                       ))}
                   </div>
 
-                  <div className="p-4 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-4">
-                      <div className="flex items-center gap-2 text-sm text-slate-700 font-medium">
+                  <div className="px-3 py-2 border-b border-slate-100 flex flex-col md:flex-row justify-between items-center gap-2">
+                      <div className="flex items-center gap-2 text-xs text-slate-700 font-medium">
                           <span>Mostrar</span>
-                          <select className="border border-slate-300 rounded px-2 py-1 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-800" value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))}>
-                              <option value={10}>10</option><option value={25}>25</option><option value={50}>50</option><option value={100}>100</option>
+                          <select className="border border-slate-300 rounded px-2 py-0.5 bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-800" value={itemsPerPage} onChange={(e) => setItemsPerPage(Number(e.target.value))}>
+                              <option value={25}>25</option><option value={50}>50</option><option value={100}>100</option><option value={200}>200</option>
                           </select>
                       </div>
-                      <div className="flex flex-col sm:flex-row items-center gap-3 w-full md:w-auto">
-                          <div className="flex items-center gap-2 w-full sm:w-auto">
-                              <Filter className="h-4 w-4 text-slate-400" />
-                              <select className="border border-slate-300 rounded px-3 py-1 text-sm bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-700 w-full sm:w-48" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
+                      <div className="flex flex-col sm:flex-row items-center gap-2 w-full md:w-auto">
+                          <div className="flex items-center gap-1.5 w-full sm:w-auto">
+                              <Filter className="h-3.5 w-3.5 text-slate-400" />
+                              <select className="border border-slate-300 rounded px-2 py-0.5 text-xs bg-white focus:outline-none focus:ring-2 focus:ring-orange-500 text-slate-700 w-full sm:w-40" value={selectedCategory} onChange={(e) => setSelectedCategory(e.target.value)}>
                                   <option value="">Todas las Categorías</option>{categories.map(cat => (<option key={cat} value={cat}>{cat}</option>))}
                               </select>
                           </div>
-                          <div className="flex items-center gap-2 w-full sm:w-auto">
+                          <div className="flex items-center gap-1.5 w-full sm:w-auto">
                               <div className="relative w-full">
-                                  <Search className="absolute left-3 top-2 h-4 w-4 text-slate-400"/>
-                                  <input type="text" className="border border-slate-300 rounded-full pl-9 pr-8 py-1.5 text-sm w-full sm:w-64 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-slate-50" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Nombre o código..." />
-                                  {searchTerm && (<X className="absolute right-3 top-2 h-4 w-4 text-slate-400 hover:text-slate-600 cursor-pointer" onClick={() => setSearchTerm('')} />)}
+                                  <Search className="absolute left-2.5 top-1.5 h-3.5 w-3.5 text-slate-400"/>
+                                  <input type="text" className="border border-slate-300 rounded-full pl-8 pr-7 py-1 text-xs w-full sm:w-56 focus:outline-none focus:ring-2 focus:ring-orange-500 bg-slate-50" value={searchTerm} onChange={(e) => setSearchTerm(e.target.value)} placeholder="Nombre o código..." />
+                                  {searchTerm && (<X className="absolute right-2.5 top-1.5 h-3.5 w-3.5 text-slate-400 hover:text-slate-600 cursor-pointer" onClick={() => setSearchTerm('')} />)}
                               </div>
                           </div>
-                          <Button variant="ghost" size="icon" onClick={fetchData} disabled={loading} className="hidden sm:flex border border-slate-200 bg-white hover:bg-slate-100"><RefreshCw className={`h-4 w-4 text-slate-500 ${loading ? 'animate-spin' : ''}`}/></Button>
+                          <Button variant="ghost" size="icon" onClick={fetchData} disabled={loading} className="hidden sm:flex h-7 w-7 border border-slate-200 bg-white hover:bg-slate-100"><RefreshCw className={`h-3.5 w-3.5 text-slate-500 ${loading ? 'animate-spin' : ''}`}/></Button>
                       </div>
                   </div>
 
@@ -611,76 +613,85 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       <table className="w-full text-sm text-left">
                           <thead className="text-xs text-slate-700 font-bold border-b border-slate-200 bg-slate-50/50 select-none">
                               <tr>
-                                  <SortableHeader label="Categoría / Bodega" sortKey="categoria" width="w-40" />
-                                  <SortableHeader label="Material / Código" sortKey="nombre" />
-                                  <th className="px-2 py-3 whitespace-nowrap text-center w-24">Historial</th>
-                                  <SortableHeader label="Cantidad" sortKey="cantidad" align="center" width="w-28" />
-                                  <SortableHeader label="Valor Pérdida" sortKey="valor_perdida" align="right" width="w-28" />
-                                  {isAdmin && <SortableHeader label="Costo Real" sortKey="valor_compra" align="right" width="w-28" />}
-                                  {isAdmin && <SortableHeader label="Proveedores" sortKey="proveedores" width="w-[200px]" />}
-                                  {isAdmin && !isReadOnly && <th className="px-4 py-3 whitespace-nowrap text-center w-24">Acciones</th>}
+                                  <SortableHeader label="Material / Código" width="w-auto" />
+                                  <th className="px-2 py-2 whitespace-nowrap text-center w-16">Hist.</th>
+                                  <SortableHeader label="Cantidad" align="center" width="w-24" />
+                                  <SortableHeader label="Valor Pérdida" align="right" width="w-24" />
+                                  {isAdmin && <SortableHeader label="Costo Real" align="right" width="w-24" />}
+                                  {isAdmin && <SortableHeader label="Proveedores" width="w-[160px]" />}
+                                  {isAdmin && !isReadOnly && <th className="px-2 py-2 whitespace-nowrap text-center w-16">Acc.</th>}
                               </tr>
                           </thead>
                           <tbody className="divide-y divide-slate-100">
                               {loading ? (
-                                  <tr><td colSpan={isAdmin ? "8" : "6"} className="text-center py-20 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando inventario...</td></tr>
+                                  <tr><td colSpan={isAdmin ? "7" : "5"} className="text-center py-20 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando inventario...</td></tr>
                               ) : paginatedItems.length === 0 ? (
-                                  <tr><td colSpan={isAdmin ? "8" : "6"} className="px-6 py-12 text-center text-slate-500 italic bg-slate-50/50"><div className="flex flex-col items-center gap-2"><Package className="h-8 w-8 text-slate-300" /><span className="text-lg font-medium text-slate-400">Sin resultados</span></div></td></tr>
+                                  <tr><td colSpan={isAdmin ? "7" : "5"} className="px-6 py-12 text-center text-slate-500 italic bg-slate-50/50"><div className="flex flex-col items-center gap-2"><Package className="h-8 w-8 text-slate-300" /><span className="text-lg font-medium text-slate-400">Sin resultados</span></div></td></tr>
                               ) : (
-                                  paginatedItems.map(item => (
-                                      <tr key={item.id} className="hover:bg-orange-50/40 transition-colors group">
-                                          <td className="px-4 py-3 align-middle">
-                                              <div className="flex flex-col gap-0.5 items-start">
-                                                  {item.categoria ? (<span className="inline-flex items-center px-2 py-0.5 rounded text-[10px] font-bold tracking-wider bg-blue-50 text-blue-700 border border-blue-100 uppercase">{item.categoria}</span>) : '-'}
-                                                  <span className="text-[10px] text-slate-500 font-medium flex items-center gap-1 mt-0.5"><Warehouse className="h-2.5 w-2.5" /> {item.bodega || 'PRINCIPAL'}</span>
-                                              </div>
-                                          </td>
-                                          <td className="px-4 py-3 align-middle">
-                                              <div className="flex items-center gap-1.5 whitespace-nowrap">
-                                                  <span className="font-bold text-slate-800 uppercase">{item.nombre}</span>
-                                                  {item.codigo && <span className="font-mono text-[10px] text-slate-400">[{item.codigo}]</span>}
-                                                  <span className="text-[10px] text-orange-600 font-medium">({item.unidad})</span>
-                                              </div>
-                                          </td>
-                                          <td className="px-2 py-3 text-center align-middle whitespace-nowrap">
-                                              <Button variant="outline" size="sm" onClick={() => openItemHistory(item)} className="h-7 text-[10px] border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold shadow-sm px-2 mx-auto">
-                                                  <History className="h-3.5 w-3.5 mr-1" /> VER
-                                              </Button>
-                                          </td>
-                                          <td className="px-4 py-3 align-middle">
-                                              {isAdmin ? (
-                                                  <div className="flex items-center justify-center gap-2 bg-white p-1 rounded-full border border-slate-200 shadow-sm w-fit mx-auto">
-                                                      <button onClick={() => updateQuantity(item.id, item.cantidad, -1)} className="h-6 w-6 flex items-center justify-center rounded-full bg-slate-50 hover:bg-red-100 hover:text-red-600 text-slate-500 font-bold transition-colors">-</button>
-                                                      <span className={cn("font-bold w-10 text-center text-sm", item.cantidad <= 5 ? 'text-red-600' : 'text-slate-900')}>{item.cantidad}</span>
-                                                      <button onClick={() => updateQuantity(item.id, item.cantidad, 1)} className="h-6 w-6 flex items-center justify-center rounded-full bg-slate-50 hover:bg-green-100 hover:text-green-600 text-slate-500 font-bold transition-colors">+</button>
+                                  paginatedItems.map((item, idx) => {
+                                      // 🔧 CAMBIO DE DISEÑO: la categoría ya no se repite en cada fila — solo
+                                      // aparece una vez, como encabezado de grupo, cuando cambia respecto a
+                                      // la fila anterior (los items ya vienen ordenados por categoría).
+                                      const prevItem = paginatedItems[idx - 1];
+                                      const showCategoryHeader = !prevItem || (prevItem.categoria || '') !== (item.categoria || '');
+                                      return (
+                                      <React.Fragment key={item.id}>
+                                          {showCategoryHeader && (
+                                              <tr className="bg-slate-100">
+                                                  <td colSpan={isAdmin ? 7 : 5} className="px-2 py-1 text-[10px] font-black uppercase tracking-wider text-slate-500 border-y border-slate-200">
+                                                      {item.categoria || 'SIN CATEGORÍA'}
+                                                  </td>
+                                              </tr>
+                                          )}
+                                          <tr className="hover:bg-orange-50/40 transition-colors group">
+                                              <td className="px-2 py-1 align-middle">
+                                                  <div className="flex items-center gap-1.5 whitespace-nowrap">
+                                                      <span className="font-bold text-slate-800 uppercase text-xs">{item.nombre}</span>
+                                                      {item.codigo && <span className="font-mono text-[10px] text-slate-400">[{item.codigo}]</span>}
+                                                      <span className="text-[10px] text-orange-600 font-medium">({item.unidad})</span>
+                                                      <span className="text-[9px] text-slate-400 font-medium flex items-center gap-0.5"><Warehouse className="h-2.5 w-2.5" />{item.bodega || 'PRINCIPAL'}</span>
                                                   </div>
-                                              ) : (
-                                                  <div className="flex justify-center items-center"><span className={cn("font-bold text-base px-3 py-1 rounded-md", item.cantidad <= 5 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-800')}>{item.cantidad}</span></div>
+                                              </td>
+                                              <td className="px-1 py-1 text-center align-middle whitespace-nowrap">
+                                                  <Button variant="outline" size="sm" onClick={() => openItemHistory(item)} className="h-6 text-[9px] border-indigo-200 text-indigo-700 hover:bg-indigo-50 font-bold shadow-sm px-1.5 mx-auto">
+                                                      <History className="h-3 w-3" />
+                                                  </Button>
+                                              </td>
+                                              <td className="px-2 py-1 align-middle">
+                                                  {isAdmin ? (
+                                                      <div className="flex items-center justify-center gap-1.5 bg-white p-0.5 rounded-full border border-slate-200 shadow-sm w-fit mx-auto">
+                                                          <button onClick={() => updateQuantity(item.id, item.cantidad, -1)} className="h-5 w-5 flex items-center justify-center rounded-full bg-slate-50 hover:bg-red-100 hover:text-red-600 text-slate-500 font-bold transition-colors text-xs">-</button>
+                                                          <span className={cn("font-bold w-8 text-center text-xs", item.cantidad <= 5 ? 'text-red-600' : 'text-slate-900')}>{item.cantidad}</span>
+                                                          <button onClick={() => updateQuantity(item.id, item.cantidad, 1)} className="h-5 w-5 flex items-center justify-center rounded-full bg-slate-50 hover:bg-green-100 hover:text-green-600 text-slate-500 font-bold transition-colors text-xs">+</button>
+                                                      </div>
+                                                  ) : (
+                                                      <div className="flex justify-center items-center"><span className={cn("font-bold text-xs px-2 py-0.5 rounded-md", item.cantidad <= 5 ? 'bg-red-100 text-red-700' : 'bg-slate-100 text-slate-800')}>{item.cantidad}</span></div>
+                                                  )}
+                                              </td>
+                                              <td className="px-2 py-1 text-right font-semibold text-red-700 align-middle text-xs">
+                                                  ${Number(item.valor_perdida || 0).toFixed(2)}
+                                              </td>
+                                              {isAdmin && (
+                                                  <td className="px-2 py-1 text-right font-bold text-green-700 align-middle bg-green-50/30 border-l border-slate-100 text-xs">
+                                                      ${Number(item.valor_compra || 0).toFixed(2)}
+                                                  </td>
                                               )}
-                                          </td>
-                                          <td className="px-4 py-3 text-right font-semibold text-red-700 align-middle">
-                                              ${Number(item.valor_perdida || 0).toFixed(2)}
-                                          </td>
-                                          {isAdmin && (
-                                              <td className="px-4 py-3 text-right font-bold text-green-700 align-middle bg-green-50/30 border-l border-slate-100">
-                                                  ${Number(item.valor_compra || 0).toFixed(2)}
-                                              </td>
-                                          )}
-                                          {isAdmin && (
-                                              <td className="px-4 py-3 text-slate-600 text-[11px] align-middle bg-green-50/30">
-                                                  {item.proveedores || '-'}
-                                              </td>
-                                          )}
-                                          {isAdmin && !isReadOnly && (
-                                              <td className="px-4 py-3 align-middle">
-                                                  <div className="flex justify-center gap-1 opacity-50 group-hover:opacity-100 transition-opacity">
-                                                      <Button variant="ghost" size="icon" onClick={() => handleOpenModal(item)} className="h-8 w-8 text-blue-600 hover:bg-blue-50" title="Editar"><Edit2 className="h-4 w-4" /></Button>
-                                                      <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="h-8 w-8 text-red-600 hover:bg-red-50" title="Eliminar"><Trash2 className="h-4 w-4" /></Button>
-                                                  </div>
-                                              </td>
-                                          )}
-                                      </tr>
-                                  ))
+                                              {isAdmin && (
+                                                  <td className="px-2 py-1 text-slate-600 text-[10px] align-middle bg-green-50/30">
+                                                      {item.proveedores || '-'}
+                                                  </td>
+                                              )}
+                                              {isAdmin && !isReadOnly && (
+                                                  <td className="px-1 py-1 align-middle">
+                                                      <div className="flex justify-center gap-0.5 opacity-50 group-hover:opacity-100 transition-opacity">
+                                                          <Button variant="ghost" size="icon" onClick={() => handleOpenModal(item)} className="h-6 w-6 text-blue-600 hover:bg-blue-50" title="Editar"><Edit2 className="h-3.5 w-3.5" /></Button>
+                                                          <Button variant="ghost" size="icon" onClick={() => handleDelete(item.id)} className="h-6 w-6 text-red-600 hover:bg-red-50" title="Eliminar"><Trash2 className="h-3.5 w-3.5" /></Button>
+                                                      </div>
+                                                  </td>
+                                              )}
+                                          </tr>
+                                      </React.Fragment>
+                                  )})
                               )}
                           </tbody>
                       </table>

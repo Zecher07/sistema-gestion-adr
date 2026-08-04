@@ -100,7 +100,7 @@ function App() {
 
       // 🔧 REFACTOR: agregamos vendedor_ids / recibido_por_*_id para que el filtrado
       // de "mis órdenes" funcione por ID en vez de por nombre (ver src/utils/userMatch.js)
-      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion';
+      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion, ruc, cliente_telefono';
       
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
       const { data: ordenesData } = await ordersQuery;
