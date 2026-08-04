@@ -513,6 +513,19 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
     } catch (e) { return ''; }
   };
 
+  // 🔧 NUEVO: para fechas que NO tienen hora real (ej. fecha de entrega), evita el bug
+  // donde JS interpreta "2026-08-05" como medianoche UTC y en Ecuador (UTC-5) se
+  // corría al día/hora anterior. Nunca muestra hora, porque ese campo no la tiene.
+  const formatDateOnly = (dateString) => {
+    if (!dateString) return '';
+    try {
+      const soloFecha = String(dateString).split('T')[0];
+      const d = new Date(`${soloFecha}T12:00:00`);
+      if (isNaN(d.getTime())) return '';
+      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    } catch (e) { return ''; }
+  };
+
   const calculateDaysDiff = (dateString) => {
     if (!dateString) return '';
     const diffDays = Math.ceil((new Date(dateString) - new Date()) / (1000 * 60 * 60 * 24)); 
@@ -607,7 +620,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                             {isAdmin ? (<div className="flex items-center gap-2"><select className="border border-slate-300 rounded px-2 py-1 text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none" value={validSellers.find(u => u.name === localVendedor)?.id || ''} onChange={handleResponsableChange}><option value="">Seleccionar...</option>{validSellers.map(u => (<option key={u.id} value={u.id}>{formatResponsableName(u)}</option>))}</select><Edit2 className="h-3 w-3 text-slate-400" /></div>) : (<span className="text-slate-900">{localVendedor || 'Sistema'}</span>)}
                         </div>
                         <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha:</span><span className="text-slate-900">{formatDateFull(order.createdAt || order.created_at)}</span></div>
-                        <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha entrega:</span><span className="text-red-600 font-bold">{formatDateFull(order.fechaEntrega || order.fecha_entrega)} <span className="text-xs ml-1 font-normal text-red-500">{calculateDaysDiff(order.fechaEntrega || order.fecha_entrega)}</span></span></div>
+                        <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha entrega:</span><span className="text-red-600 font-bold">{formatDateOnly(order.fechaEntrega || order.fecha_entrega)} <span className="text-xs ml-1 font-normal text-red-500">{calculateDaysDiff(order.fechaEntrega || order.fecha_entrega)}</span></span></div>
                          <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha Finaliz:</span><span className="text-slate-900">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : ''}</span></div>
                         
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-4">
@@ -1030,7 +1043,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     <div className="w-1/2">
                          <img src="/logo.png" alt="Logo" className="w-40 h-auto object-contain mb-2" />
                          <div className="text-[10px] text-slate-700 leading-tight font-medium">
-                             <p className="font-bold text-black text-xs mb-0.5">RUC: 0941251845001</p>
+                             <p className="font-bold text-black text-xs mb-0.5">RUC: 0993397285001</p>
                              <p>📍 Av. Zenon Macias y calle la Merced, General Villamil, Guayas, Ecuador</p>
                              <p>📞 Tel: 0990761566 - 0982657066</p>
                              <p>🌐 Redes: @graficasadr</p>
@@ -1045,11 +1058,12 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
 
                 <div className="border-2 border-black rounded-lg p-3 mb-6 bg-gray-50">
                     <div className="grid grid-cols-2 gap-x-4 gap-y-2 text-xs">
-                         <div><span className="font-bold">CLIENTE:</span> <span className="uppercase">{order.cliente || order.cliente_nombre}</span></div>
+                         <div><span className="font-bold">CLIENTE:</span> <span className="uppercase text-base font-black">{order.cliente || order.cliente_nombre}</span></div>
                          <div><span className="font-bold">RUC/C.I.:</span> <span className="uppercase">{order.ruc || order.cedula || order.cliente_identificacion || 'CONSUMIDOR FINAL'}</span></div>
-                         
-                         <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-sm font-bold">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{(order.fechaEntrega || order.fecha_entrega) ? formatDateFull(order.fechaEntrega || order.fecha_entrega).split(' ')[0] : 'Por Definir'}</span></div>
+
+                         <div><span className="font-bold">CELULAR:</span> <span className="uppercase">{order.cliente_telefono || 'N/A'}</span></div>
+                         <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-xs">{order.tipoLetrero || order.tipo_trabajo}</span></div>
+                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{(order.fechaEntrega || order.fecha_entrega) ? formatDateOnly(order.fechaEntrega || order.fecha_entrega) : 'Por Definir'}</span></div>
                          
                          <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
                          <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{nroFacturaDisplay}</span></div>

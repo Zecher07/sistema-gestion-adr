@@ -11,8 +11,13 @@ import ClientForm from './ClientForm';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 
 // --- 🔥 FUNCIÓN PARA COMPRIMIR IMÁGENES 🔥 ---
-const compressImage = async (file) => {
-    return new Promise((resolve) => {
+// 🔧 FIX: antes esto devolvía un dataURL base64 gigante que se guardaba directo en la
+// fila de la proforma (columna 'imagenes'). Con 2-3 fotos, el payload se volvía tan
+// pesado que la petición a Supabase fallaba — y como el código no revisaba el error,
+// mostraba "Guardado" igual, aunque nunca se guardó nada. Ahora comprimimos a un Blob
+// y lo subimos a Storage; en la proforma solo se guarda la URL (unos bytes).
+const compressImageToBlob = async (file) => {
+    return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
         reader.onload = (event) => {
@@ -20,7 +25,7 @@ const compressImage = async (file) => {
             img.src = event.target.result;
             img.onload = () => {
                 const canvas = document.createElement('canvas');
-                const MAX_WIDTH = 1024; 
+                const MAX_WIDTH = 1024;
                 let width = img.width;
                 let height = img.height;
                 if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
@@ -28,11 +33,39 @@ const compressImage = async (file) => {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                resolve({ name: file.name, url: dataUrl });
+                canvas.toBlob(
+                    (blob) => {
+                        if (!blob) { reject(new Error('No se pudo comprimir la imagen')); return; }
+                        resolve({ name: file.name, blob });
+                    },
+                    'image/jpeg',
+                    0.7
+                );
             };
+            img.onerror = reject;
         };
+        reader.onerror = reject;
     });
+};
+
+// Sube el blob comprimido al bucket 'proformas-imagenes' y devuelve { name, url } con la
+// URL pública. Requiere que exista ese bucket público en Supabase Storage.
+const uploadProformaImage = async (folderId, blobData) => {
+    const fileName = `${folderId}/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+
+    const { error: uploadError } = await supabase
+        .storage
+        .from('proformas-imagenes')
+        .upload(fileName, blobData.blob, { contentType: 'image/jpeg', upsert: false });
+
+    if (uploadError) throw uploadError;
+
+    const { data: publicUrlData } = supabase
+        .storage
+        .from('proformas-imagenes')
+        .getPublicUrl(fileName);
+
+    return { name: blobData.name, url: publicUrlData.publicUrl };
 };
 
 const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user, initialData = null, nextProformaNumber, onCreateClient, onReloadClients }) => {
@@ -199,8 +232,10 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
       const newImages = [];
       for (const file of files) {
           try {
-              const compressed = await compressImage(file);
-              newImages.push(compressed);
+              const compressed = await compressImageToBlob(file);
+              // previewUrl es solo para mostrar la miniatura en este navegador (no se guarda en la BD)
+              const previewUrl = URL.createObjectURL(compressed.blob);
+              newImages.push({ ...compressed, previewUrl });
           } catch (error) { console.error(error); }
       }
       setImagenes(prev => [...prev, ...newImages]);
@@ -520,6 +555,19 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
     });
 
     try {
+      // 🔧 FIX: subir las imágenes nuevas (con .blob) a Storage antes de guardar,
+      // y dejar solo {name, url} en el payload — nunca el Blob crudo (no es JSON
+      // válido y es lo que estaba rompiendo el guardado silenciosamente).
+      const folderId = initialData?.id || `temp-${Date.now()}`;
+      const imagenesFinal = await Promise.all(
+          imagenes.map(async (img) => {
+              if (img.blob) {
+                  return await uploadProformaImage(folderId, img);
+              }
+              return { name: img.name, url: img.url };
+          })
+      );
+
       const payload = {
         titulo: titulo, cliente_nombre: finalName, cliente_identificacion: selectedClient.identificacion, cliente_telefono: selectedClient.telefono,
         cliente_direccion: selectedClient.direccion, cliente_email: selectedClient.email, 
@@ -532,12 +580,20 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
         },
         aplicarIva: applyIva, preciosIncluyenIva: preciosIncluyenIva, // 🔧 SINCRONIZADO CON ORDERFORM
         notas: notes, responsable_nombre: responsable, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
-        imagenes: imagenes 
+        imagenes: imagenesFinal
       };
 
       if (!initialData) { payload.created_at = new Date().toISOString(); payload.creado_por = user.id; }
-      if (initialData) { await supabase.from('proformas').update(payload).eq('id', initialData.id); } 
-      else { await supabase.from('proformas').insert([payload]); }
+
+      // 🔧 FIX: antes no se revisaba el error de Supabase, así que aunque el guardado
+      // fallara, siempre mostraba "✅ Guardado" — por eso la proforma "desaparecía".
+      let saveError;
+      if (initialData) {
+          ({ error: saveError } = await supabase.from('proformas').update(payload).eq('id', initialData.id));
+      } else {
+          ({ error: saveError } = await supabase.from('proformas').insert([payload]));
+      }
+      if (saveError) throw saveError;
 
       toast({ title: "✅ Guardado", description: "Proforma registrada con éxito." }); onSuccess();
     } catch (error) { toast({ title: "Error", description: error.message || "No se pudo guardar", variant: "destructive" }); } 
@@ -613,7 +669,11 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                    </thead>
                    <tbody className="divide-y divide-slate-100 bg-white">
                       {products.map((row, idx) => {
-                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '').trim();
+                        // 🔧 FIX: quitamos el .trim() de aquí — se aplicaba en CADA render mientras
+                        // el usuario escribía, borrando el espacio recién tecleado al final del texto
+                        // (por eso "no se podía dar espacio"). El trim final para guardar ya se hace
+                        // aparte, al momento de guardar (más abajo en handleSave), así que esto es seguro.
+                        const cleanDescription = (row.descripcion || '').replace(/\(\s*\d+(?:\.\d+)?\s*x\s*\d+(?:\.\d+)?\s*cm\s*\)/g, '');
 
                         const b = parseFloat(row.base) || 0;
                         const a = parseFloat(row.altura) || 0;
@@ -792,7 +852,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
              <div className="flex flex-wrap gap-4 items-start bg-white border border-slate-200 rounded-lg p-4">
                  {imagenes.map((img, i) => (
                      <div key={i} className="relative w-24 h-24 border border-slate-300 rounded overflow-hidden group shadow-sm">
-                         <img src={img.url} className="w-full h-full object-cover" alt="Referencia" />
+                         <img src={img.previewUrl || img.url} className="w-full h-full object-cover" alt="Referencia" />
                          <button type="button" onClick={() => removeImage(i)} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity"><X className="h-3 w-3"/></button>
                      </div>
                  ))}

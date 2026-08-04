@@ -44,8 +44,13 @@ for (let h = 8; h <= 20; h++) {
   ['00', '15', '30', '45'].forEach(m => TIME_SLOTS.push(`${hour}:${m}`));
 }
 
-const compressImage = async (file) => {
-    return new Promise((resolve) => {
+// 🔧 FIX EGRESS: antes esto devolvía un dataURL base64 gigante guardado directo en las
+// columnas 'comprobantes' e 'imagenes' de la orden. Con varias fotos, cada fila llegaba
+// a pesar 400-650KB, y como TODA la tabla se vuelve a descargar en cada carga de la app,
+// esto disparaba el consumo de egress. Ahora comprimimos a Blob y se sube a Storage;
+// en la orden solo se guarda la URL (unos bytes).
+const compressImageToBlob = async (file) => {
+    return new Promise((resolve, reject) => {
         const reader = new FileReader();
         reader.readAsDataURL(file);
         reader.onload = (event) => {
@@ -61,11 +66,49 @@ const compressImage = async (file) => {
                 canvas.height = height;
                 const ctx = canvas.getContext('2d');
                 ctx.drawImage(img, 0, 0, width, height);
-                const dataUrl = canvas.toDataURL('image/jpeg', 0.7);
-                resolve({ name: file.name, url: dataUrl });
+                canvas.toBlob(
+                    (blob) => {
+                        if (!blob) { reject(new Error('No se pudo comprimir la imagen')); return; }
+                        resolve({ name: file.name, blob });
+                    },
+                    'image/jpeg',
+                    0.7
+                );
             };
+            img.onerror = reject;
         };
+        reader.onerror = reject;
     });
+};
+
+// Sube un blob comprimido al bucket 'comprobantes' (el mismo que ya usa AbonosModal)
+// y devuelve { name, url } con la URL pública.
+const uploadComprobante = async (orderId, blobData) => {
+    const fileName = `${orderId}/${Date.now()}-${Math.random().toString(36).slice(2)}.jpg`;
+    const { error: uploadError } = await supabase.storage.from('comprobantes')
+        .upload(fileName, blobData.blob, { contentType: 'image/jpeg', upsert: false });
+    if (uploadError) throw uploadError;
+    const { data: publicUrlData } = supabase.storage.from('comprobantes').getPublicUrl(fileName);
+    return { name: blobData.name, url: publicUrlData.publicUrl };
+};
+
+// Sube un arreglo de imágenes (las que tengan .blob pendiente; las que ya tienen .url
+// de antes se dejan igual) — se usa al momento de guardar la orden.
+const uploadBlobArray = async (orderId, arr) => {
+    return Promise.all((arr || []).map(async (img) => {
+        if (img.blob) return await uploadComprobante(orderId, img);
+        return { name: img.name, url: img.url };
+    }));
+};
+
+// Igual que uploadBlobArray, pero para objetos tipo { "0": [...], "1": [...] }
+// (comprobantes.abonos y comprobantes.verificacion_abonos, uno por cada abono)
+const uploadBlobKeyedObject = async (orderId, obj) => {
+    const result = {};
+    for (const key of Object.keys(obj || {})) {
+        result[key] = await uploadBlobArray(orderId, obj[key]);
+    }
+    return result;
 };
 
 const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing, onClickImage }) => {
@@ -76,8 +119,8 @@ const ImageGallery = memo(({ images, isReadOnly, onRemove, onAdd, isProcessing, 
       <div className="border border-slate-300 p-4 rounded-sm bg-slate-50/50 mt-2">
          <div className="min-h-[100px] mb-3 flex flex-wrap gap-4">
             {images.map((img, i) => (
-               <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => onClickImage && onClickImage(img.url)}>
-                  <img src={img.url} alt={img.name} className="w-full h-full object-cover" title={img.name} loading="lazy" decoding="async" />
+               <div key={i} className="relative group w-24 h-24 border border-slate-300 bg-white rounded-md overflow-hidden shadow-sm hover:shadow-md transition-all cursor-pointer" onClick={() => onClickImage && onClickImage(img.previewUrl || img.url)}>
+                  <img src={img.previewUrl || img.url} alt={img.name} className="w-full h-full object-cover" title={img.name} loading="lazy" decoding="async" />
                   {!isReadOnly && <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(i); }} className="absolute top-1 right-1 bg-red-500 text-white rounded-full p-1 opacity-0 group-hover:opacity-100 transition-opacity hover:bg-red-600 shadow-sm"><X className="h-3 w-3" /></button>}
                </div>
             ))}
@@ -110,8 +153,8 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
             <div className={`text-[10px] font-bold ${colorClass} uppercase mb-2 flex items-center gap-1`}><Icon className="h-3 w-3"/> {label}</div>
             <div className="flex flex-wrap gap-2 items-center">
                 {items.map((img, i) => (
-                    <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => onClickImage && onClickImage(img.url)}>
-                        <img src={img.url} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="Comprobante" />
+                    <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-slate-50 rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => onClickImage && onClickImage(img.previewUrl || img.url)}>
+                        <img src={img.previewUrl || img.url} className="w-full h-full object-cover hover:opacity-80 transition-opacity" alt="Comprobante" />
                         {!disabled && canRemove && (
                             <button type="button" onClick={(e) => { e.stopPropagation(); onRemove(type, abonoIndex, i); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                 <X className="h-3 w-3" />
@@ -733,7 +776,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       const newImages = [];
       for (const file of files) {
           if (file.size > 15000000) { toast({ title: "Archivo demasiado grande", description: `"${file.name}" supera el límite.`, variant: "destructive" }); continue; }
-          try { const compressed = await compressImage(file); newImages.push(compressed); } catch (e) { toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" }); }
+          try {
+              const compressed = await compressImageToBlob(file);
+              newImages.push({ ...compressed, previewUrl: URL.createObjectURL(compressed.blob) });
+          } catch (e) { toast({ title: "Error", description: "No se pudo procesar la imagen.", variant: "destructive" }); }
       }
       setFormData(prev => ({ ...prev, imagenes: [...(prev.imagenes || []), ...newImages] })); setIsProcessingImages(false);
   };
@@ -749,7 +795,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setIsProcessingComprobantes(true); const newImages = [];
       for (const file of files) {
           if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
-          try { const compressed = await compressImage(file); newImages.push(compressed); } catch (e) {}
+          try {
+              const compressed = await compressImageToBlob(file);
+              newImages.push({ ...compressed, previewUrl: URL.createObjectURL(compressed.blob) });
+          } catch (e) {}
       }
       setComprobantesData(prev => {
           const updated = { ...prev };
@@ -783,7 +832,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
       setIsProcessingAbonoImages(true); const newImages = [];
       for (const file of acceptedFiles) {
           if (file.size > 15000000) { toast({ title: "Archivo muy grande", variant: "destructive" }); continue; }
-          try { const compressed = await compressImage(file); newImages.push(compressed); } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
+          try {
+              const compressed = await compressImageToBlob(file);
+              newImages.push({ ...compressed, previewUrl: URL.createObjectURL(compressed.blob) });
+          } catch (e) { toast({ title: "Error al procesar", variant: "destructive" }); }
       }
       setAbonoComprobantes(prev => [...prev, ...newImages]); setIsProcessingAbonoImages(false);
   }, [toast]);
@@ -880,6 +932,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     const isCreditoAnticipo = formData.formaPagoAnticipo === 'Crédito';
     const isCreditoSaldo = paymentMode === 'partial' && formData.formaPagoSaldo === 'Crédito';
 
+    // 🔧 NUEVO: nunca dejar avanzar la orden con "Crédito" seleccionado y sin fecha de
+    // vencimiento — esto es lo que causaba que llegara a Contabilidad sin fecha.
+    if (isCreditoAnticipo && !formData.creditoVenceAnticipo) {
+        toast({ title: "Falta fecha de crédito", description: "Debe colocar la fecha de vencimiento del anticipo a crédito.", variant: "destructive" });
+        setLoading(false); return;
+    }
+    if (isCreditoSaldo && !formData.creditoVenceSaldo) {
+        toast({ title: "Falta fecha de crédito", description: "Debe colocar la fecha de vencimiento del saldo a crédito antes de continuar.", variant: "destructive" });
+        setLoading(false); return;
+    }
+
     if (isCreditoAnticipo || isCreditoSaldo) {
         if (!selectedClientData?.permiteCredito) { toast({ title: "Crédito no autorizado", description: "Este cliente no tiene crédito habilitado.", variant: "destructive" }); setLoading(false); return; }
         let montoUsandoCredito = 0;
@@ -940,10 +1003,28 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     });
 
     try {
+        // 🔧 FIX EGRESS: subir a Storage cualquier foto que todavía esté como blob
+        // pendiente (las que ya vienen de una orden guardada antes ya tienen .url y
+        // se dejan igual). Esto es lo que evita que la orden vuelva a pesar cientos
+        // de KB en base64.
+        const orderIdForUpload = initialData?.id || `temp-${Date.now()}`;
+        const [imagenesFinal, comprobantesDataFinal] = await Promise.all([
+            uploadBlobArray(orderIdForUpload, formData.imagenes),
+            (async () => ({
+                anticipo: await uploadBlobArray(orderIdForUpload, comprobantesData.anticipo),
+                saldo: await uploadBlobArray(orderIdForUpload, comprobantesData.saldo),
+                retencion: await uploadBlobArray(orderIdForUpload, comprobantesData.retencion),
+                verificacion_anticipo: await uploadBlobArray(orderIdForUpload, comprobantesData.verificacion_anticipo),
+                abonos: await uploadBlobKeyedObject(orderIdForUpload, comprobantesData.abonos),
+                verificacion_abonos: await uploadBlobKeyedObject(orderIdForUpload, comprobantesData.verificacion_abonos),
+            }))()
+        ]);
+
         const payload = {
             cliente_id: formData.clienteId, cliente_nombre: formData.cliente, tipo_trabajo: finalTitle, tipoOrden: formData.tipoOrden, fecha_entrega: formData.fechaEntrega || null,
+            ruc: selectedClientData?.empresa || null, cliente_telefono: selectedClientData?.telefono || null, // 🔧 NUEVO: snapshot de datos del cliente para el recibo
             vendedor: formData.vendedor, vendedor_ids: formData.vendedor_ids || [], notas: formData.notas, prioridad: 'Normal', origenProformaInfo: formData.origenProformaInfo,
-            productos: processedProducts, abonos: abonos, comprobantes: comprobantesData,
+            productos: processedProducts, abonos: abonos, comprobantes: comprobantesDataFinal,
             financials: { 
                 ...financials, saldo: financials.saldoPendiente, descuentoMonto: formData.descuentoMonto, descuentoVal: formData.descuentoMonto, 
                 ivaPercentage: formData.ivaPercentage, retentionPercent: formData.retentionPercent, retencion: formData.retencion,
@@ -953,7 +1034,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                 historialFechasCredito: newHistorial
             },
             anticipo: formData.anticipo, retencion: formData.retencion, forma_pago_anticipo: finalPaymentString,
-            nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: formData.imagenes, updated_at: new Date().toISOString()
+            nota_anticipo: formData.notaAnticipo, credito_vence_anticipo: formData.creditoVenceAnticipo, imagenes: imagenesFinal, updated_at: new Date().toISOString()
         };
 
         if (!initialData || !initialData.id || initialData.status === 'BORRADOR') { 
@@ -1127,7 +1208,17 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                        </div>
 
                        {formData.clienteId && (
-                           <div>
+                           <div className="flex flex-col gap-1.5">
+                               {/* 🔧 NUEVO: datos del cliente visibles ANTES de guardar la orden */}
+                               <div className="inline-flex flex-wrap items-center gap-x-3 gap-y-1 px-2.5 py-1.5 rounded-md border bg-slate-50 border-slate-200 text-xs">
+                                   <span className="font-bold text-slate-700">
+                                       CED/RUC: <span className="font-normal text-slate-600">{selectedClientData?.empresa || 'No registrado'}</span>
+                                   </span>
+                                   <span className="text-slate-300">|</span>
+                                   <span className="font-bold text-slate-700">
+                                       Celular: <span className="font-normal text-slate-600">{selectedClientData?.telefono || 'No registrado'}</span>
+                                   </span>
+                               </div>
                                {selectedClientData?.permiteCredito ? (
                                    <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md border bg-indigo-50 border-indigo-200 text-indigo-700 text-xs font-bold">
                                        <span>Límite Crédito: ${limiteCredito.toFixed(2)}</span>
@@ -1692,9 +1783,13 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                                    className="w-full border border-orange-300 bg-orange-50 rounded px-2 py-1 text-sm focus:border-orange-500 focus:outline-none disabled:bg-slate-100 disabled:text-slate-500" 
                                                    value={formData.creditoVenceSaldo} 
                                                    onChange={e => setFormData({...formData, creditoVenceSaldo: e.target.value})} 
-                                                   disabled={isBottomReadOnly || (isEditMode && !isAdmin && !!(initialData?.financials?.creditoVenceSaldo || initialData?.creditoVenceSaldo))}
+                                                   // 🔧 FIX: antes se bloqueaba por 'isBottomReadOnly' aunque fuera la PRIMERA vez
+                                                   // que se ponía la fecha (el vendedor podía elegir "Crédito" pero no podía
+                                                   // escribir la fecha). Ahora solo se bloquea si YA existe una fecha guardada
+                                                   // (protección para que un vendedor no la extienda sin autorización).
+                                                   disabled={isEditMode && !isAdmin && !!(initialData?.financials?.creditoVenceSaldo || initialData?.creditoVenceSaldo)}
                                                />
-                                               {(isEditMode && !isAdmin && !!(initialData?.financials?.creditoVenceSaldo || initialData?.creditoVenceSaldo)) && !isBottomReadOnly && (
+                                               {(isEditMode && !isAdmin && !!(initialData?.financials?.creditoVenceSaldo || initialData?.creditoVenceSaldo)) && (
                                                    <Lock className="absolute right-2 top-1.5 h-4 w-4 text-orange-400" title="Solo un Administrador puede extender una fecha de crédito." />
                                                )}
                                            </div>
@@ -1995,8 +2090,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         </label>
                         <div className="border border-slate-300 p-2 rounded-md bg-slate-50 flex flex-wrap gap-2 items-center">
                             {abonoComprobantes.map((img, i) => (
-                                <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => setPreviewImage(img.url)}>
-                                    <img src={img.url} className="w-full h-full object-cover" alt="Comprobante" />
+                                <div key={i} className="relative group w-12 h-12 border border-slate-300 bg-white rounded overflow-hidden shadow-sm cursor-pointer" onClick={() => setPreviewImage(img.previewUrl || img.url)}>
+                                    <img src={img.previewUrl || img.url} className="w-full h-full object-cover" alt="Comprobante" />
                                     <button type="button" onClick={(e) => { e.stopPropagation(); setAbonoComprobantes(prev => prev.filter((_, idx) => idx !== i)); }} className="absolute top-0 right-0 bg-red-500 text-white rounded-full p-0.5 opacity-0 group-hover:opacity-100 transition-opacity">
                                         <X className="h-3 w-3" />
                                     </button>
