@@ -322,6 +322,7 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                         <table className="w-full text-sm text-left">
                             <thead className="bg-slate-800 text-white">
                                 <tr>
+                                    <th className="px-3 py-3 font-semibold whitespace-nowrap">N°</th>
                                     <th className="px-6 py-3 font-semibold">Fecha</th>
                                     <th className="px-6 py-3 font-semibold">Caja Origen</th>
                                     <th className="px-6 py-3 font-semibold">Entregado a</th>
@@ -333,9 +334,9 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
                                 {loading ? (
-                                    <tr><td colSpan={isAdminOrContabilidad ? "7" : "6"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
+                                    <tr><td colSpan={isAdminOrContabilidad ? "8" : "7"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
                                 ) : filteredVales.length === 0 ? (
-                                    <tr><td colSpan={isAdminOrContabilidad ? "7" : "6"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
+                                    <tr><td colSpan={isAdminOrContabilidad ? "8" : "7"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
                                 ) : (
                                     filteredVales.map(vale => {
                                         const isAprobado = vale.status === 'APROBADO';
@@ -345,6 +346,8 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
 
                                         return (
                                         <tr key={vale.id} className={cn("transition-colors group", isRechazado ? "bg-slate-50 opacity-60" : "hover:bg-red-50")}>
+                                            {/* 🔧 NUEVO: numeración automática del vale, para poder referirse a "Vale #X" */}
+                                            <td className="px-3 py-3 font-mono font-bold text-slate-500 whitespace-nowrap">VC-{String(vale.id).padStart(5, '0')}</td>
                                             <td className="px-6 py-3 text-slate-600 whitespace-nowrap"><Calendar className="inline h-3 w-3 mr-1 opacity-50"/>{vale.fecha}</td>
                                             <td className="px-6 py-3 font-medium text-slate-800">{vale.vendedor}</td>
                                             <td className="px-6 py-3 font-bold text-blue-800">{vale.recibido_por || '-'}</td>

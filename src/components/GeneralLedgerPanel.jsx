@@ -25,6 +25,28 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
   const [filtroVendedor, setFiltroVendedor] = useState('TODOS');
   const [filtroOrden, setFiltroOrden] = useState('');
 
+  // 🔧 NUEVO: búsqueda global — a diferencia del filtro de abajo (que solo filtra
+  // las transacciones del día actual), esto busca en TODAS las órdenes por número
+  // o por nombre de cliente, sin importar la fecha, para poder saltar al día correcto.
+  const globalSearchResults = useMemo(() => {
+      const term = filtroOrden.trim().toLowerCase();
+      if (term.length < 2) return [];
+      return orders
+          .filter(o => {
+              const numOrden = String(o.orderNumber || o.order_number || o.id || '').toLowerCase();
+              const cliente = String(o.cliente || o.cliente_nombre || '').toLowerCase();
+              return numOrden.includes(term) || cliente.includes(term);
+          })
+          .map(o => ({
+              id: o.id,
+              numOrden: o.orderNumber || o.order_number || o.id,
+              cliente: o.cliente || o.cliente_nombre,
+              fecha: toLocalDateStr(o.created_at || o.createdAt),
+          }))
+          .filter(r => r.fecha) // descarta si no se pudo determinar la fecha
+          .slice(0, 8); // no saturar la pantalla
+  }, [orders, filtroOrden]);
+
   // 1. CARGA DE DATOS PRINCIPALES
   useEffect(() => {
     const fetchData = async () => {
@@ -229,7 +251,11 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
       }
 
       if (filtroOrden.trim() !== '') {
-          filtradas = filtradas.filter(tx => tx.orden.includes(filtroOrden.trim()));
+          const term = filtroOrden.trim().toLowerCase();
+          filtradas = filtradas.filter(tx => 
+              tx.orden.toLowerCase().includes(term) || 
+              (tx.cliente || '').toLowerCase().includes(term)
+          );
       }
 
       return filtradas;
@@ -333,11 +359,31 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                        <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2" />
                        <input
                            type="text"
-                           placeholder="Buscar Nº Orden..."
-                           className="pl-9 pr-3 py-1.5 border border-slate-300 rounded-md text-sm w-full md:w-48 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow"
+                           placeholder="Buscar Nº Orden o Cliente (en todos los días)..."
+                           className="pl-9 pr-3 py-1.5 border border-slate-300 rounded-md text-sm w-full md:w-64 focus:ring-2 focus:ring-blue-500 outline-none transition-shadow"
                            value={filtroOrden}
                            onChange={e => setFiltroOrden(e.target.value)}
                        />
+                       {/* 🔧 NUEVO: resultados de la búsqueda global, con la fecha real de cada orden */}
+                       {globalSearchResults.length > 0 && (
+                           <div className="absolute top-full left-0 mt-1 w-full md:w-80 bg-white border border-slate-200 rounded-md shadow-lg z-20 overflow-hidden max-h-64 overflow-y-auto">
+                               {globalSearchResults.map(r => (
+                                   <button
+                                       key={r.id}
+                                       onClick={() => { setSelectedDate(r.fecha); setFiltroOrden(''); }}
+                                       className={cn(
+                                           "w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-blue-50 transition-colors flex justify-between items-center",
+                                           r.fecha === selectedDate ? "bg-blue-50/50" : ""
+                                       )}
+                                   >
+                                       <span className="font-bold text-slate-700">#{String(r.numOrden).padStart(5, '0')} — {r.cliente}</span>
+                                       <span className={cn("font-mono ml-2 shrink-0", r.fecha === selectedDate ? "text-blue-600 font-bold" : "text-slate-400")}>
+                                           {r.fecha === selectedDate ? "Hoy en vista" : r.fecha}
+                                       </span>
+                                   </button>
+                               ))}
+                           </div>
+                       )}
                    </div>
                </div>
 
