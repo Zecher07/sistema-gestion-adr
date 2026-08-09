@@ -56,6 +56,12 @@ function App() {
   
   const [showClientFormModal, setShowClientFormModal] = useState(false);
   const [editingClient, setEditingClient] = useState(null); 
+  // 🔧 NUEVO: para navegar directo al historial de un cliente desde otra pantalla
+  const [pendingExpedienteClientId, setPendingExpedienteClientId] = useState(null);
+  const handleGoToClientProfile = (clienteId) => {
+      setCurrentView('clientes-lista');
+      setPendingExpedienteClientId(clienteId);
+  };
 
   const [archivedNotifications, setArchivedNotifications] = useState([]);
   const [realtimeEvents, setRealtimeEvents] = useState([]); 
@@ -413,7 +419,7 @@ function App() {
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} onDataChanged={() => fetchAllData(user)} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
-    if (currentView === 'clientes-lista') return ( <ClientsPanel clients={clients} orders={orders} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }} onViewOrder={(o) => handleViewOrder(o, 'clientes')} /> );
+    if (currentView === 'clientes-lista') return ( <ClientsPanel clients={clients} orders={orders} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }} onViewOrder={(o) => handleViewOrder(o, 'clientes')} initialExpedienteClientId={pendingExpedienteClientId} onExpedienteOpened={() => setPendingExpedienteClientId(null)} /> );
     if (currentView === 'configuracion') return <AnulationConfig />;
     if (currentView === 'vales') return <ValesCajaPanel user={user} orders={orders} />;
     if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
@@ -433,7 +439,10 @@ function App() {
     }
 
     if (currentView.startsWith('ordenes-')) {
-       let filtered = orders.filter(o => o.status !== 'ARCHIVADA');
+       // 🔧 FIX: "Todas las órdenes" ahora sí incluye las archivadas (antes se
+       // excluían siempre por defecto). Las demás vistas filtradas (sin factura,
+       // con factura, crédito, etc.) siguen sin mostrar archivadas, como antes.
+       let filtered = currentView === 'ordenes-todas' ? [...orders] : orders.filter(o => o.status !== 'ARCHIVADA');
        
        if (currentView === 'ordenes-activas') {
            filtered = filtered.filter(o => o.status !== 'ANULADA' && o.status !== 'FINALIZADA');
@@ -520,6 +529,9 @@ function App() {
         order={viewOrder} 
         user={user} 
         staffUsers={staffUsers} 
+        clients={clients}
+        onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }}
+        onGoToClientProfile={handleGoToClientProfile}
         onClose={() => setViewOrder(null)} 
         onProductToggle={handleProductToggle} 
         isTaskView={viewOrderSource === 'tasks'} 

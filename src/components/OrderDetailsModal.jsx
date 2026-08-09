@@ -329,7 +329,7 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
     );
 };
 
-const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductToggle, isTaskView, onAdvanceWorkflow, onRegressWorkflow, onArchiveOrder, onUpdateOrder, onGenerateInvoice, canEdit, onAbonoOrder }) => {
+const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], onEditClient, onGoToClientProfile, onClose, onProductToggle, isTaskView, onAdvanceWorkflow, onRegressWorkflow, onArchiveOrder, onUpdateOrder, onGenerateInvoice, canEdit, onAbonoOrder }) => {
   const [previewImage, setPreviewImage] = useState(null);
   const { toast } = useToast();
   const [localProducts, setLocalProducts] = useState([]);
@@ -625,7 +625,27 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                         
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-4">
                             <span className="font-bold text-right text-slate-600">Cliente:</span>
-                            <div className="flex flex-col"><span className="text-blue-600 font-bold uppercase tracking-wide">{order.cliente || order.cliente_nombre}</span>{(order.ruc || order.cedula || order.cliente_identificacion) && (<span className="text-xs text-slate-500 font-mono mt-0.5">ID/RUC: {order.ruc || order.cedula || order.cliente_identificacion}</span>)}</div>
+                            <div className="flex flex-col">
+                                <button
+                                    onClick={() => {
+                                        const clienteId = order.clienteId || order.cliente_id;
+                                        if (clienteId && onGoToClientProfile) {
+                                            onGoToClientProfile(clienteId);
+                                            if (onClose) onClose();
+                                        } else {
+                                            // Respaldo: si por algo no se puede ir al historial, al menos abre editar directo
+                                            const clienteObj = clients?.find(c => c.id === clienteId);
+                                            if (clienteObj && onEditClient) onEditClient(clienteObj);
+                                            else toast({ title: "Cliente no encontrado", description: "No se pudo ubicar la ficha de este cliente.", variant: "destructive" });
+                                        }
+                                    }}
+                                    className="text-blue-600 font-bold uppercase tracking-wide hover:text-blue-800 hover:underline text-left transition-colors cursor-pointer"
+                                    title="Clic para ver el historial de órdenes y editar los datos de este cliente"
+                                >
+                                    {order.cliente || order.cliente_nombre}
+                                </button>
+                                {(order.ruc || order.cedula || order.cliente_identificacion) && (<span className="text-xs text-slate-500 font-mono mt-0.5">ID/RUC: {order.ruc || order.cedula || order.cliente_identificacion}</span>)}
+                            </div>
                         </div>
 
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-1">

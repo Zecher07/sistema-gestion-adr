@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/Text'
 import { useToast } from '@/components/ui/use-toast'
 import { cn } from '@/lib/utils'
 
-const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClient, onViewOrder }) => {
+const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClient, onViewOrder, initialExpedienteClientId, onExpedienteOpened }) => {
   const [searchTerm, setSearchTerm] = useState("")  
   
   // Estados para el Expediente del Cliente
@@ -97,6 +97,16 @@ const ClientsPanel = ({ clients = [], orders = [], user, onCreateNew, onEditClie
           setLoadingExpediente(false);
       }, 300);
   };
+
+  // 🔧 NUEVO: si llegamos aquí desde otra pantalla (ej. clic en el nombre del
+  // cliente dentro del detalle de una orden), abrimos su expediente automáticamente.
+  useEffect(() => {
+      if (initialExpedienteClientId && clients.length > 0) {
+          const clienteObj = clients.find(c => c.id === initialExpedienteClientId);
+          if (clienteObj) handleVerExpediente(clienteObj);
+          if (onExpedienteOpened) onExpedienteOpened(); // avisamos al padre para que no se repita
+      }
+  }, [initialExpedienteClientId, clients]);
 
   const handleBorrar = async (id, nombre) => {
     if (!window.confirm(`¿Estás seguro que deseas eliminar al cliente "${nombre}"?`)) return
