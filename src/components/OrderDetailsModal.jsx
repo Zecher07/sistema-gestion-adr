@@ -1052,7 +1052,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], onClose, onProductTog
                     <div className="text-right w-1/2">
                          <h1 className="text-xl font-black tracking-widest text-slate-900 mb-1 uppercase">Orden de Producción</h1>
                          <div className="text-lg font-bold text-slate-800">N° ORDEN: {formatOrderId(order.id)}</div>
-                         <div className="text-[11px] font-bold text-slate-700 mt-1">FECHA INGRESO: {formatDateFull(order.createdAt || order.created_at).split(' ')[0]}</div>
+                         <div className="text-[11px] font-bold text-slate-700 mt-1">FECHA INGRESO: {formatDateFull(order.createdAt || order.created_at)}</div>
                     </div>
                 </div>
 

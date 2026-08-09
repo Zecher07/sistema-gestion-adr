@@ -1,6 +1,6 @@
 import React, { useState, useMemo, useEffect } from 'react';
 import { supabase } from '../supabaseClient';
-import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Undo2, Edit2, Bug, Trash2, ExternalLink, Receipt, Users } from 'lucide-react';
+import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Undo2, Edit2, Bug, Trash2, ExternalLink, Receipt, Users, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { cn } from '@/lib/utils';
@@ -329,7 +329,22 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
     return txs;
   }, [orders, selectedDate, targetUserName, valesDelDia]);
 
+  // 🔧 NUEVO: buscador dentro del reporte del día actual (declarado aquí, antes de
+  // usarse en visibleTransactions más abajo)
+  const [txSearchTerm, setTxSearchTerm] = useState('');
+
   const allTransactions = useMemo(() => [...automaticTransactions, ...ledgerData.manualTransactions], [automaticTransactions, ledgerData]);
+
+  // 🔧 NUEVO: filtro de búsqueda (por descripción/cliente, detalle, o Nº de orden)
+  const visibleTransactions = useMemo(() => {
+      const term = txSearchTerm.trim().toLowerCase();
+      if (!term) return allTransactions;
+      return allTransactions.filter(tx =>
+          String(tx.description || '').toLowerCase().includes(term) ||
+          String(tx.details || '').toLowerCase().includes(term) ||
+          String(tx.orderNumber || '').toLowerCase().includes(term)
+      );
+  }, [allTransactions, txSearchTerm]);
 
   const totals = useMemo(() => {
     let totalIncome = 0;
@@ -487,6 +502,21 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                  </div>
             </div>
 
+            {/* 🔧 NUEVO: buscador dentro del reporte del día actual */}
+            <div className="print:hidden relative max-w-sm">
+                <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
+                <input
+                    type="text"
+                    placeholder="Buscar cliente, descripción o Nº orden en este día..."
+                    className="pl-9 pr-3 py-2 border border-slate-300 rounded-md text-sm w-full focus:ring-2 focus:ring-blue-500 outline-none bg-white shadow-sm"
+                    value={txSearchTerm}
+                    onChange={(e) => setTxSearchTerm(e.target.value)}
+                />
+                {txSearchTerm && (
+                    <button onClick={() => setTxSearchTerm('')} className="absolute right-3 top-2.5 text-slate-400 hover:text-slate-600 text-xs font-bold">✕</button>
+                )}
+            </div>
+
             {loading ? (
                 <div className="text-center py-20 text-slate-400 bg-white rounded-xl border border-dashed"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2" />Calculando saldos...</div>
             ) : (
@@ -520,7 +550,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                     </div>
 
                     <div className="flex-1 overflow-auto">
-                        {allTransactions.map((tx, idx) => {
+                        {visibleTransactions.map((tx, idx) => {
                             const isEfectivo = formatPaymentMethod(tx.paymentMethod) === 'EFECTIVO';
                             
                             return (
