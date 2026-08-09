@@ -1288,54 +1288,61 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               </div>
           )}
 
-          <table className="w-full text-sm border-collapse border-2 border-slate-800">
+          <table className="w-full text-xs border-collapse border-2 border-slate-800">
               <thead>
                   <tr className="bg-slate-200 border-b-2 border-slate-800">
-                      <th className="p-2 border-r border-slate-400 text-center w-10 font-bold">N°</th>
-                      <th className="p-2 border-r border-slate-400 text-left w-40 font-bold">Categoría / Bodega</th>
-                      <th className="p-2 border-r border-slate-400 text-left font-bold">Material / Código</th>
-                      <th className="p-2 border-r border-slate-400 text-center w-24 font-bold leading-tight">Stock<br/>Sist.</th>
+                      <th className="p-1 border-r border-slate-400 text-center w-8 font-bold">N°</th>
+                      <th className="p-1 border-r border-slate-400 text-left font-bold">Material / Código / Bodega</th>
+                      <th className="p-1 border-r border-slate-400 text-center w-16 font-bold leading-tight">Stock<br/>Sist.</th>
                       
                       {printType === 'audit' && (
                           <>
-                              <th className="p-2 border-r border-slate-400 text-center w-32 font-bold leading-tight bg-white">Stock<br/>Físico</th>
-                              <th className="p-2 text-right w-24 font-bold leading-tight">Valor<br/>Pérdida</th>
+                              <th className="p-1 border-r border-slate-400 text-center w-20 font-bold leading-tight bg-white">Stock<br/>Físico</th>
+                              <th className="p-1 text-right w-20 font-bold leading-tight">Valor<br/>Pérdida</th>
                           </>
                       )}
                   </tr>
               </thead>
               <tbody>
-                  {processedItems.map((item, idx) => (
-                      <tr key={item.id} className="border-b border-slate-400 h-10">
-                          <td className="p-2 border-r border-slate-400 text-center text-xs text-slate-500">{idx + 1}</td>
-                          <td className="p-2 border-r border-slate-400 uppercase text-[11px] leading-tight">
-                              <div className="font-bold text-slate-800">{item.categoria || '-'}</div>
-                              <div className="text-[9px] text-slate-500 font-medium mt-0.5">{item.bodega || 'PRINCIPAL'}</div>
-                          </td>
-                          <td className="p-2 border-r border-slate-400 uppercase leading-tight">
-                              <div>
-                                  <span className="font-bold text-xs">{item.nombre}</span>
-                                  {item.codigo && <span className="text-[10px] text-slate-500 ml-1 font-mono">[{item.codigo}]</span>}
-                              </div>
-                              <div className="text-[9px] text-slate-500 font-medium mt-0.5">UNIDAD: {item.unidad}</div>
-                          </td>
-                          <td className={cn("p-2 text-center font-bold text-base bg-slate-100/50", printType === 'audit' ? "border-r border-slate-400" : "")}>
-                              {item.cantidad}
-                          </td>
-                          
-                          {printType === 'audit' && (
-                              <>
-                                  <td className="p-2 border-r border-slate-400 text-center"></td>
-                                  <td className="p-2 text-right font-medium text-xs">
-                                      ${Number(item.valor_perdida || 0).toFixed(2)}
+                  {processedItems.map((item, idx) => {
+                      // 🔧 CAMBIO DE DISEÑO: igual que en pantalla, la categoría ya no se
+                      // repite en cada fila — sale una sola vez como encabezado de grupo.
+                      const prevItem = processedItems[idx - 1];
+                      const showCategoryHeader = !prevItem || (prevItem.categoria || '') !== (item.categoria || '');
+                      return (
+                      <React.Fragment key={item.id}>
+                          {showCategoryHeader && (
+                              <tr className="bg-slate-100">
+                                  <td colSpan={printType === 'audit' ? 5 : 3} className="p-1 text-[10px] font-black uppercase tracking-wide text-slate-600 border-b border-slate-400">
+                                      {item.categoria || 'SIN CATEGORÍA'}
                                   </td>
-                              </>
+                              </tr>
                           )}
-                      </tr>
-                  ))}
+                          <tr className="border-b border-slate-300">
+                              <td className="p-1 border-r border-slate-400 text-center text-[10px] text-slate-500">{idx + 1}</td>
+                              <td className="p-1 border-r border-slate-400 uppercase leading-tight">
+                                  <span className="font-bold text-[11px]">{item.nombre}</span>
+                                  {item.codigo && <span className="text-[9px] text-slate-500 ml-1 font-mono">[{item.codigo}]</span>}
+                                  <span className="text-[9px] text-slate-500 font-medium ml-1">— {item.bodega || 'PRINCIPAL'} ({item.unidad})</span>
+                              </td>
+                              <td className={cn("p-1 text-center font-bold text-sm bg-slate-100/50", printType === 'audit' ? "border-r border-slate-400" : "")}>
+                                  {item.cantidad}
+                              </td>
+                              
+                              {printType === 'audit' && (
+                                  <>
+                                      <td className="p-1 border-r border-slate-400 text-center"></td>
+                                      <td className="p-1 text-right font-medium text-[10px]">
+                                          ${Number(item.valor_perdida || 0).toFixed(2)}
+                                      </td>
+                                  </>
+                              )}
+                          </tr>
+                      </React.Fragment>
+                  )})}
                   {processedItems.length === 0 && (
                       <tr>
-                          <td colSpan={printType === 'audit' ? "6" : "4"} className="p-4 text-center text-slate-500 italic">No hay productos en esta vista.</td>
+                          <td colSpan={printType === 'audit' ? "5" : "3"} className="p-4 text-center text-slate-500 italic">No hay productos en esta vista.</td>
                       </tr>
                   )}
               </tbody>
