@@ -620,9 +620,17 @@ const OrdersPanel = ({
                         <div className="flex gap-1 justify-center">
                           {/* SIEMPRE SE PUEDE VISUALIZAR */}
                           {actionConfig.showView && (
-                            <Button variant="ghost" size="icon" onClick={() => onViewOrder(order)} className="h-7 w-7 text-blue-600 hover:bg-blue-50" title="Ver detalles">
+                            // 🔧 NUEVO: es un <a> real con href (no solo un botón con onClick) para que
+                            // el clic derecho del navegador -> "Abrir enlace en una pestaña nueva" funcione.
+                            // El clic normal sigue abriendo el detalle localmente, como siempre.
+                            <a
+                              href={`#orden=${order.id}`}
+                              onClick={(e) => { e.preventDefault(); onViewOrder(order); }}
+                              className="h-7 w-7 inline-flex items-center justify-center rounded-md text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                              title="Ver detalles (clic derecho para abrir en pestaña nueva)"
+                            >
                               <Eye className="h-3.5 w-3.5" />
-                            </Button>
+                            </a>
                           )}
 
                           {/* SIEMPRE SE PUEDE CLONAR (Incluso anuladas o archivadas, para recuperar info) */}

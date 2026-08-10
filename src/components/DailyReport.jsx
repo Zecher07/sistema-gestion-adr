@@ -273,7 +273,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
           if (cobroAnticipo && Number(o.anticipo) > 0) {
               const numOrden = o.order_number || o.orderNumber || o.id;
               txs.push({
-                id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `Anticipo #${numOrden}`, orderNumber: numOrden, income: Number(o.anticipo), expense: 0, balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' 
+                id: `sale-${o.id}`, type: 'VENTA', description: o.cliente, details: `${o.tipoLetrero || o.tipo_trabajo || ''} — Anticipo #${numOrden}`, orderNumber: numOrden, income: Number(o.anticipo), expense: 0, balanceNote: o.financials?.saldo > 0 ? `Saldo pdte` : 'PAGADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' 
               });
           }
       }
@@ -283,7 +283,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
           if (abonoDateStr === selectedDate && isUserMatch(abono.cobrador, targetUserName, abono.cobrador_id, targetUserId)) {
                const numOrden = o.order_number || o.orderNumber || o.id;
                txs.push({
-                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, details: `Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`, orderNumber: numOrden, income: Number(abono.monto), expense: 0, balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false, originalOrder: o, abonoId: abono.id, paymentMethod: abono.metodoPago || abono.metodo_pago || abono.forma_pago || abono.formaPago || 'EFECTIVO' 
+                  id: `abono-${abono.id}`, type: 'ABONO', description: o.cliente, details: `${o.tipoLetrero || o.tipo_trabajo || ''} — Abono #${numOrden} ${abono.nota ? `(${abono.nota})` : ''}`, orderNumber: numOrden, income: Number(abono.monto), expense: 0, balanceNote: 'ABONO REGISTRADO', isManual: false, isAnulada: false, originalOrder: o, abonoId: abono.id, paymentMethod: abono.metodoPago || abono.metodo_pago || abono.forma_pago || abono.formaPago || 'EFECTIVO' 
                });
           }
       });
@@ -305,7 +305,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
               || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName }));
           if (cobroSaldo) {
               const numOrden = o.order_number || o.orderNumber || o.id;
-              txs.push({ id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `Saldo Final #${numOrden}`, orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' });
+              txs.push({ id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `${o.tipoLetrero || o.tipo_trabajo || ''} — Saldo Final #${numOrden}`, orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' });
           }
       }
     });
@@ -317,7 +317,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                 || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName }));
             if (cobroOriginal && Number(o.anticipo) > 0) {
                 const numOrden = o.order_number || o.orderNumber || o.id;
-                txs.push({ id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `Anulación #${numOrden}`, orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' });
+                txs.push({ id: `cancel-${o.id}`, type: 'ANULACIÓN', description: o.cliente, details: `${o.tipoLetrero || o.tipo_trabajo || ''} — Anulación #${numOrden}`, orderNumber: numOrden, income: 0, expense: Number(o.anticipo), balanceNote: 'ANULADO', isManual: false, isAnulada: true, originalOrder: o, paymentMethod: o.formaPagoAnticipo || o.forma_pago_anticipo || 'EFECTIVO' });
             }
         }
     });
@@ -502,7 +502,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                  </div>
             </div>
 
-            {/* 🔧 NUEVO: buscador dentro del reporte del día actual */}
+            {/* Buscador (única parte, junto con la tabla, que sí queríamos cambiar) */}
             <div className="print:hidden relative max-w-sm">
                 <Search className="h-4 w-4 text-slate-400 absolute left-3 top-2.5" />
                 <input
@@ -538,88 +538,100 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                         </div>
                     </div>
 
-                    <div className="grid grid-cols-[40px_1fr_80px_115px_90px_90px_140px_40px] bg-orange-300 border-b-2 border-slate-900 font-bold text-center divide-x-2 divide-slate-900 print:bg-orange-300 print:print-color-adjust-exact">
-                        <div className="py-2">#</div>
-                        <div className="py-2">DESCRIPCION</div>
-                        <div className="py-2 text-[10px] leading-tight flex items-center justify-center">ORDEN DE<br/>PRODUCCION</div>
-                        <div className="py-2 text-[10px] leading-tight flex items-center justify-center text-slate-900">MÉTODO PAGO</div>
-                        <div className="py-2">INGRESO</div>
-                        <div className="py-2">EGRESO</div>
-                        <div className="py-2">NOTA</div>
-                        <div className="py-2 bg-slate-200 print:hidden"></div>
-                    </div>
-
                     <div className="flex-1 overflow-auto">
+                    <table className="w-full text-sm">
+                        <thead className="bg-slate-100 border-b border-slate-200 text-slate-600 text-xs uppercase sticky top-0 z-10">
+                            <tr>
+                                <th className="px-3 py-3 text-center w-10">#</th>
+                                <th className="px-3 py-3 text-left font-bold">Descripción del Movimiento</th>
+                                <th className="px-3 py-3 text-center">Orden</th>
+                                <th className="px-3 py-3 text-center">Método</th>
+                                <th className="px-3 py-3 text-right font-bold text-green-700">Ingreso</th>
+                                <th className="px-3 py-3 text-right font-bold text-red-700">Egreso</th>
+                                <th className="px-3 py-3 text-center">Nota</th>
+                                <th className="px-2 py-3 text-center print:hidden w-16">Acc.</th>
+                            </tr>
+                        </thead>
+                        <tbody className="divide-y divide-slate-100">
                         {visibleTransactions.map((tx, idx) => {
                             const isEfectivo = formatPaymentMethod(tx.paymentMethod) === 'EFECTIVO';
+                            const tipoColor = tx.isAnulada ? 'text-red-600' : tx.isVale ? 'text-red-700' : tx.type === 'VENTA' ? 'text-blue-700' : tx.type === 'ABONO' ? 'text-emerald-700' : tx.type === 'COBRO SALDO' ? 'text-orange-700' : 'text-purple-700';
                             
                             return (
-                            <div 
+                            <tr 
                                 key={tx.id} 
                                 onClick={() => { if (!tx.isManual && tx.originalOrder && onViewOrder) { onViewOrder(tx.originalOrder); } }} 
                                 className={cn(
-                                    "grid grid-cols-[40px_1fr_80px_115px_90px_90px_140px_40px] border-b border-slate-300 divide-x divide-slate-300 transition-colors group", 
-                                    !isEfectivo ? "bg-indigo-50/70 text-indigo-900" : (idx % 2 === 0 ? "bg-white" : "bg-slate-50"), 
-                                    tx.isAnulada ? "bg-red-50" : "", 
-                                    tx.isVale ? "bg-red-50/50" : "", 
-                                    !tx.isManual && !tx.isVale && isEfectivo ? "cursor-pointer hover:bg-blue-100" : "",
-                                    !isEfectivo && !tx.isManual ? "cursor-pointer hover:bg-indigo-100" : ""
+                                    "transition-colors group",
+                                    !tx.isManual && !tx.isVale ? "cursor-pointer" : "",
+                                    tx.isAnulada ? "bg-red-50/50" : tx.isVale ? "bg-red-50/30" : !isEfectivo ? "bg-indigo-50/30 hover:bg-indigo-50" : "hover:bg-blue-50"
                                 )}
                             >
-                                <div className="py-2 font-bold text-center text-slate-500 flex items-center justify-center">{idx + 1}</div>
+                                <td className="px-3 py-2.5 text-center text-slate-400 font-bold text-xs">{idx + 1}</td>
                                 
-                                <div className="py-1 px-2 flex flex-col justify-center">
-                                    <div className="flex items-center gap-2">
-                                        {tx.isAnulada && <Undo2 className="h-3 w-3 text-red-600" />}
-                                        {tx.isVale && <Receipt className="h-3 w-3 text-red-600" />}
-                                        <span className={cn("text-[10px] font-bold px-1 rounded border border-black uppercase print:border-black", tx.isAnulada ? 'bg-red-600 text-white border-red-800' : tx.isVale ? 'bg-red-600 text-white' : tx.type === 'VENTA' ? 'bg-green-200' : tx.type === 'ABONO' ? 'bg-blue-200' : tx.type.includes('GASTO') ? 'bg-red-200' : 'bg-yellow-200')}>{tx.type}</span>
-                                        {tx.isManual && isEditable ? <input className="flex-1 bg-transparent border-b border-dotted outline-none font-semibold" value={tx.description} onChange={(e) => updateManualTransaction(tx.id, 'description', e.target.value)} /> : <span className="font-bold uppercase truncate">{tx.description} {tx.details}</span>}
+                                <td className="px-3 py-2.5">
+                                    <div className="flex flex-wrap items-center gap-1 text-xs">
+                                        {tx.isAnulada && <Undo2 className="h-3 w-3 text-red-600 shrink-0" />}
+                                        {tx.isVale && <Receipt className="h-3 w-3 text-red-600 shrink-0" />}
+                                        {tx.isManual && isEditable ? (
+                                            <input className="flex-1 bg-transparent border-b border-dotted outline-none font-semibold" value={tx.description} onChange={(e) => updateManualTransaction(tx.id, 'description', e.target.value)} />
+                                        ) : (
+                                            <span className="font-bold uppercase leading-tight">
+                                                <span className={tipoColor}>{tx.type}</span>
+                                                <span className="text-slate-400 mx-1">-</span>
+                                                <span className="text-slate-800">{tx.description}</span>
+                                                {tx.details && <><span className="text-slate-400 mx-1">-</span><span className="text-slate-500 font-medium normal-case">{tx.details}</span></>}
+                                            </span>
+                                        )}
                                     </div>
-                                </div>
+                                </td>
                                 
-                                <div className="py-2 text-center font-mono font-bold text-slate-700 flex items-center justify-center">
+                                <td className="px-3 py-2.5 text-center font-mono font-medium text-slate-600 text-xs">
                                    {tx.isManual && isEditable ? <input className="w-full text-center bg-transparent outline-none" value={tx.orderNumber} onChange={(e) => updateManualTransaction(tx.id, 'orderNumber', e.target.value)} /> : tx.orderNumber}
-                                </div>
+                                </td>
 
-                                <div className="py-2 px-1 text-center text-xs font-bold text-black uppercase flex items-center justify-center">
+                                <td className="px-3 py-2.5 text-center">
                                     {tx.isManual && isEditable ? (
-                                        <select className="w-full bg-transparent outline-none uppercase text-center font-black text-black cursor-pointer" value={tx.paymentMethod || 'EFECTIVO'} onChange={(e) => updateManualTransaction(tx.id, 'paymentMethod', e.target.value)}>
+                                        <select className="w-full bg-transparent outline-none uppercase text-center text-xs cursor-pointer" value={tx.paymentMethod || 'EFECTIVO'} onChange={(e) => updateManualTransaction(tx.id, 'paymentMethod', e.target.value)}>
                                             <option value="EFECTIVO">EFECTIVO</option><option value="TRANSFERENCIA">TRANSFERENCIA</option><option value="TARJETA">TARJETA</option><option value="CHEQUE">CHEQUE</option>
                                         </select>
                                     ) : (
-                                        <span className={cn("w-full text-center break-words leading-tight", !isEfectivo && "text-indigo-800 font-black")}>{formatPaymentMethod(tx.paymentMethod)}</span>
+                                        <span className={cn("text-xs px-2 py-1 rounded-md font-medium inline-block", isEfectivo ? "bg-emerald-50 text-emerald-700" : "bg-indigo-50 text-indigo-700")}>
+                                            {formatPaymentMethod(tx.paymentMethod).split('-')[0].trim()}
+                                        </span>
                                     )}
-                                </div>
+                                </td>
                                 
-                                <div className={cn("py-2 px-2 text-right font-bold flex flex-col justify-center items-end", isEfectivo ? "text-green-700" : "text-indigo-600 opacity-80")}>
+                                <td className="px-3 py-2.5 text-right font-bold">
                                    {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.income} onChange={(e) => updateManualTransaction(tx.id, 'income', e.target.value)} /> : (Number(tx.income) > 0 ? (
-                                       <>
-                                           <span>${Number(tx.income).toFixed(2)}</span>
-                                           {!isEfectivo && <span className="text-[7.5px] leading-none uppercase text-indigo-500 mt-1">No suma a caja</span>}
-                                       </>
-                                   ) : '-')}
-                                </div>
+                                       <div className="flex flex-col items-end">
+                                           <span className={isEfectivo ? "text-green-600" : "text-indigo-600 opacity-80"}>${Number(tx.income).toFixed(2)}</span>
+                                           {!isEfectivo && <span className="text-[9px] leading-none uppercase text-indigo-500 mt-0.5">No suma a caja</span>}
+                                       </div>
+                                   ) : <span className="text-slate-300">-</span>)}
+                                </td>
                                 
-                                <div className={cn("py-2 px-2 text-right font-bold flex flex-col justify-center items-end", isEfectivo ? "text-red-700" : "text-indigo-600 opacity-80")}>
+                                <td className="px-3 py-2.5 text-right font-bold">
                                    {tx.isManual && isEditable ? <input type="number" className="w-full text-right bg-transparent outline-none" value={tx.expense} onChange={(e) => updateManualTransaction(tx.id, 'expense', e.target.value)} /> : (Number(tx.expense) > 0 ? (
-                                       <>
-                                           <span>${Number(tx.expense).toFixed(2)}</span>
-                                           {!isEfectivo && <span className="text-[7.5px] leading-none uppercase text-indigo-500 mt-1">No suma a caja</span>}
-                                       </>
-                                   ) : '-')}
-                                </div>
+                                       <div className="flex flex-col items-end">
+                                           <span className={isEfectivo ? "text-red-600" : "text-indigo-600 opacity-80"}>${Number(tx.expense).toFixed(2)}</span>
+                                           {!isEfectivo && <span className="text-[9px] leading-none uppercase text-indigo-500 mt-0.5">No suma a caja</span>}
+                                       </div>
+                                   ) : <span className="text-slate-300">-</span>)}
+                                </td>
                                 
-                                <div className="py-2 px-2 text-xs text-slate-600 truncate flex items-center justify-center">
-                                   {tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none text-center" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : <span className={cn(tx.balanceNote?.includes('DEBE') ? "text-red-600 bg-red-50 px-1 rounded" : "text-green-700")}>{tx.balanceNote}</span>}
-                                </div>
+                                <td className="px-3 py-2.5 text-center text-xs text-slate-600">
+                                   {tx.isManual && isEditable ? <input className="w-full bg-transparent outline-none text-center" value={tx.balanceNote} onChange={(e) => updateManualTransaction(tx.id, 'balanceNote', e.target.value)} /> : <span className={cn(tx.balanceNote?.includes('DEBE') ? "text-red-600 bg-red-50 px-1.5 py-0.5 rounded" : "text-green-700")}>{tx.balanceNote}</span>}
+                                </td>
                                 
-                                <div className="flex items-center justify-center bg-slate-50 print:hidden gap-1">
+                                <td className="px-2 py-2.5 print:hidden">
+                                <div className="flex items-center justify-center gap-1">
                                     {tx.isManual && isEditable ? (
                                         <button onClick={(e) => { e.stopPropagation(); removeManualTransaction(tx.id); }} className="text-red-400 hover:text-red-600 font-bold">X</button>
                                     ) : (
                                         <>
                                             {!tx.isManual && !tx.isVale && <ExternalLink className="h-4 w-4 text-blue-500 opacity-0 group-hover:opacity-100 transition-opacity" />}
-                                            {/* 🔧 NUEVO: reasignar el cobro a otro usuario (solo Admin, solo si viene de una orden real) */}
+                                            {/* 🔧 reasignar el cobro a otro usuario (solo Admin, solo si viene de una orden real) */}
                                             {isAdmin && !tx.isManual && !tx.isVale && tx.originalOrder && (
                                                 reassigningTxId === tx.id ? (
                                                     <select
@@ -649,8 +661,11 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                                         </>
                                     )}
                                 </div>
-                            </div>
+                                </td>
+                            </tr>
                         )})}
+                        </tbody>
+                    </table>
                         {isEditable && isAdmin && (
                            <div className="p-4 flex gap-4 bg-slate-100 print:hidden border-t border-slate-300">
                                <Button variant="outline" onClick={() => addManualTransaction('GASTO')} className="border-red-300 text-red-700 hover:bg-red-50">+ Gasto Manual</Button>
@@ -689,7 +704,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
             {!isEditable && <div className="text-xs text-amber-600 mt-4 print:hidden flex items-center gap-2 justify-center bg-amber-50 p-2 rounded border border-amber-200"><AlertCircle className="h-4 w-4" /> Reporte histórico. No se pueden realizar cambios.</div>}
             
             {isAdmin && debugInfo && (
-                <div className="bg-slate-900 text-slate-300 p-4 rounded-xl mt-8 font-mono text-xs shadow-2xl animate-in slide-in-from-bottom-10 print:hidden relative">
+                <div className="bg-slate-900 text-slate-300 p-4 rounded-xl font-mono text-xs shadow-2xl animate-in slide-in-from-bottom-10 print:hidden relative">
                     <div className="flex items-center gap-2 mb-2 text-green-400 font-bold uppercase"><Bug className="h-4 w-4"/> Diagnóstico del Cálculo</div>
                     <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
                         <div className="space-y-1">

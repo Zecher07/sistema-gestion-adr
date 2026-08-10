@@ -319,9 +319,15 @@ const ProformasPanel = ({
                     </td>
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center gap-1">
-                        <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-blue-600" onClick={() => onViewProforma(proforma)}>
+                        {/* 🔧 NUEVO: <a> real con href para que el clic derecho -> pestaña nueva funcione */}
+                        <a
+                          href={`#proforma=${proforma.id}`}
+                          onClick={(e) => { e.preventDefault(); onViewProforma(proforma); }}
+                          className="h-8 w-8 inline-flex items-center justify-center rounded-md text-slate-500 hover:text-blue-600 hover:bg-blue-50 transition-colors cursor-pointer"
+                          title="Ver cotización (clic derecho para abrir en pestaña nueva)"
+                        >
                           <Eye className="h-4 w-4" />
-                        </Button>
+                        </a>
                         {canEdit(proforma) && (
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-orange-600" onClick={() => onEditProforma(proforma)}>
                             <Edit className="h-4 w-4" />

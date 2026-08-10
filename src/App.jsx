@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
-import { Menu, Settings, X } from 'lucide-react'; 
+import { Menu, Settings, X, Loader2 } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
@@ -49,18 +49,41 @@ function App() {
   const [kanbanTasks, setKanbanTasks] = useState([]);
   const [staffUsers, setStaffUsers] = useState([]); 
   
-  const [currentView, setCurrentView] = useState('inicio');
+  // 🔧 FIX: antes 'currentView' siempre arrancaba en 'inicio' (era un useState fijo),
+  // así que CUALQUIER recarga de página (F5) te mandaba de vuelta a Inicio, sin importar
+  // dónde estabas. Ahora se recuerda durante la sesión del navegador (sessionStorage),
+  // y solo se reinicia a 'inicio' cuando hay un login real (ver handleLogin más abajo).
+  const [currentView, setCurrentView] = useState(() => sessionStorage.getItem('currentView') || 'inicio');
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
   const [showForm, setShowForm] = useState(false);
   const [showAvailabilityModal, setShowAvailabilityModal] = useState(false);
   
   const [showClientFormModal, setShowClientFormModal] = useState(false);
   const [editingClient, setEditingClient] = useState(null); 
-  // 🔧 NUEVO: para navegar directo al historial de un cliente desde otra pantalla
+  // 🔧 NUEVO: para abrir cliente/orden/proforma en una PESTAÑA NUEVA. Usamos <a href="#...">
+  // reales (no solo onClick) para que el clic derecho -> "Abrir en pestaña nueva" del
+  // propio navegador también funcione, no solo nuestro botón dedicado.
   const [pendingExpedienteClientId, setPendingExpedienteClientId] = useState(null);
-  const handleGoToClientProfile = (clienteId) => {
-      setCurrentView('clientes-lista');
-      setPendingExpedienteClientId(clienteId);
+  const buildClientTabUrl = (clienteId) => `#cliente=${clienteId}`;
+  const buildOrderTabUrl = (ordenId) => `#orden=${ordenId}`;
+  const buildProformaTabUrl = (proformaId) => `#proforma=${proformaId}`;
+  const buildViewTabUrl = (viewId) => `#view=${viewId}`;
+  // 🔧 NUEVO: si la pestaña se abrió con un enlace directo (#orden=, #proforma=,
+  // #cliente=), evitamos que se vea un "destello" de la pantalla de Inicio antes de
+  // que aparezca lo que realmente se pidió. Mientras esto sea true, se muestra una
+  // pantalla en blanco de carga en vez del contenido normal de la app.
+  const [pendingDeepLink, setPendingDeepLink] = useState(() => /^#(orden|proforma|cliente)=/.test(window.location.hash));
+
+  // Respaldo: si por algún motivo el enlace nunca se resuelve (id inválido, dato
+  // borrado, etc.), no dejamos a la persona atascada en una pantalla en blanco.
+  useEffect(() => {
+      if (!pendingDeepLink) return;
+      const t = setTimeout(() => setPendingDeepLink(false), 6000);
+      return () => clearTimeout(t);
+  }, [pendingDeepLink]);
+  const openClientProfileInNewTab = (clienteId) => {
+      if (!clienteId) return;
+      window.open(`${window.location.origin}${window.location.pathname}${buildClientTabUrl(clienteId)}`, '_blank');
   };
 
   const [archivedNotifications, setArchivedNotifications] = useState([]);
@@ -150,6 +173,20 @@ function App() {
     const savedUser = localStorage.getItem('currentUser');
     if (savedUser) { loadedUser = JSON.parse(savedUser); setUser(loadedUser); fetchUserPermissions(loadedUser.role); }
     fetchAllData(loadedUser);
+    // 🔧 NUEVO: si la pestaña se abrió con #cliente=ID, #orden=ID o #proforma=ID
+    // (desde "Abrir en pestaña nueva" o un clic derecho del navegador), navega
+    // directo a esa pantalla/modal. Las órdenes y proformas necesitan que 'orders'/
+    // 'proformas' ya estén cargadas, así que se resuelven en un efecto aparte más abajo.
+    const hashCliente = window.location.hash.match(/^#cliente=(.+)$/);
+    if (hashCliente) {
+        setCurrentView('clientes-lista');
+        setPendingExpedienteClientId(hashCliente[1]);
+    }
+    // 🔧 NUEVO: soporte para #view=<id> (clic derecho en la barra lateral -> pestaña nueva)
+    const hashView = window.location.hash.match(/^#view=(.+)$/);
+    if (hashView) {
+        setCurrentView(hashView[1]);
+    }
     try {
       if(localStorage.getItem('archivedNotifications')) setArchivedNotifications(JSON.parse(localStorage.getItem('archivedNotifications')));
       if(localStorage.getItem('kanbanTasksDB')) setKanbanTasks(JSON.parse(localStorage.getItem('kanbanTasksDB')));
@@ -159,6 +196,30 @@ function App() {
   }, []);
 
   useEffect(() => { localStorage.setItem('realtimeEvents', JSON.stringify(realtimeEvents)); }, [realtimeEvents]);
+
+  // 🔧 NUEVO: guarda la pantalla actual para que sobreviva a un F5
+  useEffect(() => { sessionStorage.setItem('currentView', currentView); }, [currentView]);
+
+  // 🔧 NUEVO: resuelve #orden=ID / #proforma=ID una vez que 'orders'/'proformas' ya
+  // cargaron (al abrir la app con esos datos aún no están disponibles en el primer render).
+  useEffect(() => {
+      const hashOrden = window.location.hash.match(/^#orden=(.+)$/);
+      if (hashOrden && orders.length > 0) {
+          const target = orders.find(o => String(o.id) === hashOrden[1]);
+          if (target) { handleViewOrder(target, 'link'); window.history.replaceState(null, '', window.location.pathname); }
+          setPendingDeepLink(false);
+      }
+      const hashProforma = window.location.hash.match(/^#proforma=(.+)$/);
+      if (hashProforma && proformas.length > 0) {
+          const targetP = proformas.find(p => String(p.id) === hashProforma[1]);
+          if (targetP) { setViewProforma(targetP); window.history.replaceState(null, '', window.location.pathname); }
+          setPendingDeepLink(false);
+      }
+      const hashCliente = window.location.hash.match(/^#cliente=/);
+      if (hashCliente && clients.length > 0) {
+          setPendingDeepLink(false);
+      }
+  }, [orders, proformas, clients]);
 
   useEffect(() => {
     if (!user) return;
@@ -240,8 +301,8 @@ function App() {
     try { const { data } = await supabase.from('role_permissions').select('allowed_views').eq('role', role).single(); if (data) setAllowedViews(data.allowed_views || []); } catch (error) { console.error(error); }
   };
 
-  const handleLogin = (userData) => { setUser(userData); localStorage.setItem('currentUser', JSON.stringify(userData)); fetchUserPermissions(userData.role); fetchAllData(userData); };
-  const handleLogout = () => { setUser(null); setAllowedViews([]); localStorage.removeItem('currentUser'); };
+  const handleLogin = (userData) => { setUser(userData); localStorage.setItem('currentUser', JSON.stringify(userData)); setCurrentView('inicio'); sessionStorage.setItem('currentView', 'inicio'); fetchUserPermissions(userData.role); fetchAllData(userData); };
+  const handleLogout = () => { setUser(null); setAllowedViews([]); localStorage.removeItem('currentUser'); sessionStorage.removeItem('currentView'); };
 
   const handleOrderSuccess = async () => {
     if (proformaToConvertId) {
@@ -411,6 +472,12 @@ function App() {
   const handleArchiveOrder = async (order) => { await supabase.from('ordenes').update({ status: 'ARCHIVADA' }).eq('id', order.id); setViewOrder(null); toast({ title: "Orden Archivada" }); };
 
   if (!user) return <><Login onLogin={handleLogin} /><Toaster /></>;
+  if (pendingDeepLink) return (
+      <div className="fixed inset-0 bg-white flex flex-col items-center justify-center gap-3 z-[999]">
+          <Loader2 className="h-8 w-8 animate-spin text-blue-600" />
+          <span className="text-sm text-slate-400">Abriendo...</span>
+      </div>
+  );
 
   const renderContent = () => {
     if (currentView === 'admin-usuarios') return <UserManagement />;
@@ -531,7 +598,9 @@ function App() {
         staffUsers={staffUsers} 
         clients={clients}
         onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }}
-        onGoToClientProfile={handleGoToClientProfile}
+        orders={orders}
+        onSwitchOrder={(o) => { setViewOrder(o); }}
+        onOpenClientProfileNewTab={openClientProfileInNewTab}
         onClose={() => setViewOrder(null)} 
         onProductToggle={handleProductToggle} 
         isTaskView={viewOrderSource === 'tasks'} 
