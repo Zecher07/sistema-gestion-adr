@@ -4,13 +4,14 @@ import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Printer, CheckCircle, FileText, Image as ImageIcon, CreditCard, DollarSign, Calendar as CalendarIcon, 
-  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2, RotateCcw, Undo2
+  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2, RotateCcw, Undo2, ExternalLink
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
 import { Checkbox } from '@/components/ui/checkbox';
 import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/lib/utils';
 import { isUserInList } from '@/utils/userMatch';
+import ClientExpedienteModal from './ClientExpedienteModal';
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
@@ -329,8 +330,10 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
     );
 };
 
-const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], onEditClient, onGoToClientProfile, onClose, onProductToggle, isTaskView, onAdvanceWorkflow, onRegressWorkflow, onArchiveOrder, onUpdateOrder, onGenerateInvoice, canEdit, onAbonoOrder }) => {
+const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders = [], onEditClient, onSwitchOrder, onOpenClientProfileNewTab, onClose, onProductToggle, isTaskView, onAdvanceWorkflow, onRegressWorkflow, onArchiveOrder, onUpdateOrder, onGenerateInvoice, canEdit, onAbonoOrder }) => {
   const [previewImage, setPreviewImage] = useState(null);
+  // 🔧 NUEVO: popup del expediente del cliente (historial + editar), sin salir de la orden
+  const [showClientExpediente, setShowClientExpediente] = useState(false);
   const { toast } = useToast();
   const [localProducts, setLocalProducts] = useState([]);
   const [localVendedor, setLocalVendedor] = useState('');
@@ -626,24 +629,29 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], onEditC
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-4">
                             <span className="font-bold text-right text-slate-600">Cliente:</span>
                             <div className="flex flex-col">
-                                <button
-                                    onClick={() => {
-                                        const clienteId = order.clienteId || order.cliente_id;
-                                        if (clienteId && onGoToClientProfile) {
-                                            onGoToClientProfile(clienteId);
-                                            if (onClose) onClose();
-                                        } else {
-                                            // Respaldo: si por algo no se puede ir al historial, al menos abre editar directo
-                                            const clienteObj = clients?.find(c => c.id === clienteId);
-                                            if (clienteObj && onEditClient) onEditClient(clienteObj);
-                                            else toast({ title: "Cliente no encontrado", description: "No se pudo ubicar la ficha de este cliente.", variant: "destructive" });
-                                        }
-                                    }}
-                                    className="text-blue-600 font-bold uppercase tracking-wide hover:text-blue-800 hover:underline text-left transition-colors cursor-pointer"
-                                    title="Clic para ver el historial de órdenes y editar los datos de este cliente"
-                                >
-                                    {order.cliente || order.cliente_nombre}
-                                </button>
+                                <div className="flex items-center gap-1.5">
+                                    {/* 🔧 NUEVO: es un <a> real con href (no solo un botón con onClick) para
+                                        que el clic derecho del navegador -> "Abrir en pestaña nueva" funcione.
+                                        El clic normal sigue abriendo el popup local, como siempre. */}
+                                    <a
+                                        href={`#cliente=${order.clienteId || order.cliente_id || ''}`}
+                                        onClick={(e) => { e.preventDefault(); setShowClientExpediente(true); }}
+                                        className="text-blue-600 font-bold uppercase tracking-wide hover:text-blue-800 hover:underline text-left transition-colors cursor-pointer"
+                                        title="Clic para ver el historial de órdenes y editar los datos de este cliente (clic derecho para pestaña nueva)"
+                                    >
+                                        {order.cliente || order.cliente_nombre}
+                                    </a>
+                                    {/* Icono aparte, por si prefieren un botón explícito para pestaña nueva */}
+                                    {onOpenClientProfileNewTab && (
+                                        <button
+                                            onClick={() => onOpenClientProfileNewTab(order.clienteId || order.cliente_id)}
+                                            className="text-slate-400 hover:text-blue-600 transition-colors"
+                                            title="Abrir ficha del cliente en una pestaña nueva"
+                                        >
+                                            <ExternalLink className="h-3.5 w-3.5" />
+                                        </button>
+                                    )}
+                                </div>
                                 {(order.ruc || order.cedula || order.cliente_identificacion) && (<span className="text-xs text-slate-500 font-mono mt-0.5">ID/RUC: {order.ruc || order.cedula || order.cliente_identificacion}</span>)}
                             </div>
                         </div>
@@ -1045,6 +1053,33 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], onEditC
                   </motion.div>
                 )}
             </AnimatePresence>
+
+            {/* 🔧 NUEVO: popup del expediente del cliente, sin salir de la orden */}
+            {showClientExpediente && (() => {
+                const clienteId = order.clienteId || order.cliente_id;
+                const clienteObj = clients?.find(c => c.id === clienteId);
+                if (!clienteObj) {
+                    // Si no se encuentra la ficha completa, al menos avisamos en vez de fallar en silencio
+                    return (
+                        <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-[80] p-4" onClick={() => setShowClientExpediente(false)}>
+                            <div className="bg-white rounded-xl p-6 max-w-sm text-center" onClick={e => e.stopPropagation()}>
+                                <p className="font-bold text-slate-700 mb-3">No se pudo ubicar la ficha completa de este cliente.</p>
+                                <Button onClick={() => setShowClientExpediente(false)}>Cerrar</Button>
+                            </div>
+                        </div>
+                    );
+                }
+                return (
+                    <ClientExpedienteModal
+                        cliente={clienteObj}
+                        orders={orders}
+                        onClose={() => setShowClientExpediente(false)}
+                        onEditClient={onEditClient ? (c) => { setShowClientExpediente(false); onEditClient(c); } : null}
+                        onViewOrder={onSwitchOrder ? (o) => { setShowClientExpediente(false); onSwitchOrder(o); } : null}
+                        canViewOrderDetails={true}
+                    />
+                );
+            })()}
         </div>
 
         {/* 🔥 CONTENEDOR INVISIBLE DE IMPRESIÓN 🔥 */}

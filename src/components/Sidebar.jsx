@@ -18,18 +18,37 @@ const MenuItem = ({ item, isActive, currentView, onClick, onSubItemClick }) => {
 
   return (
     <div className="mb-1">
-      <button onClick={handleClick} className={cn("w-full flex items-center justify-between px-4 py-3 text-sm font-medium transition-all duration-200 group relative", isActive ? "text-blue-400 bg-slate-800 border-l-4 border-blue-500" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 hover:pl-5 border-l-4 border-transparent")}>
-        <div className="flex items-center gap-3"><Icon className={cn("h-5 w-5", isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-300")} /><span>{item.label}</span></div>
-        {hasSubmenu && <div className="text-slate-600">{isSubmenuOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</div>}
-      </button>
+      {/* 🔧 NUEVO: los ítems SIN submenú (páginas de verdad, no "toggles") ahora son
+          <a href="#view=..."> reales, para que el clic derecho -> "Abrir en pestaña
+          nueva" del navegador funcione. "Cerrar Sesión" y los que abren un submenú
+          siguen siendo botones normales, porque no son navegación a una pantalla. */}
+      {!hasSubmenu && item.id !== 'salir' ? (
+        <a
+          href={`#view=${item.id}`}
+          onClick={(e) => { e.preventDefault(); handleClick(); }}
+          className={cn("w-full flex items-center justify-between px-4 py-3 text-sm font-medium transition-all duration-200 group relative cursor-pointer", isActive ? "text-blue-400 bg-slate-800 border-l-4 border-blue-500" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 hover:pl-5 border-l-4 border-transparent")}
+        >
+          <div className="flex items-center gap-3"><Icon className={cn("h-5 w-5", isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-300")} /><span>{item.label}</span></div>
+        </a>
+      ) : (
+        <button onClick={handleClick} className={cn("w-full flex items-center justify-between px-4 py-3 text-sm font-medium transition-all duration-200 group relative", isActive ? "text-blue-400 bg-slate-800 border-l-4 border-blue-500" : "text-slate-400 hover:text-slate-100 hover:bg-slate-800/50 hover:pl-5 border-l-4 border-transparent")}>
+          <div className="flex items-center gap-3"><Icon className={cn("h-5 w-5", isActive ? "text-blue-400" : "text-slate-500 group-hover:text-slate-300")} /><span>{item.label}</span></div>
+          {hasSubmenu && <div className="text-slate-600">{isSubmenuOpen ? <ChevronDown className="h-4 w-4" /> : <ChevronRight className="h-4 w-4" />}</div>}
+        </button>
+      )}
 
       <AnimatePresence>
         {hasSubmenu && isSubmenuOpen && (
           <motion.div initial={{ height: 0, opacity: 0 }} animate={{ height: 'auto', opacity: 1 }} exit={{ height: 0, opacity: 0 }} className="overflow-hidden bg-slate-900/50">
             {item.submenu.map((subItem, idx) => (
-                <button key={idx} onClick={() => onSubItemClick(subItem.id)} className={cn("w-full text-left pl-12 pr-4 py-2 text-xs transition-colors border-l-2", currentView === subItem.id ? "text-blue-400 border-blue-500 bg-slate-800/30" : "text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800")}>
+                <a
+                    key={idx}
+                    href={`#view=${subItem.id}`}
+                    onClick={(e) => { e.preventDefault(); onSubItemClick(subItem.id); }}
+                    className={cn("block w-full text-left pl-12 pr-4 py-2 text-xs transition-colors border-l-2 cursor-pointer", currentView === subItem.id ? "text-blue-400 border-blue-500 bg-slate-800/30" : "text-slate-500 border-transparent hover:text-slate-300 hover:bg-slate-800")}
+                >
                   {subItem.label}
-                </button>
+                </a>
             ))}
           </motion.div>
         )}

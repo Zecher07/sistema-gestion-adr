@@ -175,9 +175,10 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
 
               <div className="space-y-2 md:col-span-2">
                 <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                  <Mail className="h-4 w-4 text-slate-400" /> Correo Electrónico
+                  <Mail className="h-4 w-4 text-slate-400" /> Correo Electrónico <span className="text-red-500">*</span>
                 </label>
-                <input type="email" name="email" value={formData.email} onChange={handleChange} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="cliente@ejemplo.com" />
+                <input required type="email" name="email" value={formData.email} onChange={handleChange} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="cliente@ejemplo.com" />
+                <p className="text-[11px] text-slate-400">Obligatorio — se usa para la facturación electrónica.</p>
               </div>
 
               <div className="space-y-2 md:col-span-2">
