@@ -28,23 +28,62 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
   // 🔧 NUEVO: búsqueda global — a diferencia del filtro de abajo (que solo filtra
   // las transacciones del día actual), esto busca en TODAS las órdenes por número
   // o por nombre de cliente, sin importar la fecha, para poder saltar al día correcto.
+  // 🔧 CAMBIO: antes solo mostraba la fecha de CREACIÓN de la orden. Ahora muestra
+  // cada "movimiento" que esa orden generó en el libro diario (creación/anticipo,
+  // cada abono, el retiro/saldo, la anulación si aplica) — así se puede rastrear
+  // rápido todo el camino de una orden, no solo dónde nació.
   const globalSearchResults = useMemo(() => {
       const term = filtroOrden.trim().toLowerCase();
       if (term.length < 2) return [];
-      return orders
-          .filter(o => {
-              const numOrden = String(o.orderNumber || o.order_number || o.id || '').toLowerCase();
-              const cliente = String(o.cliente || o.cliente_nombre || '').toLowerCase();
-              return numOrden.includes(term) || cliente.includes(term);
-          })
-          .map(o => ({
-              id: o.id,
-              numOrden: o.orderNumber || o.order_number || o.id,
-              cliente: o.cliente || o.cliente_nombre,
-              fecha: toLocalDateStr(o.created_at || o.createdAt),
-          }))
-          .filter(r => r.fecha) // descarta si no se pudo determinar la fecha
-          .slice(0, 8); // no saturar la pantalla
+
+      const matchingOrders = orders.filter(o => {
+          const numOrden = String(o.orderNumber || o.order_number || o.id || '').toLowerCase();
+          const cliente = String(o.cliente || o.cliente_nombre || '').toLowerCase();
+          return numOrden.includes(term) || cliente.includes(term);
+      });
+
+      const resultados = [];
+
+      matchingOrders.forEach(o => {
+          const numOrden = o.orderNumber || o.order_number || o.id;
+          const cliente = o.cliente || o.cliente_nombre;
+          const baseInfo = { id: o.id, numOrden, cliente };
+
+          // 1. Creación / Anticipo
+          const fechaCreacion = toLocalDateStr(o.created_at || o.createdAt);
+          if (fechaCreacion) resultados.push({ ...baseInfo, fecha: fechaCreacion, evento: 'Creación / Anticipo' });
+
+          // 2. Cada Abono
+          (o.abonos || []).forEach(abono => {
+              const fechaAbono = toLocalDateStr(abono.fecha);
+              if (fechaAbono) resultados.push({ ...baseInfo, fecha: fechaAbono, evento: 'Abono' });
+          });
+
+          // 3. Saldo / Retiro (si la orden llegó a un estado de cobro final)
+          if (['FINALIZADA', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'ENTREGADO'].includes(o.status)) {
+              const fechaSaldo = toLocalDateStr(o.fecha_pago_saldo || o.updated_at || o.updatedAt);
+              if (fechaSaldo && fechaSaldo !== fechaCreacion) resultados.push({ ...baseInfo, fecha: fechaSaldo, evento: 'Saldo / Retiro' });
+          }
+
+          // 4. Anulación
+          if (o.status === 'ANULADA') {
+              const fechaAnulacion = toLocalDateStr(o.updated_at || o.updatedAt);
+              if (fechaAnulacion) resultados.push({ ...baseInfo, fecha: fechaAnulacion, evento: 'Anulación' });
+          }
+      });
+
+      // Quita duplicados exactos (mismo orden + misma fecha + mismo evento)
+      const vistos = new Set();
+      const sinDuplicados = resultados.filter(r => {
+          const key = `${r.id}-${r.fecha}-${r.evento}`;
+          if (vistos.has(key)) return false;
+          vistos.add(key);
+          return true;
+      });
+
+      return sinDuplicados
+          .sort((a, b) => new Date(b.fecha) - new Date(a.fecha))
+          .slice(0, 20); // no saturar la pantalla
   }, [orders, filtroOrden]);
 
   // 1. CARGA DE DATOS PRINCIPALES
@@ -364,19 +403,29 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                            value={filtroOrden}
                            onChange={e => setFiltroOrden(e.target.value)}
                        />
-                       {/* 🔧 NUEVO: resultados de la búsqueda global, con la fecha real de cada orden */}
+                       {/* 🔧 NUEVO: resultados de la búsqueda global — todas las apariciones de la
+                           orden en el libro (creación, abonos, retiro, anulación), no solo la creación */}
                        {globalSearchResults.length > 0 && (
-                           <div className="absolute top-full left-0 mt-1 w-full md:w-80 bg-white border border-slate-200 rounded-md shadow-lg z-20 overflow-hidden max-h-64 overflow-y-auto">
+                           <div className="absolute top-full left-0 mt-1 w-full md:w-96 bg-white border border-slate-200 rounded-md shadow-lg z-20 overflow-hidden max-h-80 overflow-y-auto">
                                {globalSearchResults.map(r => (
                                    <button
-                                       key={r.id}
+                                       key={`${r.id}-${r.fecha}-${r.evento}`}
                                        onClick={() => { setSelectedDate(r.fecha); setFiltroOrden(''); }}
                                        className={cn(
-                                           "w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-blue-50 transition-colors flex justify-between items-center",
+                                           "w-full text-left px-3 py-2 text-xs border-b border-slate-100 last:border-0 hover:bg-blue-50 transition-colors flex justify-between items-center gap-2",
                                            r.fecha === selectedDate ? "bg-blue-50/50" : ""
                                        )}
                                    >
-                                       <span className="font-bold text-slate-700">#{String(r.numOrden).padStart(5, '0')} — {r.cliente}</span>
+                                       <div className="flex flex-col min-w-0">
+                                           <span className="font-bold text-slate-700 truncate">#{String(r.numOrden).padStart(5, '0')} — {r.cliente}</span>
+                                           <span className={cn(
+                                               "text-[10px] font-bold uppercase w-fit px-1.5 py-0.5 rounded mt-0.5",
+                                               r.evento === 'Creación / Anticipo' ? "bg-blue-100 text-blue-700" :
+                                               r.evento === 'Abono' ? "bg-emerald-100 text-emerald-700" :
+                                               r.evento === 'Saldo / Retiro' ? "bg-orange-100 text-orange-700" :
+                                               "bg-red-100 text-red-700"
+                                           )}>{r.evento}</span>
+                                       </div>
                                        <span className={cn("font-mono ml-2 shrink-0", r.fecha === selectedDate ? "text-blue-600 font-bold" : "text-slate-400")}>
                                            {r.fecha === selectedDate ? "Hoy en vista" : r.fecha}
                                        </span>
