@@ -17,6 +17,7 @@ const ALL_MENU_ITEMS = [
   { id: 'ordenes-sin-factura', label: 'Filtro: Sin Factura', category: 'Producción' },
   { id: 'ordenes-con-factura', label: 'Filtro: Con Factura', category: 'Producción' },
   { id: 'ordenes-credito', label: 'Filtro: Crédito', category: 'Producción' },
+  { id: 'ordenes-impagas', label: 'Filtro: Impagas', category: 'Producción' },
   { id: 'vales', label: 'Vales de Caja', category: 'Producción' }, // <-- DEVUELTO AQUÍ
   { id: 'ordenes-archivadas', label: 'Ver Archivo Muerto (Papelera)', category: 'Producción' },
   { id: 'facturacion-panel', label: 'Módulo de Facturación', category: 'Facturación' },

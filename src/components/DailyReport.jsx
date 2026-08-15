@@ -300,12 +300,23 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
       const saldoFinalReal = saldoCobrado - totalAbonado;
 
-      if (paymentDate === selectedDate && isRelevantStatus && saldoFinalReal > 0) {
+      if (paymentDate === selectedDate && isRelevantStatus) {
           const cobroSaldo = isUserMatch(o.recibido_por_saldo, targetUserName, o.recibido_por_saldo_id, targetUserId)
               || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: targetUserId, name: targetUserName }));
           if (cobroSaldo) {
               const numOrden = o.order_number || o.orderNumber || o.id;
-              txs.push({ id: `pickup-${o.id}`, type: 'COBRO SALDO', description: o.cliente, details: `${o.tipoLetrero || o.tipo_trabajo || ''} — Saldo Final #${numOrden}`, orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' });
+              const titulo = o.tipoLetrero || o.tipo_trabajo || '';
+              // 🔧 NUEVO: separamos "RETIRO" (la orden se completó, se cobró o ya estaba
+              // pagada — 'sin saldo' pendiente) de "CRÉDITO" (se movió adelante pero
+              // quedó con saldo pendiente a crédito, sin cobrar nada en este momento).
+              // Mismo idioma que el Libro Diario General.
+              const pSaldo = String(o.formaPagoSaldo || o.forma_pago_saldo || '').toLowerCase();
+              const esCredito = (pSaldo.includes('crédit') || pSaldo.includes('credit')) && saldoFinalReal > 0.01;
+              if (esCredito) {
+                  txs.push({ id: `pickup-${o.id}`, type: 'CRÉDITO', description: o.cliente, details: `${titulo} — Crédito #${numOrden}`, orderNumber: numOrden, income: 0, expense: 0, balanceNote: 'A CRÉDITO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'CRÉDITO' });
+              } else {
+                  txs.push({ id: `pickup-${o.id}`, type: 'RETIRO', description: o.cliente, details: `${titulo} — Retiro #${numOrden}`, orderNumber: numOrden, income: saldoFinalReal, expense: 0, balanceNote: 'COMPLETADO', isManual: false, isAnulada: false, originalOrder: o, paymentMethod: o.formaPagoSaldo || o.forma_pago_saldo || 'EFECTIVO' });
+              }
           }
       }
     });
@@ -414,7 +425,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
           }).eq('id', orderId);
           if (error) throw error;
 
-      } else if (tx.type === 'COBRO SALDO') {
+      } else if (tx.type === 'RETIRO' || tx.type === 'CRÉDITO') {
           const { error } = await supabase.from('ordenes').update({
               recibido_por_saldo: newUser.full_name,
               recibido_por_saldo_id: newUser.id,
@@ -555,7 +566,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                         <tbody className="divide-y divide-slate-100">
                         {visibleTransactions.map((tx, idx) => {
                             const isEfectivo = formatPaymentMethod(tx.paymentMethod) === 'EFECTIVO';
-                            const tipoColor = tx.isAnulada ? 'text-red-600' : tx.isVale ? 'text-red-700' : tx.type === 'VENTA' ? 'text-blue-700' : tx.type === 'ABONO' ? 'text-emerald-700' : tx.type === 'COBRO SALDO' ? 'text-orange-700' : 'text-purple-700';
+                            const tipoColor = tx.isAnulada ? 'text-red-600' : tx.isVale ? 'text-red-700' : tx.type === 'VENTA' ? 'text-blue-700' : tx.type === 'ABONO' ? 'text-emerald-700' : tx.type === 'RETIRO' ? 'text-orange-700' : tx.type === 'CRÉDITO' ? 'text-amber-600' : 'text-purple-700';
                             
                             return (
                             <tr 
