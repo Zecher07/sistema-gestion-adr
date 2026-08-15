@@ -188,6 +188,11 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
   };
 
   const handleSave = async () => {
+    // 🔧 FIX (respaldo): aunque ya se ocultó el botón, Contabilidad nunca debe poder
+    // crear un vale nuevo — no maneja caja en absoluto.
+    if (!editingVale && user?.role === 'Contabilidad') {
+        return toast({ title: "No permitido", description: "Contabilidad no puede solicitar vales de caja.", variant: "destructive" });
+    }
     if (!formData.recibido_por.trim()) {
         return toast({ title: "Atención", description: "Debe indicar quién recibió el dinero.", variant: "destructive" });
     }
@@ -304,9 +309,13 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                     {isAdminOrContabilidad ? "Administra y aprueba los vales de caja de los vendedores." : "Registra tus retiros. Un administrador o contabilidad debe aprobarlos para que sean válidos."}
                 </p>
             </div>
-            <Button onClick={() => handleOpenModal()} className="bg-red-600 hover:bg-red-700 text-white gap-2 shadow-sm">
-                <Plus className="h-4 w-4" /> Nuevo Vale
-            </Button>
+            {/* 🔧 FIX: Contabilidad NUNCA debe poder solicitar un vale — no maneja caja
+                en absoluto. Solo Admin o el propio Vendedor pueden crear uno nuevo. */}
+            {user?.role !== 'Contabilidad' && (
+                <Button onClick={() => handleOpenModal()} className="bg-red-600 hover:bg-red-700 text-white gap-2 shadow-sm">
+                    <Plus className="h-4 w-4" /> Nuevo Vale
+                </Button>
+            )}
         </div>
 
         <div className="grid grid-cols-1 gap-6">
