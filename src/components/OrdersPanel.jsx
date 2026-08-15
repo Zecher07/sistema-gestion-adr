@@ -109,6 +109,15 @@ const OrdersPanel = ({
       return isUserInList(order.vendedor_ids, order.vendedor, user);
   };
 
+  // 🔧 NUEVO: función separada de canModify, exclusivamente para decidir quién puede
+  // "cobrar" (registrar un abono/pago). Contabilidad NUNCA debe poder cobrar — eso crea
+  // una caja a su nombre, y Contabilidad no debe manejar caja en absoluto. Sí conserva
+  // el resto de sus permisos de canModify (revisar retenciones, editar datos, etc.).
+  const canCollectPayment = (order) => {
+      if (isAdmin) return true;
+      return isUserInList(order.vendedor_ids, order.vendedor, user);
+  };
+
   // 🔥 VALIDACIÓN DE BORRADO: Si está anulada o archivada, NO se puede anular/borrar
   const canCancel = (order) => {
       if (order.status === 'ANULADA' || order.status === 'ARCHIVADA') return false;
@@ -649,7 +658,10 @@ const OrdersPanel = ({
                                   </Button>
                                 )}
                                 
-                                {saldoReal > 0 && onAbonoOrder && (isAdmin || user.role === 'Contabilidad' || canModify(order)) && (
+                                {/* 🔧 FIX: Contabilidad NUNCA debe poder "cobrar" — eso crea una caja
+                                    a su nombre, y Contabilidad no debe manejar caja en absoluto.
+                                    Solo Admin o el vendedor asignado pueden registrar el cobro. */}
+                                {saldoReal > 0 && onAbonoOrder && canCollectPayment(order) && (
                                   <Button variant="ghost" size="icon" onClick={() => onAbonoOrder(order)} title="Registrar Abono" className="h-7 w-7 text-emerald-600 hover:bg-emerald-50">
                                       <Coins className="h-3.5 w-3.5" />
                                   </Button>

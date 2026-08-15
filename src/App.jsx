@@ -518,13 +518,34 @@ function App() {
        if (currentView === 'ordenes-sin-factura') filtered = filtered.filter(o => !o.financials?.iva);
        if (currentView === 'ordenes-con-factura') filtered = filtered.filter(o => o.financials?.iva > 0);
        if (currentView === 'ordenes-archivadas') filtered = orders.filter(o => o.status === 'ARCHIVADA');
-       
+
+       // 🔧 FIX: antes "Crédito" solo miraba si el método de pago DECÍA "Crédito", sin
+       // importar si ya estaba pagado, vencido, o con saldo pendiente de verdad — por eso
+       // se mezclaba con las impagas. Ahora usa la misma lógica real de Stats.jsx: solo
+       // cuenta como "Crédito" si tiene saldo pendiente Y no está vencido; si está vencido
+       // o no es crédito formal, es "Impaga" — nunca las dos cosas a la vez.
+       const getEstadoCredito = (o) => {
+           const total = Number(o.financials?.total) || 0;
+           const anticipo = Number(o.anticipo) || 0;
+           const retencion = Number(o.retencion || o.financials?.retencion) || 0;
+           const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+           const saldoFinalReal = total - anticipo - retencion - totalAbonado;
+           const pSaldo = String(o.formaPagoSaldo || o.financials?.formaPagoSaldo || '').toLowerCase();
+           const pAnticipo = String(o.formaPagoAnticipo || o.forma_pago_anticipo || '').toLowerCase();
+           const isCredito = pSaldo.includes('crédit') || pSaldo.includes('credit') || pAnticipo.includes('crédit') || pAnticipo.includes('credit');
+           const today = new Date().toISOString().split('T')[0];
+           const fechaVence = o.financials?.creditoVenceSaldo || o.creditoVenceSaldo || o.credito_vence_saldo || o.creditoVenceAnticipo || o.credito_vence_anticipo || o.financials?.creditoVenceAnticipo || '';
+           const isVencido = isCredito && fechaVence && fechaVence < today;
+           if (saldoFinalReal > 0.01 && (!isCredito || isVencido)) return 'impaga';
+           if (saldoFinalReal > 0.01 && isCredito && !isVencido) return 'credito';
+           return 'ok';
+       };
+
        if (currentView === 'ordenes-credito') {
-           filtered = filtered.filter(o => {
-               const pA = String(o.formaPagoAnticipo || o.forma_pago_anticipo || '');
-               const pS = String(o.formaPagoSaldo || o.financials?.formaPagoSaldo || '');
-               return pA.includes('Crédito') || pS.includes('Crédito') || pA.includes('Credito') || pS.includes('Credito');
-           });
+           filtered = filtered.filter(o => getEstadoCredito(o) === 'credito');
+       }
+       if (currentView === 'ordenes-impagas') {
+           filtered = filtered.filter(o => getEstadoCredito(o) === 'impaga');
        }
 
        return (
