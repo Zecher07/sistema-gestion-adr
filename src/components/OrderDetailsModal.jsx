@@ -508,17 +508,29 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
+  // 🔧 AJUSTE: después de migrar la columna fecha_entrega de "solo fecha" a
+  // "fecha y hora" en la base de datos, todas las órdenes viejas quedaron con
+  // 00:00 (medianoche) como hora — porque nunca tuvieron una hora real y Postgres
+  // rellena con medianoche por defecto al convertir el tipo. Como nadie entrega
+  // pedidos a medianoche, tratamos 00:00 como "sin hora real" y mostramos 08:00
+  // en su lugar (hora de apertura típica), en vez de una medianoche confusa.
   const formatDateFull = (dateString) => {
     if (!dateString) return '';
     try {
-      const d = new Date(dateString);
-      return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+      const str = String(dateString);
+      const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(str);
+      const d = new Date(isDateOnly ? `${str}T12:00:00` : str);
+      if (isNaN(d.getTime())) return '';
+      const fecha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+      if (isDateOnly) return fecha; // no había hora real que mostrar
+      const horas = d.getHours();
+      const minutos = d.getMinutes();
+      if (horas === 0 && minutos === 0) return `${fecha} 08:00`; // medianoche = sin hora real registrada
+      return `${fecha} ${String(horas).padStart(2, '0')}:${String(minutos).padStart(2, '0')}`;
     } catch (e) { return ''; }
   };
 
-  // 🔧 NUEVO: para fechas que NO tienen hora real (ej. fecha de entrega), evita el bug
-  // donde JS interpreta "2026-08-05" como medianoche UTC y en Ecuador (UTC-5) se
-  // corría al día/hora anterior. Nunca muestra hora, porque ese campo no la tiene.
+  // Se mantiene por si algún otro lugar del código todavía la usa para forzar "solo fecha".
   const formatDateOnly = (dateString) => {
     if (!dateString) return '';
     try {
@@ -623,7 +635,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                             {isAdmin ? (<div className="flex items-center gap-2"><select className="border border-slate-300 rounded px-2 py-1 text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none" value={validSellers.find(u => u.name === localVendedor)?.id || ''} onChange={handleResponsableChange}><option value="">Seleccionar...</option>{validSellers.map(u => (<option key={u.id} value={u.id}>{formatResponsableName(u)}</option>))}</select><Edit2 className="h-3 w-3 text-slate-400" /></div>) : (<span className="text-slate-900">{localVendedor || 'Sistema'}</span>)}
                         </div>
                         <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha:</span><span className="text-slate-900">{formatDateFull(order.createdAt || order.created_at)}</span></div>
-                        <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha entrega:</span><span className="text-red-600 font-bold">{formatDateOnly(order.fechaEntrega || order.fecha_entrega)} <span className="text-xs ml-1 font-normal text-red-500">{calculateDaysDiff(order.fechaEntrega || order.fecha_entrega)}</span></span></div>
+                        <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha entrega:</span><span className="text-red-600 font-bold">{formatDateFull(order.fechaEntrega || order.fecha_entrega)} <span className="text-xs ml-1 font-normal text-red-500">{calculateDaysDiff(order.fechaEntrega || order.fecha_entrega)}</span></span></div>
                          <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha Finaliz:</span><span className="text-slate-900">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : ''}</span></div>
                         
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-4">
@@ -1118,7 +1130,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
 
                          <div><span className="font-bold">CELULAR:</span> <span className="uppercase">{order.cliente_telefono || 'N/A'}</span></div>
                          <div><span className="font-bold">TÍTULO/PROYECTO:</span> <span className="uppercase text-xs">{order.tipoLetrero || order.tipo_trabajo}</span></div>
-                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{(order.fechaEntrega || order.fecha_entrega) ? formatDateOnly(order.fechaEntrega || order.fecha_entrega) : 'Por Definir'}</span></div>
+                         <div><span className="font-bold">FECHA ENTREGA:</span> <span className="font-bold uppercase">{(order.fechaEntrega || order.fecha_entrega) ? formatDateFull(order.fechaEntrega || order.fecha_entrega) : 'Por Definir'}</span></div>
                          
                          <div><span className="font-bold">VENDEDOR:</span> <span className="uppercase">{order.vendedor || 'SISTEMA'}</span></div>
                          <div><span className="font-bold">N° FACTURA:</span> <span className="uppercase">{nroFacturaDisplay}</span></div>

@@ -77,13 +77,26 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
   };
 
   const sellersData = useMemo(() => {
-     const activeSellers = new Set();
+     // 🔧 FIX: antes se agrupaba por el TEXTO del nombre (un Set de strings). Si una
+     // orden vieja tenía el nombre guardado con una diferencia mínima (un espacio, otra
+     // mayúscula) respecto al nombre actual del perfil, el mismo vendedor terminaba
+     // apareciendo dos veces como si fueran personas distintas. Ahora se agrupa por
+     // el id real del vendedor — solo puede haber una fila por persona, sin importar
+     // cuántas variantes de su nombre existan en órdenes viejas.
+     const activeSellers = new Map(); // key: id del vendedor (o nombre normalizado si no se encuentra) -> nombre a mostrar
 
-     staffUsers.filter(u => u.role === 'Vendedor').forEach(u => activeSellers.add(u.name));
+     const addSeller = (nombreCrudo) => {
+         if (!nombreCrudo) return;
+         const match = staffUsers.find(su => su.name?.toLowerCase().trim() === nombreCrudo?.toLowerCase().trim());
+         const key = match ? match.id : `sin-id:${nombreCrudo.toLowerCase().trim()}`;
+         if (!activeSellers.has(key)) activeSellers.set(key, match ? match.name : nombreCrudo);
+     };
+
+     staffUsers.filter(u => u.role === 'Vendedor').forEach(u => activeSellers.set(u.id, u.name));
 
      dailyClosings.forEach(c => {
          const usr = staffUsers.find(su => String(su.id) === String(c.user_id));
-         if (usr) activeSellers.add(usr.name);
+         if (usr) activeSellers.set(usr.id, usr.name);
      });
 
      orders.forEach(o => {
@@ -92,19 +105,17 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
         const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
 
         if (createdDateStr === selectedDate) {
-            const cobradorAnt = o.recibido_por_anticipo || o.vendedor;
-            if (cobradorAnt) activeSellers.add(cobradorAnt);
+            addSeller(o.recibido_por_anticipo || o.vendedor);
         }
 
         // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
         const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
         if (balanceDateStr === selectedDate && isClosed) {
-            const cobradorSal = o.recibido_por_saldo || o.vendedor;
-            if (cobradorSal) activeSellers.add(cobradorSal);
+            addSeller(o.recibido_por_saldo || o.vendedor);
         }
      });
 
-     return Array.from(activeSellers).map(sellerName => {
+     return Array.from(activeSellers.values()).map(sellerName => {
          
          const sellerUser = staffUsers.find(su => su.name?.toLowerCase().trim() === sellerName?.toLowerCase().trim());
          const closing = sellerUser ? dailyClosings.find(c => String(c.user_id) === String(sellerUser.id)) : null;

@@ -435,7 +435,11 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const isSaldoDateLocked = isBottomReadOnly || (isEditMode && !isAdmin && !!(initialSaldoDate || initialData?.creditoVenceSaldo));
 
   const currentDatePart = formData.fechaEntrega ? formData.fechaEntrega.split('T')[0] : '';
-  const currentTimePart = formData.fechaEntrega && formData.fechaEntrega.includes('T') ? formData.fechaEntrega.split('T')[1].slice(0,5) : '12:00';
+  // 🔧 AJUSTE: tras migrar fecha_entrega a tipo timestamp, las órdenes viejas quedaron
+  // con 00:00 (medianoche) como hora — nunca tuvieron una hora real. La mostramos como
+  // 08:00 en el selector (nadie entrega a medianoche); si guardas así, queda 08:00 real.
+  const rawTimePart = formData.fechaEntrega && formData.fechaEntrega.includes('T') ? formData.fechaEntrega.split('T')[1].slice(0,5) : '12:00';
+  const currentTimePart = rawTimePart === '00:00' ? '08:00' : rawTimePart;
 
   const handleDateTimeChange = (date, time) => {
     if (!date) { setFormData(prev => ({ ...prev, fechaEntrega: '' })); return; }

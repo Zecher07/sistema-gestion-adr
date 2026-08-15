@@ -128,6 +128,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
 
       // ANTICIPOS (VENTAS)
       if (createdDateStr === selectedDate && Number(o.anticipo) > 0) {
+        const saldoPendiente = (Number(o.financials?.total) || 0) - Number(o.anticipo) - (Number(o.retencion) || 0);
         txs.push({
           id: `ant-${oId}`,
           tipo: 'VENTA',
@@ -135,7 +136,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           vendedor: o.recibido_por_anticipo || o.vendedor || 'Sistema',
           vendedorId: o.recibido_por_anticipo_id || (o.vendedor_ids && o.vendedor_ids[0]) || null,
           metodo: o.formaPagoAnticipo || o.forma_pago_anticipo || 'Efectivo',
-          ingreso: Number(o.anticipo), egreso: 0
+          ingreso: Number(o.anticipo), egreso: 0,
+          nota: saldoPendiente > 0.01 ? 'SALDO PDTE' : 'PAGADO' // 🔧 NUEVO: misma nota que el Reporte Diario
         });
       }
 
@@ -149,27 +151,34 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
             vendedor: abono.cobrador || 'Sistema',
             vendedorId: abono.cobrador_id || null,
             metodo: abono.metodoPago || 'Efectivo',
-            ingreso: Number(abono.monto), egreso: 0
+            ingreso: Number(abono.monto), egreso: 0,
+            nota: 'ABONO REGISTRADO'
           });
         }
       });
 
-      // SALDOS (RETIROS)
+      // SALDOS (RETIRO o CRÉDITO)
       // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
       const isRelevantStatus = ['FINALIZADA', 'ENTREGADO'].includes(o.status);
       const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
       const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
       const saldoFinalReal = saldoCobrado - totalAbonado;
 
-      if (balanceDateStr === selectedDate && isRelevantStatus && saldoFinalReal > 0) {
+      // 🔧 NUEVO: mismo idioma que el Reporte Diario del vendedor — "RETIRO" (la orden
+      // se completó, con o sin cobro pendiente) vs "CRÉDITO" (se movió adelante pero
+      // quedó con saldo pendiente a crédito, sin cobrar nada en este momento).
+      if (balanceDateStr === selectedDate && isRelevantStatus) {
+        const pSaldo = String(o.formaPagoSaldo || '').toLowerCase();
+        const esCredito = (pSaldo.includes('crédit') || pSaldo.includes('credit')) && saldoFinalReal > 0.01;
         txs.push({
           id: `sal-${oId}`,
-          tipo: 'RETIRO',
+          tipo: esCredito ? 'CRÉDITO' : 'RETIRO',
           cliente, titulo, orden: numOrden,
           vendedor: o.recibido_por_saldo || o.vendedor || 'Sistema',
           vendedorId: o.recibido_por_saldo_id || (o.vendedor_ids && o.vendedor_ids[0]) || null,
-          metodo: o.formaPagoSaldo || 'Efectivo',
-          ingreso: saldoFinalReal, egreso: 0
+          metodo: o.formaPagoSaldo || (esCredito ? 'Crédito' : 'Efectivo'),
+          ingreso: esCredito ? 0 : saldoFinalReal, egreso: 0,
+          nota: esCredito ? 'A CRÉDITO' : 'COMPLETADO'
         });
       }
 
@@ -182,7 +191,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           vendedor: o.recibido_por_anticipo || o.vendedor || 'Sistema',
           vendedorId: o.recibido_por_anticipo_id || (o.vendedor_ids && o.vendedor_ids[0]) || null,
           metodo: o.formaPagoAnticipo || 'Efectivo',
-          ingreso: 0, egreso: Number(o.anticipo)
+          ingreso: 0, egreso: Number(o.anticipo),
+          nota: 'ANULADO'
         });
       }
     });
@@ -196,7 +206,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
         vendedor: vale.vendedor || 'Sistema',
         vendedorId: vale.vendedor_id || null,
         metodo: 'Efectivo', 
-        ingreso: 0, egreso: Number(vale.monto)
+        ingreso: 0, egreso: Number(vale.monto),
+        nota: 'EGRESO INTERNO'
       });
     });
 
@@ -469,11 +480,12 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                           <th className="px-4 py-3 text-center">Método</th>
                           <th className="px-4 py-3 font-bold text-right text-green-700">Ingreso</th>
                           <th className="px-4 py-3 font-bold text-right text-red-700">Egreso</th>
+                          <th className="px-4 py-3 text-center">Nota</th>
                       </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
                       {transaccionesFiltradas.length === 0 ? (
-                          <tr><td colSpan="7" className="p-8 text-center text-slate-500">No hay movimientos que coincidan con los filtros.</td></tr>
+                          <tr><td colSpan="8" className="p-8 text-center text-slate-500">No hay movimientos que coincidan con los filtros.</td></tr>
                       ) : (
                           transaccionesFiltradas.map((tx, idx) => (
                               <tr key={tx.id} className="hover:bg-slate-50 transition-colors">
@@ -484,6 +496,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                               tx.tipo === 'VENTA' ? 'text-blue-700' :
                                               tx.tipo === 'ABONO' ? 'text-emerald-700' :
                                               tx.tipo === 'RETIRO' ? 'text-orange-700' :
+                                              tx.tipo === 'CRÉDITO' ? 'text-amber-600' :
                                               tx.tipo === 'ANULACIÓN' ? 'text-red-600' :
                                               'text-purple-700'
                                           )}>
@@ -504,6 +517,11 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                   </td>
                                   <td className="px-4 py-3 text-right font-bold text-green-600">{tx.ingreso > 0 ? formatCurrency(tx.ingreso) : '-'}</td>
                                   <td className="px-4 py-3 text-right font-bold text-red-600">{tx.egreso > 0 ? formatCurrency(tx.egreso) : '-'}</td>
+                                  <td className="px-4 py-3 text-center text-xs">
+                                      <span className={cn(tx.nota?.includes('PDTE') || tx.nota?.includes('CRÉDITO') ? "text-orange-600 bg-orange-50 px-1.5 py-0.5 rounded" : tx.nota?.includes('ANULADO') ? "text-red-600" : "text-green-700")}>
+                                          {tx.nota || '-'}
+                                      </span>
+                                  </td>
                               </tr>
                           ))
                       )}

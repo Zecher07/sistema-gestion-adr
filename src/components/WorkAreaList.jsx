@@ -2,6 +2,7 @@ import React, { useState, useEffect, useMemo } from 'react';
 import { Search, ChevronLeft, ChevronRight, Play, PackageSearch, PackageCheck, FileSignature, AlertOctagon, Wallet, DollarSign, Globe, Wrench, ShoppingCart, FileText } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { cn } from '@/lib/utils';
+import { isUserInList } from '@/utils/userMatch';
 
 // Helper para obtener la fecha local exacta sin errores de zona horaria
 const getLocalDate = () => {
@@ -94,11 +95,22 @@ const WorkAreaList = ({
       }
       
       // 🔥 APLICADO FIX DE LECTURA DE RESPONSABLES PARA VENDEDORES 🔥
+      // 🔧 FIX: antes comparaba por nombre de texto (se rompía si alguien cambiaba su
+      // nombre). Ahora compara por id, con respaldo a nombre solo para filas viejas.
+      // 🔧 NUEVO: se agregan los filtros de Créditos/Retenciones/Impagas/Por Cerrar,
+      // que antes solo existían para Admin y Contabilidad — cada vendedor ve solo
+      // SUS PROPIAS órdenes en cada uno de estos filtros.
       if (user.role === 'Vendedor') {
-          if (!(order.vendedor || '').includes(user.name)) return false; 
+          if (!isUserInList(order.vendedor_ids, order.vendedor, user)) return false;
           if (listFilter === 'ventas') return order.status === 'VENTAS'; 
-          if (listFilter === 'produccion') return order.status === 'PRODUCCION'; // Pestaña nueva para vendedor
+          if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR'; 
+          if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
+              if (order.status !== 'CONTABILIDAD') return false;
+              const { status } = getOrderAccountingStatus(order);
+              return status === listFilter;
+          }
+          return false;
       }
 
       if (user.role === 'Administrador') {
@@ -136,10 +148,24 @@ const WorkAreaList = ({
   const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
   const paginatedOrders = searchFilteredOrders.slice(startIndex, endIndex);
 
+  // 🔧 FIX: antes esta función siempre asumía que la fecha traía hora, y hacía
+  // "new Date(dateString)" directo. Para órdenes viejas donde fecha_entrega se guardó
+  // sin hora (solo "2026-08-05", sin la "T"), JavaScript la interpreta como medianoche
+  // UTC — y en Ecuador (UTC-5) eso se corre al día anterior con una hora falsa (~19:00).
+  // Ahora se detecta ese caso y se evita, sin inventar una hora que nunca se puso.
   const formatDate = (dateString) => {
     if (!dateString) return '-';
-    const d = new Date(dateString);
-    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')} ${String(d.getHours()).padStart(2, '0')}:${String(d.getMinutes()).padStart(2, '0')}`;
+    const str = String(dateString);
+    const isDateOnly = /^\d{4}-\d{2}-\d{2}$/.test(str);
+    const d = new Date(isDateOnly ? `${str}T12:00:00` : str);
+    if (isNaN(d.getTime())) return '-';
+    const fecha = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    if (isDateOnly) return fecha; // no había hora real que mostrar
+    const horas = d.getHours();
+    const minutos = d.getMinutes();
+    // 🔧 AJUSTE: 00:00 tras migrar la columna a timestamp = "sin hora real registrada"
+    if (horas === 0 && minutos === 0) return `${fecha} 08:00`;
+    return `${fecha} ${String(horas).padStart(2, '0')}:${String(minutos).padStart(2, '0')}`;
   };
 
   const formatOrderId = (order) => {
@@ -178,10 +204,17 @@ const WorkAreaList = ({
               }
           }
           
-          if (user.role === 'Vendedor' && (o.vendedor || '').includes(user.name)) {
+          if (user.role === 'Vendedor' && isUserInList(o.vendedor_ids, o.vendedor, user)) {
               if (o.status === 'VENTAS') counts.ventas++;
               if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
+              if (o.status === 'CONTABILIDAD') {
+                  const { status } = getOrderAccountingStatus(o);
+                  if (status === 'creditos') counts.creditos++;
+                  else if (status === 'impagas') counts.impagas++;
+                  else if (status === 'retenciones') counts.retenciones++;
+                  else counts.por_finalizar++;
+              }
           }
           
           if (user.role === 'Contabilidad' && o.status === 'CONTABILIDAD') {
@@ -243,20 +276,35 @@ const WorkAreaList = ({
                )}
 
                {user.role === 'Vendedor' && (
-                 <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-wrap gap-4 items-center">
-                    <button onClick={() => setListFilter('ventas')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'ventas' ? "bg-blue-600 text-white border-blue-700 shadow-blue-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
-                        <ShoppingCart className="h-5 w-5" /> EN VENTAS
-                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'ventas' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.ventas}</span>
-                    </button>
-                    {/* 🔥 CAJITA DE PRODUCCIÓN AÑADIDA PARA VENDEDOR 🔥 */}
-                    <button onClick={() => setListFilter('produccion')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'produccion' ? "bg-amber-500 text-white border-amber-600 shadow-amber-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
-                        <Wrench className="h-5 w-5" /> EN PRODUCCIÓN
-                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'produccion' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.produccion}</span>
-                    </button>
-                    <button onClick={() => setListFilter('por_retirar')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'por_retirar' ? "bg-green-600 text-white border-green-700 shadow-green-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
-                        <PackageCheck className="h-5 w-5" /> POR RETIRAR
-                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'por_retirar' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.por_retirar}</span>
-                    </button>
+                 <div className="p-4 bg-slate-50 border-b border-slate-200 flex flex-col gap-3">
+                    <div className="flex flex-wrap gap-2">
+                        <button onClick={() => setListFilter('ventas')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'ventas' ? "bg-blue-600 text-white border-blue-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <ShoppingCart className="h-4 w-4" /> EN VENTAS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.ventas}</span>
+                        </button>
+                        <button onClick={() => setListFilter('produccion')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'produccion' ? "bg-amber-500 text-white border-amber-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <Wrench className="h-4 w-4" /> EN PRODUCCIÓN <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.produccion}</span>
+                        </button>
+                        <button onClick={() => setListFilter('por_retirar')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'por_retirar' ? "bg-green-600 text-white border-green-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <PackageCheck className="h-4 w-4" /> POR RETIRAR <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.por_retirar}</span>
+                        </button>
+
+                        <div className="w-px bg-slate-300 mx-1"></div>
+
+                        {/* 🔧 NUEVO: los vendedores ahora también tienen acceso a estos filtros,
+                            igual que Admin/Contabilidad — pero siempre viendo SOLO sus propias órdenes */}
+                        <button onClick={() => setListFilter('por_finalizar')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'por_finalizar' ? "bg-indigo-600 text-white border-indigo-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <FileSignature className="h-4 w-4" /> POR CERRAR <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.por_finalizar}</span>
+                        </button>
+                        <button onClick={() => setListFilter('creditos')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'creditos' ? "bg-amber-500 text-white border-amber-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <Wallet className="h-4 w-4" /> CRÉDITOS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.creditos}</span>
+                        </button>
+                        <button onClick={() => setListFilter('retenciones')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'retenciones' ? "bg-orange-500 text-white border-orange-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <FileText className="h-4 w-4" /> RETENCIONES <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.retenciones}</span>
+                        </button>
+                        <button onClick={() => setListFilter('impagas')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'impagas' ? "bg-red-600 text-white border-red-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
+                            <AlertOctagon className="h-4 w-4" /> IMPAGAS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.impagas}</span>
+                        </button>
+                    </div>
                  </div>
                )}
 
