@@ -59,10 +59,19 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
               if (fechaAbono) resultados.push({ ...baseInfo, fecha: fechaAbono, evento: 'Abono' });
           });
 
-          // 3. Saldo / Retiro (si la orden llegó a un estado de cobro final)
+          // 3. Saldo/Retiro (si la orden llegó a un estado de cobro final)
+          // 🔧 FIX: antes se ocultaba este evento si la fecha coincidía con la de
+          // creación (pensado para evitar "redundancia"), pero eso hacía que
+          // desapareciera por completo cuando la orden se creaba y se retiraba el
+          // mismo día. Ahora siempre aparece cuando corresponde, sin importar la fecha.
           if (['FINALIZADA', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'ENTREGADO'].includes(o.status)) {
               const fechaSaldo = toLocalDateStr(o.fecha_pago_saldo || o.updated_at || o.updatedAt);
-              if (fechaSaldo && fechaSaldo !== fechaCreacion) resultados.push({ ...baseInfo, fecha: fechaSaldo, evento: 'Saldo / Retiro' });
+              const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
+              const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+              const saldoFinalReal = saldoCobrado - totalAbonado;
+              const pSaldo = String(o.formaPagoSaldo || '').toLowerCase();
+              const esCredito = (pSaldo.includes('crédit') || pSaldo.includes('credit')) && saldoFinalReal > 0.01;
+              if (fechaSaldo) resultados.push({ ...baseInfo, fecha: fechaSaldo, evento: esCredito ? 'Crédito' : 'Retiro' });
           }
 
           // 4. Anulación
@@ -433,7 +442,8 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
                                                "text-[10px] font-bold uppercase w-fit px-1.5 py-0.5 rounded mt-0.5",
                                                r.evento === 'Creación / Anticipo' ? "bg-blue-100 text-blue-700" :
                                                r.evento === 'Abono' ? "bg-emerald-100 text-emerald-700" :
-                                               r.evento === 'Saldo / Retiro' ? "bg-orange-100 text-orange-700" :
+                                               r.evento === 'Retiro' ? "bg-orange-100 text-orange-700" :
+                                               r.evento === 'Crédito' ? "bg-amber-100 text-amber-700" :
                                                "bg-red-100 text-red-700"
                                            )}>{r.evento}</span>
                                        </div>
