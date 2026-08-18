@@ -5,12 +5,16 @@ import { Input } from '@/components/ui/Text';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { User, Save, Shield } from 'lucide-react';
+import { User, Save, Shield, Lock } from 'lucide-react';
 
 const MyProfile = ({ user }) => {
   const [fullName, setFullName] = useState('');
   const [role, setRole] = useState('');
   const [loading, setLoading] = useState(false);
+  // 🔧 NUEVO: cambio de contraseña propia (Vendedor, Producción, Contabilidad, Admin)
+  const [newPassword, setNewPassword] = useState('');
+  const [confirmPassword, setConfirmPassword] = useState('');
+  const [changingPassword, setChangingPassword] = useState(false);
   const { toast } = useToast();
 
   useEffect(() => {
@@ -69,6 +73,35 @@ const MyProfile = ({ user }) => {
     }
   };
 
+  // 🔧 NUEVO: cada quien cambia su propia contraseña — esto es autoservicio normal
+  // de Supabase Auth (supabase.auth.updateUser), no requiere permisos de Admin ni
+  // ninguna función especial, porque solo afecta la sesión de quien está logueado.
+  const handleChangePassword = async (e) => {
+    e.preventDefault();
+    if (newPassword.length < 6) {
+        toast({ title: "Contraseña muy corta", description: "Debe tener al menos 6 caracteres.", variant: "destructive" });
+        return;
+    }
+    if (newPassword !== confirmPassword) {
+        toast({ title: "Las contraseñas no coinciden", description: "Escribe la misma contraseña en ambos campos.", variant: "destructive" });
+        return;
+    }
+
+    setChangingPassword(true);
+    try {
+        const { error } = await supabase.auth.updateUser({ password: newPassword });
+        if (error) throw error;
+
+        toast({ title: "Contraseña Actualizada", description: "La próxima vez que inicies sesión, usa tu nueva contraseña." });
+        setNewPassword('');
+        setConfirmPassword('');
+    } catch (error) {
+        toast({ title: "Error", description: error.message, variant: "destructive" });
+    } finally {
+        setChangingPassword(false);
+    }
+  };
+
   return (
     <div className="max-w-md mx-auto mt-10">
       <Card>
@@ -108,6 +141,46 @@ const MyProfile = ({ user }) => {
               {loading ? 'Guardando...' : <><Save className="mr-2 h-4 w-4" /> Guardar Cambios</>}
             </Button>
 
+          </form>
+        </CardContent>
+      </Card>
+
+      {/* 🔧 NUEVO: tarjeta separada para cambiar la contraseña propia */}
+      <Card className="mt-6">
+        <CardHeader className="border-b bg-slate-50">
+          <CardTitle className="flex items-center gap-2 text-slate-800 text-base">
+            <Lock className="h-5 w-5 text-blue-600" /> Cambiar mi Contraseña
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="pt-6">
+          <form onSubmit={handleChangePassword} className="space-y-4">
+            <div>
+              <Label htmlFor="newPassword">Nueva Contraseña</Label>
+              <Input
+                id="newPassword"
+                type="password"
+                value={newPassword}
+                onChange={(e) => setNewPassword(e.target.value)}
+                className="mt-1"
+                placeholder="Mínimo 6 caracteres"
+                required
+              />
+            </div>
+            <div>
+              <Label htmlFor="confirmPassword">Repetir Nueva Contraseña</Label>
+              <Input
+                id="confirmPassword"
+                type="password"
+                value={confirmPassword}
+                onChange={(e) => setConfirmPassword(e.target.value)}
+                className="mt-1"
+                placeholder="Escribe la misma contraseña"
+                required
+              />
+            </div>
+            <Button type="submit" disabled={changingPassword} className="w-full bg-slate-700 hover:bg-slate-800">
+              {changingPassword ? 'Actualizando...' : <><Lock className="mr-2 h-4 w-4" /> Actualizar Contraseña</>}
+            </Button>
           </form>
         </CardContent>
       </Card>

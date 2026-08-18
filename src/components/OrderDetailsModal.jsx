@@ -4,7 +4,7 @@ import { format } from 'date-fns';
 import { motion, AnimatePresence } from 'framer-motion';
 import { 
   X, Printer, CheckCircle, FileText, Image as ImageIcon, CreditCard, DollarSign, Calendar as CalendarIcon, 
-  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2, RotateCcw, Undo2, ExternalLink
+  MapPin, Phone, User, Clock, Check, XCircle, ArrowLeft, ArrowRight, FileCheck, Info, Lock, AlertOctagon, Loader2, Search, Edit2, ArrowRightCircle, ArrowLeftCircle, Archive, Ban, Play, CheckCircle2, RotateCcw, Undo2, ExternalLink, PackageCheck, Receipt, Wallet
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -334,6 +334,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
   const [previewImage, setPreviewImage] = useState(null);
   // 🔧 NUEVO: popup del expediente del cliente (historial + editar), sin salir de la orden
   const [showClientExpediente, setShowClientExpediente] = useState(false);
+  const [showTimeline, setShowTimeline] = useState(true); // 🔧 NUEVO: abierta por defecto
   const { toast } = useToast();
   const [localProducts, setLocalProducts] = useState([]);
   const [localVendedor, setLocalVendedor] = useState('');
@@ -541,6 +542,83 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
     } catch (e) { return ''; }
   };
 
+  // 🔧 NUEVO: línea de tiempo del dinero/producto de esta orden — creación, anticipo,
+  // cada abono, saldo/retiro (o crédito), y anulación si aplica. Todo con fecha Y hora,
+  // para no tener que ir a buscar día por día en el Libro Diario.
+  const getOrderTimeline = () => {
+      const eventos = [];
+
+      // 1. Creación
+      const fechaCreacion = order.created_at || order.createdAt;
+      if (fechaCreacion) {
+          eventos.push({
+              icono: FileText, color: 'text-blue-600', bg: 'bg-blue-50', borde: 'border-blue-200',
+              titulo: 'Orden Creada', fecha: fechaCreacion,
+              detalle: order.vendedor ? `Por ${order.vendedor}` : null
+          });
+      }
+
+      // 2. Anticipo
+      if (Number(order.anticipo) > 0) {
+          eventos.push({
+              icono: DollarSign, color: 'text-emerald-600', bg: 'bg-emerald-50', borde: 'border-emerald-200',
+              titulo: `Anticipo: $${Number(order.anticipo).toFixed(2)}`, fecha: order.recibido_por_anticipo ? fechaCreacion : fechaCreacion,
+              detalle: [order.recibido_por_anticipo, order.formaPagoAnticipo || order.forma_pago_anticipo].filter(Boolean).join(' — ') || null
+          });
+      }
+
+      // 3. Cada Abono
+      (order.abonos || []).forEach((abono, idx) => {
+          if (!abono.fecha) return;
+          eventos.push({
+              icono: Receipt, color: 'text-teal-600', bg: 'bg-teal-50', borde: 'border-teal-200',
+              titulo: `Abono #${idx + 1}: $${Number(abono.monto).toFixed(2)}`, fecha: abono.fecha,
+              detalle: [abono.cobrador, abono.metodoPago].filter(Boolean).join(' — ') || null
+          });
+      });
+
+      // 4. Saldo / Retiro / Crédito
+      const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'ENTREGADO'].includes(order.status);
+      if (isRelevantStatus) {
+          const total = Number(order.financials?.total) || 0;
+          const anticipo = Number(order.anticipo) || 0;
+          const retencion = Number(order.retencion || order.financials?.retencion) || 0;
+          const totalAbonado = (order.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);
+          const saldoFinalReal = total - anticipo - retencion - totalAbonado;
+          const pSaldo = String(order.formaPagoSaldo || order.financials?.formaPagoSaldo || '').toLowerCase();
+          const esCredito = (pSaldo.includes('crédit') || pSaldo.includes('credit')) && saldoFinalReal > 0.01;
+          const fechaSaldo = order.fecha_pago_saldo || order.updated_at || order.updatedAt;
+          if (fechaSaldo) {
+              eventos.push(esCredito ? {
+                  icono: CreditCard, color: 'text-amber-600', bg: 'bg-amber-50', borde: 'border-amber-200',
+                  titulo: `A Crédito: $${saldoFinalReal.toFixed(2)} pendiente`, fecha: fechaSaldo,
+                  detalle: order.creditoVenceSaldo || order.financials?.creditoVenceSaldo ? `Vence: ${order.creditoVenceSaldo || order.financials?.creditoVenceSaldo}` : null
+              } : {
+                  icono: PackageCheck, color: 'text-orange-600', bg: 'bg-orange-50', borde: 'border-orange-200',
+                  titulo: saldoFinalReal > 0.01 ? `Retiro — Saldo cobrado: $${saldoFinalReal.toFixed(2)}` : 'Retiro — Completado (sin saldo pendiente)', fecha: fechaSaldo,
+                  detalle: [order.recibido_por_saldo, order.formaPagoSaldo].filter(Boolean).join(' — ') || null
+              });
+          }
+      }
+
+      // 5. Anulación
+      if (order.status === 'ANULADA') {
+          const fechaAnulacion = order.updated_at || order.updatedAt;
+          if (fechaAnulacion) {
+              eventos.push({
+                  icono: Ban, color: 'text-red-600', bg: 'bg-red-50', borde: 'border-red-200',
+                  titulo: 'Orden Anulada', fecha: fechaAnulacion,
+                  detalle: order.motivoAnulacion || null
+              });
+          }
+      }
+
+      // Ordenar cronológicamente (más antiguo primero)
+      return eventos
+          .filter(e => e.fecha)
+          .sort((a, b) => new Date(a.fecha) - new Date(b.fecha));
+  };
+
   const calculateDaysDiff = (dateString) => {
     if (!dateString) return '';
     const diffDays = Math.ceil((new Date(dateString) - new Date()) / (1000 * 60 * 60 * 24)); 
@@ -689,6 +767,45 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                 <span className="text-xs font-bold text-purple-700 bg-purple-50 px-2 py-0.5 rounded border border-purple-200 self-start">Proforma #{order.origenProformaInfo || order.origenProformaId}</span>
                             </div>
                         )}
+
+                        {/* 🔧 NUEVO: Línea de tiempo del dinero/producto — creación, anticipo,
+                            abonos, saldo/retiro/crédito, y anulación si aplica. Con fecha y hora. */}
+                        <div className="mt-3 border-t border-slate-100 pt-3">
+                            <button
+                                type="button"
+                                onClick={() => setShowTimeline(v => !v)}
+                                className="flex items-center gap-1.5 text-xs font-bold text-slate-500 hover:text-slate-700 transition-colors"
+                            >
+                                <Clock className="h-3.5 w-3.5" />
+                                Línea de Tiempo del Dinero
+                                {showTimeline ? <ArrowLeftCircle className="h-3 w-3 rotate-90" /> : <ArrowRightCircle className="h-3 w-3 rotate-90" />}
+                            </button>
+                            {showTimeline && (
+                                <div className="mt-3 space-y-0 print:hidden">
+                                    {getOrderTimeline().map((ev, idx, arr) => {
+                                        const Icono = ev.icono;
+                                        return (
+                                            <div key={idx} className="flex gap-3">
+                                                <div className="flex flex-col items-center">
+                                                    <div className={`h-7 w-7 rounded-full ${ev.bg} border ${ev.borde} flex items-center justify-center shrink-0`}>
+                                                        <Icono className={`h-3.5 w-3.5 ${ev.color}`} />
+                                                    </div>
+                                                    {idx < arr.length - 1 && <div className="w-px flex-1 bg-slate-200 my-1"></div>}
+                                                </div>
+                                                <div className="pb-4 pt-0.5">
+                                                    <div className={`text-xs font-bold ${ev.color}`}>{ev.titulo}</div>
+                                                    <div className="text-[11px] text-slate-500 font-mono">{formatDateFull(ev.fecha)}</div>
+                                                    {ev.detalle && <div className="text-[11px] text-slate-400">{ev.detalle}</div>}
+                                                </div>
+                                            </div>
+                                        );
+                                    })}
+                                    {getOrderTimeline().length === 0 && (
+                                        <p className="text-xs text-slate-400 italic">Sin movimientos registrados todavía.</p>
+                                    )}
+                                </div>
+                            )}
+                        </div>
                     </div>
 
                     <div className="space-y-4">

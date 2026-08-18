@@ -14,6 +14,7 @@ const UserManagement = () => {
   const [formData, setFormData] = useState({ username: '', password: '', fullName: '', role: 'Vendedor' });
   const [loading, setLoading] = useState(false);
   const [editingId, setEditingId] = useState(null); 
+  const [originalUsername, setOriginalUsername] = useState(''); // 🔧 NUEVO: para saber si de verdad cambió
   const [userToDelete, setUserToDelete] = useState(null); 
   const { toast } = useToast();
 
@@ -34,6 +35,7 @@ const UserManagement = () => {
   const handleEditClick = (user) => {
     setEditingId(user.id);
     const simpleUser = user.email ? user.email.replace(DOMINIO_INTERNO, '') : '';
+    setOriginalUsername(simpleUser);
     setFormData({
       username: simpleUser,
       password: '', 
@@ -44,6 +46,7 @@ const UserManagement = () => {
 
   const handleCancelEdit = () => {
     setEditingId(null);
+    setOriginalUsername('');
     setFormData({ username: '', password: '', fullName: '', role: 'Vendedor' });
   };
 
@@ -63,13 +66,23 @@ const UserManagement = () => {
 
         if (profileError) throw profileError;
 
+        // 🔧 NUEVO: si el usuario de acceso cambió, actualizarlo también
+        const nuevoUsername = formData.username.trim().replace(/\s+/g, '').toLowerCase();
+        if (nuevoUsername && nuevoUsername !== originalUsername) {
+            const { error: usernameError } = await supabase.rpc('admin_update_username', {
+                target_user_id: editingId,
+                new_username: nuevoUsername
+            });
+            if (usernameError) throw usernameError;
+        }
+
         if (formData.password && formData.password.trim() !== '') {
             const { error: passwordError } = await supabase.rpc('admin_update_password', {
                 target_user_id: editingId,
                 new_password: formData.password
             });
             if (passwordError) throw passwordError;
-            toast({ title: "Contraseña Actualizada", description: "El usuario ya puede entrar con la nueva clave." });
+            toast({ title: "Datos Actualizados", description: "Perfil, usuario y contraseña modificados." });
         } else {
             toast({ title: "Datos Actualizados", description: "Perfil modificado correctamente." });
         }
@@ -159,12 +172,16 @@ const UserManagement = () => {
                   <Input 
                     value={formData.username} 
                     onChange={e => setFormData({...formData, username: e.target.value.toLowerCase()})} 
-                    disabled={!!editingId} 
                     placeholder="ej: juanperez"
                     required
                   />
                   <span className="text-xs text-gray-400 font-mono hidden md:block">{DOMINIO_INTERNO}</span>
                 </div>
+                {editingId && (
+                    <p className="text-[10px] text-amber-600 mt-1">
+                        ⚠️ Si lo cambias, esta persona deberá volver a entrar con el nuevo usuario la próxima vez.
+                    </p>
+                )}
               </div>
 
               <div>

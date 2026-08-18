@@ -7,6 +7,7 @@ import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
 
 import UserManagement from '@/components/UserManagement'; 
+import MyProfile from '@/components/MyProfile';
 import RolesPermissions from '@/components/RolesPermissions'; 
 import Login from '@/components/Login';
 import AnulationConfig from '@/components/AnulationConfig';
@@ -486,6 +487,7 @@ function App() {
     if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} onDataChanged={() => fetchAllData(user)} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
+    if (currentView === 'mi-perfil') return <MyProfile user={user} />;
     if (currentView === 'clientes-lista') return ( <ClientsPanel clients={clients} orders={orders} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }} onViewOrder={(o) => handleViewOrder(o, 'clientes')} initialExpedienteClientId={pendingExpedienteClientId} onExpedienteOpened={() => setPendingExpedienteClientId(null)} /> );
     if (currentView === 'configuracion') return <AnulationConfig />;
     if (currentView === 'vales') return <ValesCajaPanel user={user} orders={orders} />;
