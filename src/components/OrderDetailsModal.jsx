@@ -24,6 +24,20 @@ const getPrintDesc = (prod) => {
     return text.trim();
 };
 
+// 🔧 NUEVO: al elegir un producto del catálogo, el texto queda armado como
+// "NOMBRE DEL PRODUCTO - descripción extra" (ver OrderForm.jsx). Esto separa
+// las dos partes para poder imprimir el nombre arriba (grande) y la descripción
+// extra abajo (chica y gris), en vez de todo junto en una sola línea larga.
+const getPrintDescParts = (prod) => {
+    const textoCompleto = getPrintDesc(prod);
+    const idx = textoCompleto.indexOf(' - ');
+    if (idx === -1) return { nombre: textoCompleto, detalle: '' };
+    return {
+        nombre: textoCompleto.slice(0, idx).trim(),
+        detalle: textoCompleto.slice(idx + 3).trim()
+    };
+};
+
 const InlineComprobante = ({ items = [], onClickImage }) => {
     if (!items || items.length === 0) return null;
     return (
@@ -629,6 +643,18 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
   const formatOrderId = (id) => (order.orderNumber || order.order_number || id).toString().padStart(7, '0');
   
   const isFinalizada = order.status === 'FINALIZADA';
+
+  // 🔧 NUEVO: color de la fecha/hora de entrega según el caso — antes siempre
+  // salía en rojo. Ahora: gris si ya se finalizó (ya no importa si "llegó a
+  // tiempo" o no), rojo si está atrasada, verde si sigue a tiempo.
+  const getFechaEntregaColor = () => {
+      if (isFinalizada || order.status === 'ARCHIVADA') return { texto: 'text-slate-500', chip: 'text-slate-400' };
+      const fecha = order.fechaEntrega || order.fecha_entrega;
+      if (!fecha) return { texto: 'text-slate-500', chip: 'text-slate-400' };
+      const diffDays = Math.ceil((new Date(fecha) - new Date()) / (1000 * 60 * 60 * 24));
+      if (isNaN(diffDays)) return { texto: 'text-slate-500', chip: 'text-slate-400' };
+      return diffDays < 0 ? { texto: 'text-red-600', chip: 'text-red-500' } : { texto: 'text-green-600', chip: 'text-green-600' };
+  };
   const canArchive = isAdmin && isFinalizada;
   
   const getWorkflowButtonConfig = () => {
@@ -713,7 +739,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                             {isAdmin ? (<div className="flex items-center gap-2"><select className="border border-slate-300 rounded px-2 py-1 text-xs bg-white focus:ring-2 focus:ring-blue-500 outline-none" value={validSellers.find(u => u.name === localVendedor)?.id || ''} onChange={handleResponsableChange}><option value="">Seleccionar...</option>{validSellers.map(u => (<option key={u.id} value={u.id}>{formatResponsableName(u)}</option>))}</select><Edit2 className="h-3 w-3 text-slate-400" /></div>) : (<span className="text-slate-900">{localVendedor || 'Sistema'}</span>)}
                         </div>
                         <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha:</span><span className="text-slate-900">{formatDateFull(order.createdAt || order.created_at)}</span></div>
-                        <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha entrega:</span><span className="text-red-600 font-bold">{formatDateFull(order.fechaEntrega || order.fecha_entrega)} <span className="text-xs ml-1 font-normal text-red-500">{calculateDaysDiff(order.fechaEntrega || order.fecha_entrega)}</span></span></div>
+                        <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha entrega:</span><span className={`${getFechaEntregaColor().texto} font-bold`}>{formatDateFull(order.fechaEntrega || order.fecha_entrega)} <span className={`text-xs ml-1 font-normal ${getFechaEntregaColor().chip}`}>{calculateDaysDiff(order.fechaEntrega || order.fecha_entrega)}</span></span></div>
                          <div className="grid grid-cols-[140px_1fr] gap-2"><span className="font-bold text-right text-slate-600">Fecha Finaliz:</span><span className="text-slate-900">{isFinalizada ? formatDateFull(order.updatedAt || order.updated_at) : ''}</span></div>
                         
                         <div className="grid grid-cols-[140px_1fr] gap-2 mt-4">
@@ -1271,7 +1297,15 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                 <tr key={idx} className="border-b border-black">
                                     <td className="border-r-2 border-black p-2 text-center font-bold text-base align-middle">{prod.cantidad}</td>
                                     <td className="border-r-2 border-black p-2 uppercase font-medium whitespace-pre-wrap text-xs align-top">
-                                        {getPrintDesc(prod)}
+                                        {(() => {
+                                            const { nombre, detalle } = getPrintDescParts(prod);
+                                            return (
+                                                <>
+                                                    <div className="font-bold">{nombre}</div>
+                                                    {detalle && <div className="font-normal normal-case text-[10px] text-gray-500 mt-0.5">{detalle}</div>}
+                                                </>
+                                            );
+                                        })()}
                                     </td>
                                     <td className="border-r-2 border-black p-2 font-medium align-middle text-right">
                                         {formatCurrency(prod.precio || prod.precioUnitario)}

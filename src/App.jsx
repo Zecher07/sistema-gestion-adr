@@ -135,10 +135,11 @@ function App() {
       let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
       const { data: ordenesData } = await ordersQuery;
       
+      // 🔧 FIX: antes cada Vendedor solo veía SUS PROPIAS cotizaciones (filtro
+      // .ilike('responsable_nombre', su nombre)). El pedido fue que todos los
+      // vendedores vean todas las cotizaciones de cualquiera, por si alguien
+      // falta y otro necesita retomar/consultar su trabajo.
       let proformasQuery = supabase.from('proformas').select('*').order('created_at', { ascending: false });
-      if (currentUser.role === 'Vendedor') {
-          proformasQuery = proformasQuery.ilike('responsable_nombre', `%${currentUser.name}%`);
-      }
 
       const { data: proformasData } = await proformasQuery;
       if (proformasData) setProformas(proformasData);
@@ -499,6 +500,7 @@ function App() {
             <NotificationsPanel 
                 user={user} 
                 orders={orders} 
+                staffUsers={staffUsers}
                 realtimeEvents={realtimeEvents} 
                 onClearEvent={handleClearEvent} 
                 onViewOrder={(o) => handleViewOrder(o, 'notifications')} 

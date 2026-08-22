@@ -99,7 +99,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const [financials, setFinancials] = useState({ subtotal: 0, iva: 0, total: 0, descuento: 0, descuentoPorc: 0, anticipoPorc: 50, anticipoValor: 0, saldoPorc: 50, saldoValor: 0 });
   const [notes, setNotes] = useState('');
   const [ivaPercentage, setIvaPercentage] = useState(15); 
-  const [applyIva, setApplyIva] = useState(true);
+  const [applyIva, setApplyIva] = useState(false);
   const [preciosIncluyenIva, setPreciosIncluyenIva] = useState(true); // 🔧 SINCRONIZADO CON ORDERFORM: por defecto sí incluyen IVA
 
   const [localDiscountVal, setLocalDiscountVal] = useState('');
