@@ -256,7 +256,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
     productos: Array(5).fill({ nombre: '', descripcion: '', observaciones: '', precioUnitario: 0, cantidad: 1, base: '', altura: '', completed: false, es_por_metro: false, precio_minimo: 0, precioMinimoManual: '' }), 
     anticipo: 0, retencion: 0, retentionPercent: 0, formaPagoAnticipo: 'Efectivo', referenciaPago: '', notaAnticipo: '', creditoVenceAnticipo: '', 
     saldo: 0, formaPagoSaldo: 'No aplica', creditoVenceSaldo: '', notaSaldo: '',
-    descuentoMonto: 0, aplicarIva: true, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
+    descuentoMonto: 0, aplicarIva: false, ivaPercentage: 15, origenProformaInfo: '', imagenes: [], notas: '', observaciones: '', 
     esMayorista: false, nroFactura: '',
     preciosIncluyenIva: true // 🔥 NUEVO ESTADO: POR DEFECTO SÍ INCLUYEN IVA 🔥
   });

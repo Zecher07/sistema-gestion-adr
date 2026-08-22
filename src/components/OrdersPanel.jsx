@@ -163,15 +163,23 @@ const OrdersPanel = ({
       onCloneOrder(clonedOrder);
   };
 
+  // 🔧 FIX: antes cualquier Vendedor veía TODAS las órdenes de TODOS, sin importar
+  // la pestaña. Ahora: en "Ver Todas" sí ve las de todos (para poder cubrir a un
+  // compañero si falta), pero en el resto de pestañas (Activas, Sin Factura, etc.)
+  // solo ve las suyas propias.
   const roleFilteredOrders = useMemo(() => {
     return orders.filter(order => {
-      if (user.role === 'Administrador' || user.role === 'Vendedor' || user.role === 'Contabilidad') return true;
+      if (user.role === 'Administrador' || user.role === 'Contabilidad') return true;
+      if (user.role === 'Vendedor') {
+          if (currentView === 'ordenes-todas') return true;
+          return isUserInList(order.vendedor_ids, order.vendedor, user);
+      }
       if (user.role === 'Producción') {
         return order.status === 'PRODUCCION';
       }
       return false;
     });
-  }, [orders, user.role]);
+  }, [orders, user, currentView]);
 
   const filteredOrders = useMemo(() => {
     return roleFilteredOrders.filter(order => {

@@ -353,8 +353,34 @@ const ProformasPanel = ({
           </table>
         </div>
         {paginatedProformas.length > 0 && (
-          <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 text-xs text-slate-500 text-center">
-            Mostrando {paginatedProformas.length} de {sortedProformas.length} registros
+          <div className="px-4 py-3 border-t border-slate-200 bg-slate-50 flex flex-col sm:flex-row items-center justify-between gap-2">
+            <span className="text-xs text-slate-500">
+              Mostrando {paginatedProformas.length} de {sortedProformas.length} registros
+            </span>
+            {/* 🔧 FIX: la lógica de paginación ya existía (totalPages, currentPage),
+                pero nunca se construyeron los botones para cambiar de página —
+                por eso no había forma de ver los registros de la página 2 en adelante. */}
+            {totalPages > 1 && (
+              <div className="flex items-center gap-2">
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage === 1}
+                  onClick={() => setCurrentPage(p => Math.max(1, p - 1))}
+                  className="h-7 px-2"
+                >
+                  <ChevronLeft className="h-4 w-4" />
+                </Button>
+                <span className="text-xs font-bold text-slate-600">Página {currentPage} de {totalPages}</span>
+                <Button
+                  variant="outline" size="sm"
+                  disabled={currentPage === totalPages}
+                  onClick={() => setCurrentPage(p => Math.min(totalPages, p + 1))}
+                  className="h-7 px-2"
+                >
+                  <ChevronRight className="h-4 w-4" />
+                </Button>
+              </div>
+            )}
           </div>
         )}
       </div>
