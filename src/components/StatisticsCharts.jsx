@@ -5,8 +5,46 @@ import { supabase } from '../supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
 
 const StatisticsCharts = ({
-  orders = []
+  orders = [],
+  user
 }) => {
+  const isAdmin = user?.role === 'Administrador';
+
+  // 🔧 NUEVO: margen de días (para que una venta de fin de mes tenga tiempo de
+  // cerrarse) configurable por el Admin, guardado en configuracion_global para
+  // que aplique igual sin importar quién esté viendo la pantalla.
+  const [margenDias, setMargenDias] = useState(4);
+  const [guardandoMargen, setGuardandoMargen] = useState(false);
+
+  useEffect(() => {
+      const fetchMargen = async () => {
+          try {
+              const { data } = await supabase.from('configuracion_global').select('margen_dias_finalizadas').maybeSingle();
+              if (data && data.margen_dias_finalizadas !== null && data.margen_dias_finalizadas !== undefined) {
+                  setMargenDias(data.margen_dias_finalizadas);
+              }
+          } catch (error) { console.error(error); }
+      };
+      fetchMargen();
+  }, []);
+
+  const handleCambiarMargen = async (nuevoValor) => {
+      const valor = Math.max(0, Number(nuevoValor) || 0);
+      setMargenDias(valor);
+      setGuardandoMargen(true);
+      try {
+          const { data: filaExistente } = await supabase.from('configuracion_global').select('id').maybeSingle();
+          if (filaExistente) {
+              await supabase.from('configuracion_global').update({ margen_dias_finalizadas: valor }).eq('id', filaExistente.id);
+          } else {
+              await supabase.from('configuracion_global').insert([{ margen_dias_finalizadas: valor }]);
+          }
+      } catch (error) {
+          console.error('Error guardando el margen:', error);
+      } finally {
+          setGuardandoMargen(false);
+      }
+  };
   // 🔧 NUEVO: como las comisiones se pagan por mes, la pantalla ahora arranca
   // mostrando el MES ACTUAL completo por defecto, en vez de estar vacía y
   // obligarte a armar el rango de fechas a mano cada vez.
@@ -72,7 +110,24 @@ const StatisticsCharts = ({
   // calcula por separado: cuenta según la fecha en que la orden SE FINALIZÓ
   // (se entregó y se cobró), sin importar cuándo se creó originalmente.
   const ordenesFinalizadasEnRango = useMemo(() => {
+    // 🔧 NUEVO: margen configurable por el Admin — una orden creada a fin de
+    // mes pero que se finaliza unos días después del cierre no debe quedar
+    // "en el limbo" sin contar en ningún lado.
+    let fechaLimiteFinalizacion = null;
+    if (dateRange.end) {
+        fechaLimiteFinalizacion = new Date(dateRange.end + 'T23:59:59');
+        fechaLimiteFinalizacion.setDate(fechaLimiteFinalizacion.getDate() + margenDias);
+    }
+
     return orders.filter(o => {
+      // 🔧 FIX: "Finalizadas" solo cuenta órdenes CREADAS dentro del mes elegido
+      // (no las que vienen de meses anteriores) — el margen de 4 días de abajo
+      // solo da tiempo extra para que ALCANCE a cerrarse, no cambia en qué mes
+      // se le atribuye la venta.
+      const fechaCreacion = o.created_at || o.createdAt;
+      if (dateRange.start && new Date(fechaCreacion) < new Date(dateRange.start + 'T00:00:00')) return false;
+      if (dateRange.end && new Date(fechaCreacion) > new Date(dateRange.end + 'T23:59:59')) return false;
+
       // 🔧 FIX: una orden ARCHIVADA ya pasó por FINALIZADA antes de archivarse —
       // sigue siendo una venta cerrada de verdad, no debe desaparecer del conteo
       // solo porque después se guardó/archivó.
@@ -80,16 +135,15 @@ const StatisticsCharts = ({
       const fechaFinal = o.fecha_pago_saldo || o.updated_at || o.updatedAt;
       if (!fechaFinal) return false;
       if (dateRange.start && new Date(fechaFinal) < new Date(dateRange.start + 'T00:00:00')) return false;
-      if (dateRange.end && new Date(fechaFinal) > new Date(dateRange.end + 'T23:59:59')) return false;
+      if (fechaLimiteFinalizacion && new Date(fechaFinal) > fechaLimiteFinalizacion) return false;
       if (vendedorFilterId) {
         const selectedUser = staffList.find(u => u.id === vendedorFilterId);
         if (!isUserInList(o.vendedor_ids, o.vendedor, { id: vendedorFilterId, name: selectedUser?.full_name })) return false;
       }
       return true;
     });
-  }, [orders, dateRange, vendedorFilterId, staffList]);
+  }, [orders, dateRange, vendedorFilterId, staffList, margenDias]);
 
-  // --- KPI Metrics (General Counts) ---
   const metrics = useMemo(() => {
     const total = filteredOrders.length;
     const finalizedMonth = ordenesFinalizadasEnRango.length; // 🔧 FIX: ahora sí respeta el rango elegido, no el mes actual fijo
@@ -123,7 +177,7 @@ const StatisticsCharts = ({
   const commissionsData = useMemo(() => {
     const stats = {};
     staffList.forEach(u => {
-        stats[u.id] = { id: u.id, name: u.full_name, totalSales: 0, finalizedSales: 0, finalizedDelPeriodo: 0, finalizedDeAntes: 0, orderCount: 0 };
+        stats[u.id] = { id: u.id, name: u.full_name, totalSales: 0, finalizedSales: 0, orderCount: 0 };
     });
 
     // Ventas Totales y N° de Órdenes: según la fecha de CREACIÓN de la orden
@@ -140,51 +194,35 @@ const StatisticsCharts = ({
       });
     });
 
-    // 🔧 FIX: Ventas Finalizadas se suman aparte, según la fecha en que cada
-    // orden se FINALIZÓ — así una orden creada hace una semana pero cerrada
-    // hoy sí cuenta como finalizada de hoy, aunque no haya sido "creada hoy".
-    // 🔧 NUEVO: además se separa cuánto de eso viene de órdenes CREADAS en el
-    // mismo período (normal) vs. órdenes que venían de ANTES y se cerraron
-    // ahora — esto es lo que puede hacer que Finalizadas supere a Totales,
-    // y así queda claro por qué, en vez de verse como un error.
-    const fechaInicioRango = dateRange.start ? new Date(dateRange.start + 'T00:00:00') : null;
+    // Ventas Finalizadas: órdenes CREADAS en este período que además ya se
+    // FINALIZARON (con el margen de 4 días para que alcancen a cerrarse).
     ordenesFinalizadasEnRango.forEach(order => {
       const amount = parseFloat(order.financials?.total || 0);
       const idsDeEstaOrden = Array.isArray(order.vendedor_ids) && order.vendedor_ids.length > 0
           ? order.vendedor_ids
           : [];
-      const fechaCreacionOrden = new Date(order.created_at || order.createdAt);
-      const esDelMismoPeriodo = !fechaInicioRango || fechaCreacionOrden >= fechaInicioRango;
 
       idsDeEstaOrden.forEach(vendedorId => {
           if (!stats[vendedorId]) return;
           stats[vendedorId].finalizedSales += amount;
-          if (esDelMismoPeriodo) stats[vendedorId].finalizedDelPeriodo += amount;
-          else stats[vendedorId].finalizedDeAntes += amount;
       });
     });
 
     return Object.values(stats)
         .filter(s => !vendedorFilterId || s.id === vendedorFilterId) // si hay filtro, solo esa fila
         .sort((a, b) => b.totalSales - a.totalSales);
-  }, [filteredOrders, ordenesFinalizadasEnRango, staffList, vendedorFilterId, dateRange]);
+  }, [filteredOrders, ordenesFinalizadasEnRango, staffList, vendedorFilterId]);
 
   // --- Totals Calculation ---
   const totals = useMemo(() => {
     return commissionsData.reduce((acc, curr) => ({
       totalSales: acc.totalSales + curr.totalSales,
-      finalizedSales: acc.finalizedSales + curr.finalizedSales,
-      finalizedDelPeriodo: acc.finalizedDelPeriodo + curr.finalizedDelPeriodo
+      finalizedSales: acc.finalizedSales + curr.finalizedSales
     }), {
       totalSales: 0,
-      finalizedSales: 0,
-      finalizedDelPeriodo: 0
+      finalizedSales: 0
     });
   }, [commissionsData]);
-  // 🔧 NUEVO: dos efectividades — la "de este mes" (comparando manzanas con
-  // manzanas: solo lo creado y cerrado en el mismo período) y la "total"
-  // (incluye lo que se cerró ahora pero venía de antes).
-  const totalEffectivenessDelMes = totals.totalSales > 0 ? (totals.finalizedDelPeriodo / totals.totalSales * 100).toFixed(1) : '0.0';
   const totalEffectiveness = totals.totalSales > 0 ? (totals.finalizedSales / totals.totalSales * 100).toFixed(1) : '0.0';
   const formatCurrency = val => new Intl.NumberFormat('en-US', {
     style: 'currency',
@@ -193,15 +231,14 @@ const StatisticsCharts = ({
 
   // --- Export CSV ---
   const handleExport = () => {
-    const headers = ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'Ventas Finalizadas ($)', 'Efectividad Este Mes %', 'Efectividad Total %'];
+    const headers = ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'Ventas Finalizadas ($)', 'Efectividad %'];
     const rows = commissionsData.map(d => {
-      const percentageDelMes = d.totalSales > 0 ? (d.finalizedDelPeriodo / d.totalSales * 100).toFixed(1) : '0.0';
       const percentage = d.totalSales > 0 ? (d.finalizedSales / d.totalSales * 100).toFixed(1) : '0.0';
-      return [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedSales.toFixed(2), percentageDelMes, percentage];
+      return [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedSales.toFixed(2), percentage];
     });
 
     // Add Totals Row to CSV
-    rows.push(['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), totals.finalizedSales.toFixed(2), totalEffectivenessDelMes, totalEffectiveness]);
+    rows.push(['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), totals.finalizedSales.toFixed(2), totalEffectiveness]);
     const csvContent = "data:text/csv;charset=utf-8," + ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -257,6 +294,22 @@ const StatisticsCharts = ({
                {staffList.map(u => (<option key={u.id} value={u.id}>{u.full_name}</option>))}
             </select>
          </div>
+         {/* 🔧 NUEVO: margen de días editable — solo el Admin puede cambiarlo,
+             y queda guardado para todos (no es solo de este navegador). */}
+         {isAdmin && (
+            <div className="w-full md:w-48">
+               <label className="text-xs font-semibold text-slate-500 mb-1 block">Margen "Finalizadas" (días)</label>
+               <div className="flex items-center gap-1">
+                   <input
+                       type="number" min="0" max="30"
+                       className="w-full px-3 py-2 text-sm border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none bg-white"
+                       value={margenDias}
+                       onChange={e => handleCambiarMargen(e.target.value)}
+                   />
+                   {guardandoMargen && <span className="text-[10px] text-slate-400 whitespace-nowrap">Guardando...</span>}
+               </div>
+            </div>
+         )}
          <Button variant="ghost" onClick={() => { const rangoMesActual = getRangoDelMes(new Date()); setDateRange(rangoMesActual); const d = new Date(); setMesSeleccionado(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}`); setVendedorFilterId(''); }}>
             Volver al Mes Actual
          </Button>
@@ -282,7 +335,7 @@ const StatisticsCharts = ({
                <span className="font-semibold text-slate-600">% Efectividad</span> = (ventas de órdenes ya <span className="font-semibold">Finalizadas</span>) ÷ (ventas totales del vendedor en el rango seleccionado). 
                Las órdenes que todavía están en Ventas, Producción o Contabilidad cuentan en el total pero no como "finalizadas" porque aún no terminan su proceso — por eso este número sube solo, sin ninguna acción, a medida que las órdenes se van completando. No refleja un problema del vendedor.
                <br className="hidden md:block"/>
-               <span className="font-semibold text-slate-600">Finalizadas</span> se cuenta según la fecha en que la orden se <span className="font-semibold">cerró</span> (se entregó y se cobró), no según cuándo se creó — por eso puede superar el 100% si el vendedor cerró en este período trabajo pendiente de un período anterior.
+               <span className="font-semibold text-slate-600">Finalizadas</span> solo cuenta órdenes <span className="font-semibold">creadas en este mismo rango</span> que además ya se cerraron (se entregaron y se cobraron) — no incluye trabajo de meses anteriores. Se da un margen de <span className="font-semibold">{margenDias} día{margenDias !== 1 ? 's' : ''}</span> después del fin del rango para que una venta de fin de mes tenga tiempo de cerrarse sin quedar fuera del conteo{isAdmin ? ' (ajustable arriba)' : ''}.
             </p>
         </div>
         <div className="overflow-x-auto">
@@ -293,14 +346,12 @@ const StatisticsCharts = ({
                     <th className="px-6 py-4 text-center">N° Órdenes</th>
                     <th className="px-6 py-4 text-center">Ventas Totales</th>
                     <th className="px-6 py-4 text-center">Ventas Finalizadas</th>
-                    <th className="px-6 py-4 text-right">% Efect. Este Mes</th>
-                    <th className="px-6 py-4 text-right">% Efect. Total</th>
+                    <th className="px-6 py-4 text-right">% Efectividad</th>
                  </tr>
               </thead>
               <tbody className="divide-y divide-slate-100">
                  {commissionsData.length > 0 ? <>
                         {commissionsData.map((row, idx) => {
-                const percentageDelMes = row.totalSales > 0 ? (row.finalizedDelPeriodo / row.totalSales * 100).toFixed(1) : '0.0';
                 const percentage = row.totalSales > 0 ? (row.finalizedSales / row.totalSales * 100).toFixed(1) : '0.0';
                 return <tr key={idx} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-slate-800">
@@ -313,24 +364,7 @@ const StatisticsCharts = ({
                                     {formatCurrency(row.totalSales)}
                                 </td>
                                 <td className="px-6 py-4 text-center text-emerald-600 font-bold">
-                                    <div>{formatCurrency(row.finalizedSales)}</div>
-                                    {/* 🔧 NUEVO: desglose para que quede claro por qué Finalizadas puede
-                                        superar a Ventas Totales — se separa lo que es de este período
-                                        (normal) de lo que venía de antes y recién se cerró ahora. */}
-                                    {row.finalizedDeAntes > 0 && (
-                                        <div className="text-[10px] font-normal text-slate-400 mt-0.5 leading-tight">
-                                            {formatCurrency(row.finalizedDelPeriodo)} de este período<br/>
-                                            + {formatCurrency(row.finalizedDeAntes)} de antes, cerrado ahora
-                                        </div>
-                                    )}
-                                </td>
-                                {/* 🔧 NUEVO: dos columnas — "de este mes" compara solo lo creado Y
-                                    cerrado en el mismo período (manzanas con manzanas); "total"
-                                    incluye también lo que se cerró ahora pero venía de antes. */}
-                                <td className="px-6 py-4 text-right">
-                                    <span className={`px-2 py-1 rounded text-xs font-bold ${Number(percentageDelMes) >= 80 ? 'bg-green-100 text-green-700' : Number(percentageDelMes) >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'}`}>
-                                    {percentageDelMes}%
-                                    </span>
+                                    {formatCurrency(row.finalizedSales)}
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <span className={`px-2 py-1 rounded text-xs font-bold ${Number(percentage) >= 80 ? 'bg-green-100 text-green-700' : Number(percentage) >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'}`}>
@@ -354,18 +388,13 @@ const StatisticsCharts = ({
                               {formatCurrency(totals.finalizedSales)}
                            </td>
                            <td className="px-6 py-4 text-right">
-                              <span className={`px-2 py-1 rounded text-xs font-bold ${Number(totalEffectivenessDelMes) >= 80 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
-                                {totalEffectivenessDelMes}%
-                              </span>
-                           </td>
-                           <td className="px-6 py-4 text-right">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${Number(totalEffectiveness) >= 80 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
                                 {totalEffectiveness}%
                               </span>
                            </td>
                         </tr>
                     </> : <tr>
-                       <td colSpan="6" className="px-6 py-10 text-center text-slate-400">
+                       <td colSpan="5" className="px-6 py-10 text-center text-slate-400">
                           No hay datos disponibles para el rango de fechas seleccionado.
                        </td>
                     </tr>}

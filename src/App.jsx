@@ -173,7 +173,30 @@ function App() {
   useEffect(() => {
     let loadedUser = null;
     const savedUser = localStorage.getItem('currentUser');
-    if (savedUser) { loadedUser = JSON.parse(savedUser); setUser(loadedUser); fetchUserPermissions(loadedUser.role); }
+    if (savedUser) {
+        loadedUser = JSON.parse(savedUser);
+        setUser(loadedUser);
+        fetchUserPermissions(loadedUser.role);
+
+        // 🔧 NUEVO: antes la app confiaba ciegamente en el rol guardado en el
+        // navegador desde el momento del login — si algo cambiaba después (tu
+        // perfil se editaba, o la sesión quedaba vieja), la app seguía actuando
+        // con el rol antiguo hasta que cerrabas sesión y volvías a entrar. Ahora
+        // se revisa el rol REAL contra la base de datos apenas carga la página,
+        // y se autocorrige sola si hay una diferencia — sin necesidad de
+        // cerrar sesión.
+        supabase.from('profiles').select('id, full_name, role').eq('id', loadedUser.id).single()
+            .then(({ data: perfilReal, error }) => {
+                if (error || !perfilReal) return;
+                const cambioAlgo = perfilReal.role !== loadedUser.role || perfilReal.full_name !== loadedUser.name;
+                if (cambioAlgo) {
+                    const usuarioActualizado = { ...loadedUser, name: perfilReal.full_name, role: perfilReal.role };
+                    setUser(usuarioActualizado);
+                    localStorage.setItem('currentUser', JSON.stringify(usuarioActualizado));
+                    fetchUserPermissions(perfilReal.role);
+                }
+            });
+    }
     fetchAllData(loadedUser);
     // 🔧 NUEVO: si la pestaña se abrió con #cliente=ID, #orden=ID o #proforma=ID
     // (desde "Abrir en pestaña nueva" o un clic derecho del navegador), navega
@@ -580,7 +603,7 @@ function App() {
       case 'trabajo-disponibilidad': return <div className="h-[calc(100vh-140px)]"><WorkAreaCalendar orders={orders} onViewOrder={(o) => handleViewOrder(o, 'tasks')} /></div>;
       case 'inventario-ver': return <InventoryPanel user={user} mode="view" />;
       case 'inventario-gestionar': return <InventoryPanel user={user} mode="manage" />; 
-      case 'estadisticas-graficos': return <StatisticsCharts orders={orders} />;
+      case 'estadisticas-graficos': return <StatisticsCharts orders={orders} user={user} />;
       case 'inventario-catalogo': return <CatalogPanel user={user} />;
       default: return <div className="p-10 text-center text-slate-500">Seleccione una opción del menú lateral.</div>;
     }
