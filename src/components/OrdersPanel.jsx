@@ -27,6 +27,7 @@ const FILTER_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABIL
 const OrdersPanel = ({ 
   orders = [], 
   user, 
+  staffUsers = [],
   onUpdateStatus, 
   onDeleteOrder, 
   onUpdateOrder, 
@@ -191,12 +192,26 @@ const OrdersPanel = ({
       const tituloStr = String(order.tipoLetrero || order.tipo_trabajo || '');
       const vendedorStr = String(order.vendedor || '');
 
+      // 🔧 FIX: antes solo comparaba contra el texto guardado en la orden
+      // (order.vendedor), que puede quedar desactualizado si alguien cambió
+      // de nombre, o no coincidir exactamente si hay varios vendedores en la
+      // misma orden. Ahora también resuelve los vendedor_ids reales contra
+      // la lista actual de usuarios, para que la búsqueda coincida siempre
+      // con el nombre ACTUAL de cada vendedor asignado (igual que Estadísticas).
+      const nombresVendedoresReales = Array.isArray(order.vendedor_ids)
+          ? order.vendedor_ids
+              .map(id => staffUsers.find(su => su.id === id)?.full_name || staffUsers.find(su => su.id === id)?.name)
+              .filter(Boolean)
+              .join(' ')
+          : '';
+
       const matchesSearch = 
         idStr.toLowerCase().includes(searchLower) ||
         clienteStr.toLowerCase().includes(searchLower) ||
         rucStr.toLowerCase().includes(searchLower) ||
         tituloStr.toLowerCase().includes(searchLower) ||
-        vendedorStr.toLowerCase().includes(searchLower);
+        vendedorStr.toLowerCase().includes(searchLower) ||
+        nombresVendedoresReales.toLowerCase().includes(searchLower);
 
       if (!matchesSearch) return false;
       if (statusFilter !== 'TODOS' && order.status !== statusFilter) return false;
@@ -214,7 +229,7 @@ const OrdersPanel = ({
 
       return true;
     });
-  }, [roleFilteredOrders, searchTerm, statusFilter, startDate, endDate]);
+  }, [roleFilteredOrders, searchTerm, statusFilter, startDate, endDate, staffUsers]);
 
   const dynamicTotals = useMemo(() => {
     return filteredOrders.reduce((acc, order) => {
