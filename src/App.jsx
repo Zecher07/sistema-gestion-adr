@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { supabase } from './supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
-import { Menu, Settings, X, Loader2 } from 'lucide-react'; 
+import { Menu, Settings, X, Loader2, PlusCircle, FileText, TrendingUp } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
@@ -597,7 +597,63 @@ function App() {
     }
 
     switch (currentView) {
-      case 'inicio': return ( <div className="space-y-6 animate-in fade-in"><div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex justify-between items-start"><div><h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2><p className="text-slate-500">Panel de Control General</p></div>{user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}</div><Stats orders={orders} user={user} /><div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={handleAbonoOrderRequest} /></div></div> );
+      case 'inicio': {
+        // 🔧 NUEVO: "Ventas Finalizadas del Mes" — para un Vendedor, es SU
+        // propio total de órdenes ya finalizadas/archivadas (entregadas y
+        // cobradas al 100%) dentro del mes en curso. Para Admin, es el total
+        // de toda la empresa. Mismo criterio que usamos en Estadísticas.
+        const ahora = new Date();
+        const ventasFinalizadasMes = orders.filter(o => {
+            if (o.status !== 'FINALIZADA' && o.status !== 'ARCHIVADA') return false;
+            const fechaFinal = o.fecha_pago_saldo || o.updated_at || o.updatedAt;
+            if (!fechaFinal) return false;
+            const d = new Date(fechaFinal);
+            if (d.getMonth() !== ahora.getMonth() || d.getFullYear() !== ahora.getFullYear()) return false;
+            if (user.role === 'Administrador') return true;
+            return isUserInList(o.vendedor_ids, o.vendedor, user);
+        }).reduce((acc, o) => acc + (parseFloat(o.financials?.total) || 0), 0);
+
+        const nombreMes = ahora.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
+
+        return (
+          <div className="space-y-6 animate-in fade-in">
+            <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
+              <div>
+                <h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2>
+                <p className="text-slate-500 mb-4">Panel de Control General</p>
+                {/* 🔧 NUEVO: botones de acción rápida — crear orden o cotización
+                    directo desde Inicio, sin tener que ir a otra pantalla primero. */}
+                <div className="flex flex-wrap gap-3">
+                    <Button onClick={() => setShowForm(true)} className="bg-green-600 hover:bg-green-700 text-white gap-2">
+                        <PlusCircle className="h-4 w-4" /> Crear Nueva Orden de Venta
+                    </Button>
+                    <Button onClick={() => setShowProformaForm(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+                        <FileText className="h-4 w-4" /> Nueva Cotización
+                    </Button>
+                </div>
+              </div>
+              {user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}
+            </div>
+
+            {/* 🔧 NUEVO: tarjeta destacada de Ventas Finalizadas del mes en curso */}
+            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 flex items-center justify-between gap-4 flex-wrap">
+                <div className="flex items-center gap-4">
+                    <div className="h-14 w-14 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                        <TrendingUp className="h-7 w-7 text-blue-600" />
+                    </div>
+                    <div>
+                        <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">Ventas Finalizadas ({nombreMes})</p>
+                        <p className="text-3xl font-black text-slate-800">${ventasFinalizadasMes.toFixed(2)} USD</p>
+                        <p className="text-xs text-slate-500 mt-0.5">Monto total acumulado de órdenes entregadas y cobradas al 100% en el mes</p>
+                    </div>
+                </div>
+            </div>
+
+            <Stats orders={orders} user={user} />
+            <div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={handleAbonoOrderRequest} /></div>
+          </div>
+        );
+      }
       case 'clientes-nuevo': return <ClientForm user={user} onSuccess={handleClientSuccess} onCancel={() => setCurrentView('clientes-lista')}/>;
       case 'trabajo-listado': return <div className="space-y-4"><h2 className="text-xl font-bold">Listado de Trabajo</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={handleAbonoOrderRequest} /></div>;
       case 'trabajo-mistareas': return <div className="space-y-4"><h2 className="text-xl font-bold">Tablero Kanban</h2><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='board' onAbonoOrder={handleAbonoOrderRequest} /></div>;
