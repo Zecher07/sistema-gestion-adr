@@ -581,6 +581,7 @@ function App() {
             <OrdersPanel 
                 orders={filtered} 
                 user={user} 
+                staffUsers={staffUsers}
                 onUpdateStatus={() => {}} 
                 onDeleteOrder={handleDeleteOrderRequest} 
                 onEditOrder={handleEditOrderRequest} 
