@@ -604,6 +604,14 @@ function App() {
         // de toda la empresa. Mismo criterio que usamos en Estadísticas.
         const ahora = new Date();
         const ventasFinalizadasMes = orders.filter(o => {
+            // 🔧 FIX: igual que en Estadísticas, "Finalizadas" solo cuenta
+            // órdenes CREADAS este mismo mes (no basta con que se hayan
+            // finalizado este mes si vienen de un mes anterior).
+            const fechaCreacion = o.created_at || o.createdAt;
+            if (!fechaCreacion) return false;
+            const dCreacion = new Date(fechaCreacion);
+            if (dCreacion.getMonth() !== ahora.getMonth() || dCreacion.getFullYear() !== ahora.getFullYear()) return false;
+
             if (o.status !== 'FINALIZADA' && o.status !== 'ARCHIVADA') return false;
             const fechaFinal = o.fecha_pago_saldo || o.updated_at || o.updatedAt;
             if (!fechaFinal) return false;
