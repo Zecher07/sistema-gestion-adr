@@ -232,14 +232,22 @@ const StatisticsCharts = ({
 
   // --- Export CSV ---
   const handleExport = () => {
-    const headers = ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'N° No Finalizadas', 'Ventas No Finalizadas ($)', 'Efectividad %'];
+    const headers = isAdmin
+        ? ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'N° No Finalizadas', 'Ventas No Finalizadas ($)', 'Efectividad %']
+        : ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'Efectividad %'];
     const rows = commissionsData.map(d => {
       const percentage = d.totalSales > 0 ? (d.finalizedSales / d.totalSales * 100).toFixed(1) : '0.0';
-      return [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedOrderCount, d.finalizedSales.toFixed(2), d.orderCount - d.finalizedOrderCount, (d.totalSales - d.finalizedSales).toFixed(2), percentage];
+      const fila = [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedOrderCount, d.finalizedSales.toFixed(2)];
+      if (isAdmin) fila.push(d.orderCount - d.finalizedOrderCount, (d.totalSales - d.finalizedSales).toFixed(2));
+      fila.push(percentage);
+      return fila;
     });
 
     // Add Totals Row to CSV
-    rows.push(['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), commissionsData.reduce((acc, d) => acc + d.finalizedOrderCount, 0), totals.finalizedSales.toFixed(2), commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0), (totals.totalSales - totals.finalizedSales).toFixed(2), totalEffectiveness]);
+    const filaTotales = ['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), commissionsData.reduce((acc, d) => acc + d.finalizedOrderCount, 0), totals.finalizedSales.toFixed(2)];
+    if (isAdmin) filaTotales.push(commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0), (totals.totalSales - totals.finalizedSales).toFixed(2));
+    filaTotales.push(totalEffectiveness);
+    rows.push(filaTotales);
     const csvContent = "data:text/csv;charset=utf-8," + ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -348,8 +356,10 @@ const StatisticsCharts = ({
                     <th className="px-6 py-4 text-center">Ventas Totales</th>
                     <th className="px-6 py-4 text-center">N° Finalizadas</th>
                     <th className="px-6 py-4 text-center">Ventas Finalizadas</th>
+                    {isAdmin && <>
                     <th className="px-6 py-4 text-center bg-red-50 text-red-700">N° No Finalizadas</th>
                     <th className="px-6 py-4 text-center bg-red-50 text-red-700">Ventas No Finalizadas</th>
+                    </>}
                     <th className="px-6 py-4 text-right">% Efectividad</th>
                  </tr>
               </thead>
@@ -373,12 +383,14 @@ const StatisticsCharts = ({
                                 <td className="px-6 py-4 text-center text-emerald-600 font-bold">
                                     {formatCurrency(row.finalizedSales)}
                                 </td>
+                                {isAdmin && <>
                                 <td className="px-6 py-4 text-center text-red-700 font-bold bg-red-50">
                                     {row.orderCount - row.finalizedOrderCount}
                                 </td>
                                 <td className="px-6 py-4 text-center text-red-700 font-bold bg-red-50">
                                     {formatCurrency(row.totalSales - row.finalizedSales)}
                                 </td>
+                                </>}
                                 <td className="px-6 py-4 text-right">
                                     <span className={`px-2 py-1 rounded text-xs font-bold ${Number(percentage) >= 80 ? 'bg-green-100 text-green-700' : Number(percentage) >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'}`}>
                                     {percentage}%
@@ -403,12 +415,14 @@ const StatisticsCharts = ({
                            <td className="px-6 py-4 text-center text-emerald-700">
                               {formatCurrency(totals.finalizedSales)}
                            </td>
+                           {isAdmin && <>
                            <td className="px-6 py-4 text-center text-red-800 bg-red-50">
                               {commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0)}
                            </td>
                            <td className="px-6 py-4 text-center text-red-800 bg-red-50">
                               {formatCurrency(totals.totalSales - totals.finalizedSales)}
                            </td>
+                           </>}
                            <td className="px-6 py-4 text-right">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${Number(totalEffectiveness) >= 80 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
                                 {totalEffectiveness}%
@@ -416,7 +430,7 @@ const StatisticsCharts = ({
                            </td>
                         </tr>
                     </> : <tr>
-                       <td colSpan="8" className="px-6 py-10 text-center text-slate-400">
+                       <td colSpan={isAdmin ? "8" : "6"} className="px-6 py-10 text-center text-slate-400">
                           No hay datos disponibles para el rango de fechas seleccionado.
                        </td>
                     </tr>}
