@@ -177,7 +177,7 @@ const StatisticsCharts = ({
   const commissionsData = useMemo(() => {
     const stats = {};
     staffList.forEach(u => {
-        stats[u.id] = { id: u.id, name: u.full_name, totalSales: 0, finalizedSales: 0, orderCount: 0 };
+        stats[u.id] = { id: u.id, name: u.full_name, totalSales: 0, finalizedSales: 0, orderCount: 0, finalizedOrderCount: 0 };
     });
 
     // Ventas Totales y N° de Órdenes: según la fecha de CREACIÓN de la orden
@@ -205,6 +205,7 @@ const StatisticsCharts = ({
       idsDeEstaOrden.forEach(vendedorId => {
           if (!stats[vendedorId]) return;
           stats[vendedorId].finalizedSales += amount;
+          stats[vendedorId].finalizedOrderCount += 1;
       });
     });
 
@@ -231,14 +232,14 @@ const StatisticsCharts = ({
 
   // --- Export CSV ---
   const handleExport = () => {
-    const headers = ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'Ventas Finalizadas ($)', 'Efectividad %'];
+    const headers = ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'N° No Finalizadas', 'Ventas No Finalizadas ($)', 'Efectividad %'];
     const rows = commissionsData.map(d => {
       const percentage = d.totalSales > 0 ? (d.finalizedSales / d.totalSales * 100).toFixed(1) : '0.0';
-      return [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedSales.toFixed(2), percentage];
+      return [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedOrderCount, d.finalizedSales.toFixed(2), d.orderCount - d.finalizedOrderCount, (d.totalSales - d.finalizedSales).toFixed(2), percentage];
     });
 
     // Add Totals Row to CSV
-    rows.push(['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), totals.finalizedSales.toFixed(2), totalEffectiveness]);
+    rows.push(['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), commissionsData.reduce((acc, d) => acc + d.finalizedOrderCount, 0), totals.finalizedSales.toFixed(2), commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0), (totals.totalSales - totals.finalizedSales).toFixed(2), totalEffectiveness]);
     const csvContent = "data:text/csv;charset=utf-8," + ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
@@ -345,7 +346,10 @@ const StatisticsCharts = ({
                     <th className="px-6 py-4">Usuario / Vendedor</th>
                     <th className="px-6 py-4 text-center">N° Órdenes</th>
                     <th className="px-6 py-4 text-center">Ventas Totales</th>
+                    <th className="px-6 py-4 text-center">N° Finalizadas</th>
                     <th className="px-6 py-4 text-center">Ventas Finalizadas</th>
+                    <th className="px-6 py-4 text-center bg-red-50 text-red-700">N° No Finalizadas</th>
+                    <th className="px-6 py-4 text-center bg-red-50 text-red-700">Ventas No Finalizadas</th>
                     <th className="px-6 py-4 text-right">% Efectividad</th>
                  </tr>
               </thead>
@@ -363,8 +367,17 @@ const StatisticsCharts = ({
                                 <td className="px-6 py-4 text-center text-slate-700 font-semibold">
                                     {formatCurrency(row.totalSales)}
                                 </td>
+                                <td className="px-6 py-4 text-center text-emerald-700 font-bold">
+                                    {row.finalizedOrderCount}
+                                </td>
                                 <td className="px-6 py-4 text-center text-emerald-600 font-bold">
                                     {formatCurrency(row.finalizedSales)}
+                                </td>
+                                <td className="px-6 py-4 text-center text-red-700 font-bold bg-red-50">
+                                    {row.orderCount - row.finalizedOrderCount}
+                                </td>
+                                <td className="px-6 py-4 text-center text-red-700 font-bold bg-red-50">
+                                    {formatCurrency(row.totalSales - row.finalizedSales)}
                                 </td>
                                 <td className="px-6 py-4 text-right">
                                     <span className={`px-2 py-1 rounded text-xs font-bold ${Number(percentage) >= 80 ? 'bg-green-100 text-green-700' : Number(percentage) >= 50 ? 'bg-yellow-100 text-yellow-700' : 'bg-slate-100 text-slate-600'}`}>
@@ -384,8 +397,17 @@ const StatisticsCharts = ({
                            <td className="px-6 py-4 text-center text-slate-800">
                               {formatCurrency(totals.totalSales)}
                            </td>
+                           <td className="px-6 py-4 text-center text-emerald-800">
+                              {commissionsData.reduce((acc, d) => acc + d.finalizedOrderCount, 0)}
+                           </td>
                            <td className="px-6 py-4 text-center text-emerald-700">
                               {formatCurrency(totals.finalizedSales)}
+                           </td>
+                           <td className="px-6 py-4 text-center text-red-800 bg-red-50">
+                              {commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0)}
+                           </td>
+                           <td className="px-6 py-4 text-center text-red-800 bg-red-50">
+                              {formatCurrency(totals.totalSales - totals.finalizedSales)}
                            </td>
                            <td className="px-6 py-4 text-right">
                               <span className={`px-2 py-1 rounded text-xs font-bold ${Number(totalEffectiveness) >= 80 ? 'bg-green-100 text-green-700 border border-green-200' : 'bg-slate-100 text-slate-700 border border-slate-200'}`}>
@@ -394,7 +416,7 @@ const StatisticsCharts = ({
                            </td>
                         </tr>
                     </> : <tr>
-                       <td colSpan="5" className="px-6 py-10 text-center text-slate-400">
+                       <td colSpan="8" className="px-6 py-10 text-center text-slate-400">
                           No hay datos disponibles para el rango de fechas seleccionado.
                        </td>
                     </tr>}
