@@ -19,6 +19,9 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
     razonSocial: '',
     email: '',
     cedulaRuc: '',
+    sinRuc: false,
+    sinCelular: false,
+    sinEmail: false,
     direccion: '',
     celular: '',
     permiteCredito: false, 
@@ -26,14 +29,22 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
     esMayorista: false // 🔥 Nuevo campo de estado 🔥
   });
 
+  const RUCS_DE_RELLENO = ['099999999999', '0999999999', '9999999999', '9999999999999'];
+  const EMAIL_DE_RELLENO = 'sincorreo@gmail.com';
+
   useEffect(() => {
     if (clienteAEditar) {
+      const rucViejo = clienteAEditar.empresa || '';
+      const emailViejo = clienteAEditar.email || '';
       setFormData({
         razonSocial: clienteAEditar.nombre || '',
-        email: clienteAEditar.email || '',
-        cedulaRuc: clienteAEditar.empresa || '', 
+        email: EMAIL_DE_RELLENO === emailViejo.toLowerCase() ? '' : emailViejo,
+        sinEmail: !emailViejo || EMAIL_DE_RELLENO === emailViejo.toLowerCase(),
+        cedulaRuc: RUCS_DE_RELLENO.includes(rucViejo) ? '' : rucViejo,
+        sinRuc: !rucViejo || RUCS_DE_RELLENO.includes(rucViejo),
         direccion: clienteAEditar.direccion || '',
-        celular: clienteAEditar.telefono || '',  
+        celular: clienteAEditar.telefono || '',
+        sinCelular: !clienteAEditar.telefono,
         permiteCredito: clienteAEditar.permiteCredito || false,
         limiteCredito: clienteAEditar.limiteCredito || 0,
         esMayorista: clienteAEditar.es_mayorista || false // Rescatar estado de la BD
@@ -61,10 +72,10 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
     try {
       const datosParaEnviar = {
         nombre: formData.razonSocial,
-        email: formData.email,
-        telefono: formData.celular,
+        email: formData.sinEmail ? null : formData.email,
+        telefono: formData.sinCelular ? null : formData.celular,
         direccion: formData.direccion,
-        empresa: formData.cedulaRuc,
+        empresa: formData.sinRuc ? null : formData.cedulaRuc,
         // Conservamos los valores de crédito intactos si no es admin/contabilidad
         permiteCredito: canEditCredit ? formData.permiteCredito : (clienteAEditar?.permiteCredito || false),
         limiteCredito: canEditCredit ? (formData.permiteCredito ? Number(formData.limiteCredito) : 0) : (clienteAEditar?.limiteCredito || 0),
@@ -81,11 +92,33 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
           .eq('id', clienteAEditar.id); 
         error = updateError;
       } else {
+        // 🔧 FIX: esta búsqueda de duplicados ya existía, pero su resultado
+        // nunca se revisaba. Ahora si encuentra un cliente con el mismo
+        // nombre EXACTO, o el mismo RUC/Cédula REAL, avisa y no deja crear
+        // otro. Si marcaste "Sin RUC/Cédula", el valor se guarda como NULL de
+        // verdad — nunca cuenta como coincidencia entre distintos clientes.
+        let filtroExistentes = `nombre.eq.${formData.razonSocial}`;
+        if (!formData.sinRuc && formData.cedulaRuc) {
+            filtroExistentes += `,empresa.eq.${formData.cedulaRuc}`;
+        }
+
         const { data: existentes } = await supabase
           .from('clientes')
-          .select('id')
-          .or(`nombre.eq.${formData.razonSocial},empresa.eq.${formData.cedulaRuc}`);
-          
+          .select('id, nombre, empresa')
+          .or(filtroExistentes);
+
+        if (existentes && existentes.length > 0) {
+          const coincidencia = existentes[0];
+          toast({
+            variant: "destructive",
+            title: "⚠️ Cliente ya existe",
+            description: `Ya hay un cliente registrado como "${coincidencia.nombre}" (RUC/CI: ${coincidencia.empresa || 'sin RUC'}). Búscalo y edítalo en vez de crear uno nuevo.`,
+            duration: 6000,
+          });
+          setLoading(false);
+          return;
+        }
+
         const { error: insertError } = await supabase
           .from('clientes')
           .insert([datosParaEnviar])
@@ -160,25 +193,43 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                  <FileText className="h-4 w-4 text-slate-400" /> Cédula o RUC
-                </label>
-                <input required name="cedulaRuc" value={formData.cedulaRuc} onChange={handleChange} maxLength={13} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ej: 0991234567001" />
+                <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <FileText className="h-4 w-4 text-slate-400" /> Cédula o RUC
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
+                        <input type="checkbox" name="sinRuc" checked={formData.sinRuc} onChange={(e) => setFormData(prev => ({ ...prev, sinRuc: e.target.checked, cedulaRuc: e.target.checked ? '' : prev.cedulaRuc }))} className="h-3.5 w-3.5" />
+                        Sin RUC/Cédula
+                    </label>
+                </div>
+                <input required={!formData.sinRuc} disabled={formData.sinRuc} name="cedulaRuc" value={formData.cedulaRuc} onChange={handleChange} maxLength={13} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400" placeholder="Ej: 0991234567001" />
               </div>
 
               <div className="space-y-2">
-                <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                  <Phone className="h-4 w-4 text-slate-400" /> Celular / Teléfono
-                </label>
-                <input required name="celular" value={formData.celular} onChange={handleChange} maxLength={10} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="Ej: 0991234567" />
+                <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <Phone className="h-4 w-4 text-slate-400" /> Celular / Teléfono
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
+                        <input type="checkbox" name="sinCelular" checked={formData.sinCelular} onChange={(e) => setFormData(prev => ({ ...prev, sinCelular: e.target.checked, celular: e.target.checked ? '' : prev.celular }))} className="h-3.5 w-3.5" />
+                        Sin Teléfono
+                    </label>
+                </div>
+                <input required={!formData.sinCelular} disabled={formData.sinCelular} name="celular" value={formData.celular} onChange={handleChange} maxLength={10} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400" placeholder="Ej: 0991234567" />
               </div>
 
               <div className="space-y-2 md:col-span-2">
-                <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
-                  <Mail className="h-4 w-4 text-slate-400" /> Correo Electrónico <span className="text-red-500">*</span>
-                </label>
-                <input required type="email" name="email" value={formData.email} onChange={handleChange} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none" placeholder="cliente@ejemplo.com" />
-                <p className="text-[11px] text-slate-400">Obligatorio — se usa para la facturación electrónica.</p>
+                <div className="flex items-center justify-between">
+                    <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
+                      <Mail className="h-4 w-4 text-slate-400" /> Correo Electrónico {!formData.sinEmail && <span className="text-red-500">*</span>}
+                    </label>
+                    <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
+                        <input type="checkbox" name="sinEmail" checked={formData.sinEmail} onChange={(e) => setFormData(prev => ({ ...prev, sinEmail: e.target.checked, email: e.target.checked ? '' : prev.email }))} className="h-3.5 w-3.5" />
+                        Sin Correo
+                    </label>
+                </div>
+                <input required={!formData.sinEmail} disabled={formData.sinEmail} type="email" name="email" value={formData.email} onChange={handleChange} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400" placeholder="cliente@ejemplo.com" />
+                <p className="text-[11px] text-slate-400">Se usa para la facturación electrónica — márcalo "Sin Correo" solo si el cliente de verdad no tiene.</p>
               </div>
 
               <div className="space-y-2 md:col-span-2">
