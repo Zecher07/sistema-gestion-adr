@@ -115,9 +115,17 @@ const AccountingPanel = ({ user, orders = [], staffUsers = [], onViewOrder }) =>
         }
      });
 
-     return Array.from(activeSellers.values()).map(sellerName => {
-         
-         const sellerUser = staffUsers.find(su => su.name?.toLowerCase().trim() === sellerName?.toLowerCase().trim());
+     // 🔧 FIX: antes esto convertía el Map de vuelta a solo NOMBRES
+     // (Array.from(activeSellers.values())), y luego volvía a buscar el id
+     // por nombre otra vez — si dos personas distintas comparten exactamente
+     // el mismo nombre (por ejemplo, dos cuentas ambas llamadas "Fiorella
+     // Vaque"), esa segunda búsqueda podía agarrar a la persona equivocada,
+     // haciendo que el dinero de una no se reflejara nunca. Ahora se usa el
+     // id que ya quedó guardado como clave del Map, sin volver a pasar por
+     // el nombre para nada.
+     return Array.from(activeSellers.entries()).map(([sellerKey, sellerName]) => {
+         const esIdReal = !String(sellerKey).startsWith('sin-id:');
+         const sellerUser = esIdReal ? staffUsers.find(su => String(su.id) === String(sellerKey)) : null;
          const closing = sellerUser ? dailyClosings.find(c => String(c.user_id) === String(sellerUser.id)) : null;
 
          const amountToAccounting = closing ? Number(closing.amount_to_accounting || 0) : 0;
