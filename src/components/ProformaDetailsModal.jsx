@@ -9,6 +9,19 @@ const getPrintDesc = (prod) => {
     return text.split(/\[?nota:/i)[0].trim();
 };
 
+// 🔧 NUEVO: separa "NOMBRE DEL PRODUCTO - descripción extra" en sus dos
+// partes, mismo criterio que en Órdenes de Producción y en el PDF de la
+// proforma — nombre arriba en negrita, descripción extra abajo chica y gris.
+const getPrintDescParts = (prod) => {
+    const textoCompleto = getPrintDesc(prod);
+    const idx = textoCompleto.indexOf(' - ');
+    if (idx === -1) return { nombre: textoCompleto, detalle: '' };
+    return {
+        nombre: textoCompleto.slice(0, idx).trim(),
+        detalle: textoCompleto.slice(idx + 3).trim()
+    };
+};
+
 const ProformaDetailsModal = ({ 
   proforma, 
   onClose, 
@@ -135,7 +148,17 @@ const ProformaDetailsModal = ({
                               {data.productos.map((prod, idx) => (
                                   <tr key={idx}>
                                       <td className="px-4 py-2 text-center text-slate-500">{prod.cantidad}</td>
-                                      <td className="px-4 py-2 font-medium uppercase whitespace-pre-wrap">{prod.descripcion}</td>
+                                      <td className="px-4 py-2 font-medium uppercase whitespace-pre-wrap">
+                                          {(() => {
+                                              const { nombre, detalle } = getPrintDescParts(prod);
+                                              return (
+                                                  <>
+                                                      <div className="font-bold">{nombre}</div>
+                                                      {detalle && <div className="font-normal normal-case text-xs text-slate-500 mt-0.5">{detalle}</div>}
+                                                  </>
+                                              );
+                                          })()}
+                                      </td>
                                       <td className="px-4 py-2 text-right text-slate-600">{formatCurrency(prod.precioUnitario)}</td>
                                       <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
                                   </tr>
@@ -292,7 +315,17 @@ const ProformaDetailsModal = ({
                                 <tr key={idx} className="border-b border-black">
                                     <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
                                     <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
-                                    <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">{getPrintDesc(prod)}</td>
+                                    <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">
+                                        {(() => {
+                                            const { nombre, detalle } = getPrintDescParts(prod);
+                                            return (
+                                                <>
+                                                    <div className="font-bold">{nombre}</div>
+                                                    {detalle && <div className="font-normal normal-case text-[10px] text-gray-500 mt-0.5">{detalle}</div>}
+                                                </>
+                                            );
+                                        })()}
+                                    </td>
                                     <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precioUnitario)}</td>
                                     <td className="border-r border-black p-1.5 text-right">$0.00</td>
                                     <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>

@@ -190,7 +190,7 @@ const ProformasPanel = ({
   const canConvert = (proforma) => proforma.status === 'BORRADOR';
 
   return (
-    <div className="space-y-4 animate-in fade-in">
+    <div className="space-y-4 animate-in fade-in print:hidden">
       {/* Toolbar */}
       <div className="bg-white p-4 rounded-xl shadow-sm border border-slate-200 space-y-4">
         <div className="flex flex-col md:flex-row justify-between items-center gap-4 border-b border-slate-100 pb-4">
