@@ -223,7 +223,25 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
     return (
         <tr className="hover:bg-slate-50 border-b border-slate-200">
              <td className="px-4 py-4 text-center text-slate-500 font-medium align-top">{index + 1}</td>
-             <td className="px-4 py-4 font-bold text-slate-900 uppercase align-top whitespace-pre-wrap">{product.descripcion || product.nombre}</td>
+             <td className="px-4 py-4 uppercase align-top whitespace-pre-wrap">
+                {(() => {
+                    const { nombre, detalle } = getPrintDescParts(product);
+                    return (
+                        <>
+                            <div className="font-bold text-slate-900">{nombre}</div>
+                            {detalle && <div className="font-normal normal-case text-xs text-slate-500 mt-1">{detalle}</div>}
+                            {/* 🔧 NUEVO: la Nota Técnica (observaciones internas) nunca se
+                                mostraba en esta vista — solo salía descripción. */}
+                            {product.observaciones && (
+                                <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 normal-case font-normal">
+                                    <span className="font-bold text-slate-400 block text-[9px] uppercase">Nota Técnica:</span>
+                                    <p className="whitespace-pre-wrap">{product.observaciones}</p>
+                                </div>
+                            )}
+                        </>
+                    );
+                })()}
+             </td>
              {showFinancials && <td className="px-4 py-4 text-right text-slate-600 align-top">{formatCurrency(product.precio || product.precioUnitario)}</td>}
              <td className="px-4 py-4 text-center text-slate-600 font-bold align-top">{product.cantidad}</td>
              {showFinancials && <td className="px-4 py-4 text-right font-bold text-slate-900 align-top">{formatCurrency(product.total || ((product.precio || product.precioUnitario) * product.cantidad))}</td>}
