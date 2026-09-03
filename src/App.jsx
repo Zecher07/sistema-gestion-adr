@@ -365,7 +365,7 @@ function App() {
 
       const prefilledOrderData = {
           cliente_nombre: proforma.cliente_nombre, cliente: proforma.cliente_nombre, ruc: proforma.cliente_identificacion, 
-          productos: (proforma.items || []).map(item => ({ cantidad: item.cantidad, descripcion: item.descripcion, precio: item.precioUnitario, total: item.total })),
+          productos: (proforma.items || []).map(item => ({ cantidad: item.cantidad, descripcion: item.descripcion, observaciones: item.observaciones, precio: item.precioUnitario, total: item.total })),
           financials: { subtotal: proforma.subtotal, iva: proforma.iva, total: proforma.total, ivaPercentage: proforma.iva_percentage || 15, saldo: proforma.total, diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0, descuentoMonto: savedDescuentoMonto },
           descuentoMonto: savedDescuentoMonto,
           dias_entrega: proforma.dias_entrega || finData.diasEntrega || 0,

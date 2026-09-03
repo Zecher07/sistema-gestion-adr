@@ -68,9 +68,8 @@ const uploadProformaImage = async (folderId, blobData) => {
     return { name: blobData.name, url: publicUrlData.publicUrl };
 };
 
-// 🔧 NUEVO: separa "NOMBRE DEL PRODUCTO - descripción extra" en sus dos
-// partes (mismo criterio que en OrderForm.jsx y en las impresiones), para
-// mostrar el nombre solo, sin que se vea gigante junto a la descripción.
+// 🔧 separa "NOMBRE DEL PRODUCTO - descripción extra" en sus dos partes
+// (mismo criterio que en OrderForm.jsx y en las impresiones).
 const getDescPartsForm = (textoCompleto) => {
     if (!textoCompleto) return { nombre: '', detalle: '' };
     const idx = textoCompleto.indexOf(' - ');
@@ -104,9 +103,6 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const [searchCatalog, setSearchCatalog] = useState('');
 
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
-  // 🔧 NUEVO: qué fila de producto está en modo "edición completa" (textarea
-  // abierto). Las demás filas ya llenas se ven compactas (nombre en negrita,
-  // sin la descripción larga pegada), igual que en OrderForm.jsx.
   const [editingProductRow, setEditingProductRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
 
@@ -707,12 +703,11 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                         <tr key={idx} className="hover:bg-slate-50 group">
                            <td className="p-2 relative align-top pt-3">
                               {(() => {
-                                  const esUltimaFila = idx === products.length - 1;
-                                  const enEdicion = editingProductRow === idx || esUltimaFila || !cleanDescription;
+                                  // 🔧 FIX: se quita "esUltimaFila" — forzaba edición completa en el
+                                  // último ítem aunque ya estuviera lleno; "!cleanDescription" ya
+                                  // cubre el caso real de fila vacía lista para agregar un producto.
+                                  const enEdicion = editingProductRow === idx || !cleanDescription;
                                   if (!enEdicion) {
-                                      // 🔧 NUEVO: vista compacta — nombre en negrita solo, y la
-                                      // descripción extra separada abajo (chica y gris), igual que
-                                      // ya sale en las impresiones. Un clic la abre para editar.
                                       const { nombre, detalle } = getDescPartsForm(cleanDescription);
                                       return (
                                           <div
