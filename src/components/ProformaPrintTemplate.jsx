@@ -1,6 +1,6 @@
 import React from 'react';
 
-// --- 🔥 NUEVA FUNCIÓN 100% INFALIBLE PARA LIMPIAR NOTAS 🔥 ---
+// --- 🔥 FUNCIÓN 100% INFALIBLE PARA LIMPIAR NOTAS 🔥 ---
 const getPrintDesc = (item) => {
     const text = item.descripcion || item.nombre || '';
     // Corta el texto en el momento exacto que encuentra "[Nota:" y se queda solo con la primera parte
@@ -8,6 +8,21 @@ const getPrintDesc = (item) => {
         return text.split('[Nota:')[0].trim();
     }
     return text.trim();
+};
+
+// 🔧 NUEVO: al elegir un producto del catálogo, el texto queda armado como
+// "NOMBRE DEL PRODUCTO - descripción extra" (ver ProformaForm.jsx). Esto
+// separa las dos partes para poder imprimir el nombre arriba (grande) y la
+// descripción extra abajo (chica y gris) — mismo criterio que ya usamos en
+// las Órdenes de Producción.
+const getPrintDescParts = (item) => {
+    const textoCompleto = getPrintDesc(item);
+    const idx = textoCompleto.indexOf(' - ');
+    if (idx === -1) return { nombre: textoCompleto, detalle: '' };
+    return {
+        nombre: textoCompleto.slice(0, idx).trim(),
+        detalle: textoCompleto.slice(idx + 3).trim()
+    };
 };
 
 const ProformaPrintTemplate = ({ data }) => {
@@ -63,8 +78,17 @@ const ProformaPrintTemplate = ({ data }) => {
             {data.productos.map((item, index) => (
               <tr key={index} className="border-b border-slate-100">
                 <td className="py-3 px-2 text-center">{item.cantidad}</td>
-                {/* 🔥 APLICAMOS LA NUEVA FUNCIÓN 🔥 */}
-                <td className="py-3 px-2 uppercase whitespace-pre-wrap">{getPrintDesc(item)}</td>
+                <td className="py-3 px-2 uppercase whitespace-pre-wrap">
+                    {(() => {
+                        const { nombre, detalle } = getPrintDescParts(item);
+                        return (
+                            <>
+                                <div className="font-bold">{nombre}</div>
+                                {detalle && <div className="font-normal normal-case text-[10px] text-gray-500 mt-0.5">{detalle}</div>}
+                            </>
+                        );
+                    })()}
+                </td>
                 <td className="py-3 px-2 text-right">${Number(item.precioUnitario || item.precio).toFixed(2)}</td>
                 <td className="py-3 px-2 text-right font-medium">${Number(item.total || (item.cantidad * (item.precioUnitario || item.precio))).toFixed(2)}</td>
               </tr>
