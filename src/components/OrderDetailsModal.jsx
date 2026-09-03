@@ -232,7 +232,8 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                             {detalle && <div className="font-normal normal-case text-xs text-slate-500 mt-1">{detalle}</div>}
                             {/* 🔧 NUEVO: la Nota Técnica (observaciones internas) nunca se
                                 mostraba en esta vista — solo salía descripción. */}
-                            {product.observaciones && (
+                            {/* 🔧 Nota Técnica: dirigida a Ventas/Admin, NO a Producción */}
+                            {product.observaciones && showFinancials && (
                                 <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 normal-case font-normal">
                                     <span className="font-bold text-slate-400 block text-[9px] uppercase">Nota Técnica:</span>
                                     <p className="whitespace-pre-wrap">{product.observaciones}</p>
