@@ -68,6 +68,16 @@ const uploadProformaImage = async (folderId, blobData) => {
     return { name: blobData.name, url: publicUrlData.publicUrl };
 };
 
+// 🔧 NUEVO: separa "NOMBRE DEL PRODUCTO - descripción extra" en sus dos
+// partes (mismo criterio que en OrderForm.jsx y en las impresiones), para
+// mostrar el nombre solo, sin que se vea gigante junto a la descripción.
+const getDescPartsForm = (textoCompleto) => {
+    if (!textoCompleto) return { nombre: '', detalle: '' };
+    const idx = textoCompleto.indexOf(' - ');
+    if (idx === -1) return { nombre: textoCompleto, detalle: '' };
+    return { nombre: textoCompleto.slice(0, idx).trim(), detalle: textoCompleto.slice(idx + 3).trim() };
+};
+
 const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user, initialData = null, nextProformaNumber, onCreateClient, onReloadClients }) => {
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
@@ -94,6 +104,10 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   const [searchCatalog, setSearchCatalog] = useState('');
 
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
+  // 🔧 NUEVO: qué fila de producto está en modo "edición completa" (textarea
+  // abierto). Las demás filas ya llenas se ven compactas (nombre en negrita,
+  // sin la descripción larga pegada), igual que en OrderForm.jsx.
+  const [editingProductRow, setEditingProductRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
 
   const [financials, setFinancials] = useState({ subtotal: 0, iva: 0, total: 0, descuento: 0, descuentoPorc: 0, anticipoPorc: 50, anticipoValor: 0, saldoPorc: 50, saldoValor: 0 });
@@ -692,14 +706,42 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                         return (
                         <tr key={idx} className="hover:bg-slate-50 group">
                            <td className="p-2 relative align-top pt-3">
-                              <textarea 
-                                  className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
-                                  placeholder={idx === products.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
-                                  value={cleanDescription} 
-                                  onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
-                                  onFocus={() => { if(cleanDescription && cleanDescription.length >= 2) handleProductSearchRequest(idx, cleanDescription); }}
-                                  onBlur={() => setTimeout(() => setActiveProductSearchRow(null), 350)}
-                              />
+                              {(() => {
+                                  const esUltimaFila = idx === products.length - 1;
+                                  const enEdicion = editingProductRow === idx || esUltimaFila || !cleanDescription;
+                                  if (!enEdicion) {
+                                      // 🔧 NUEVO: vista compacta — nombre en negrita solo, y la
+                                      // descripción extra separada abajo (chica y gris), igual que
+                                      // ya sale en las impresiones. Un clic la abre para editar.
+                                      const { nombre, detalle } = getDescPartsForm(cleanDescription);
+                                      return (
+                                          <div
+                                              className="w-full border border-slate-200 rounded p-2 text-sm cursor-text hover:border-blue-300 bg-white min-h-[60px]"
+                                              onClick={() => setEditingProductRow(idx)}
+                                              title="Clic para editar"
+                                          >
+                                              <div className="font-bold text-slate-800 uppercase">{nombre}</div>
+                                              {detalle && (
+                                                  <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 select-none">
+                                                      <span className="font-bold text-slate-400 block text-[9px] uppercase">Descripción:</span>
+                                                      <p className="whitespace-pre-wrap normal-case">{detalle}</p>
+                                                  </div>
+                                              )}
+                                          </div>
+                                      );
+                                  }
+                                  return (
+                                      <textarea 
+                                          autoFocus={editingProductRow === idx}
+                                          className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
+                                          placeholder={idx === products.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
+                                          value={cleanDescription} 
+                                          onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
+                                          onFocus={() => { if(cleanDescription && cleanDescription.length >= 2) handleProductSearchRequest(idx, cleanDescription); }}
+                                          onBlur={() => setTimeout(() => { setActiveProductSearchRow(null); setEditingProductRow(null); }, 350)}
+                                      />
+                                  );
+                              })()}
                               {row.observaciones && (
                                   <div className="text-[10px] text-slate-500 italic mt-1 leading-tight">
                                       {row.observaciones}

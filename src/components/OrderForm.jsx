@@ -1342,7 +1342,12 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                                 title="Clic para editar"
                                             >
                                                 <div className="font-bold text-slate-800 uppercase">{nombre}</div>
-                                                {detalle && <div className="text-xs text-slate-500 mt-0.5 normal-case">{detalle}</div>}
+                                                {detalle && (
+                                                    <div className="mt-1.5 bg-slate-50 border border-slate-200 rounded p-2 text-[11px] text-slate-600 select-none">
+                                                        <span className="font-bold text-slate-400 block text-[9px] uppercase">Descripción:</span>
+                                                        <p className="whitespace-pre-wrap normal-case">{detalle}</p>
+                                                    </div>
+                                                )}
                                             </div>
                                         );
                                     }
