@@ -175,7 +175,7 @@ const InlineComprobanteEdit = ({ type, abonoIndex, items = [], onAdd, onRemove, 
     );
 };
 
-// 🔧 NUEVO: separa "NOMBRE DEL PRODUCTO - descripción extra" en sus dos partes
+// 🔧 separa "NOMBRE DEL PRODUCTO - descripción extra" en sus dos partes
 // (igual criterio que usan OrderDetailsModal e impresión), para mostrar una
 // vista compacta mientras se llena/edita la orden.
 const getDescPartsForm = (textoCompleto) => {
@@ -217,9 +217,9 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const [catalogItems, setCatalogItems] = useState([]);
   const [searchCatalog, setSearchCatalog] = useState('');
   const [activeProductSearchRow, setActiveProductSearchRow] = useState(null);
-  // 🔧 NUEVO: qué fila de producto está en modo "edición completa" (textarea
-  // abierto). Las demás filas ya llenas se ven compactas (nombre en negrita +
-  // detalle chico en gris), para que la lista no se vea tan "llena".
+  // qué fila de producto está en modo "edición completa" (textarea abierto).
+  // Las demás filas ya llenas se ven compactas (nombre en negrita + detalle
+  // en su recuadro, como Nota Técnica), para que la lista no se vea tan llena.
   const [editingProductRow, setEditingProductRow] = useState(null);
   const [productSuggestions, setProductSuggestions] = useState([]);
   const [isCancelModalOpen, setIsCancelModalOpen] = useState(false);
@@ -1329,17 +1329,18 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                              
                              <td className="py-2 px-2 relative align-top pt-3">
                                 {(() => {
-                                    const esUltimaFila = idx === formData.productos.length - 1;
-                                    const enEdicion = editingProductRow === idx || esUltimaFila || isEffectivelyReadOnly || !cleanDescription;
+                                    // 🔧 FIX: antes "esUltimaFila" forzaba SIEMPRE el modo de edición
+                                    // completa en el último ítem, aunque ya estuviera lleno con un
+                                    // producto real — se quita, ya que "!cleanDescription" (fila vacía)
+                                    // ya cubre el caso real de "listo para agregar uno nuevo".
+                                    const enEdicion = !isEffectivelyReadOnly && (editingProductRow === idx || !cleanDescription);
                                     if (!enEdicion) {
-                                        // 🔧 NUEVO: vista compacta — nombre en negrita, detalle chico en gris.
-                                        // Un clic la convierte en el cuadro de edición completo.
                                         const { nombre, detalle } = getDescPartsForm(cleanDescription);
                                         return (
                                             <div
-                                                className="w-full border border-slate-200 rounded p-2 text-sm cursor-text hover:border-blue-300 bg-white min-h-[40px]"
-                                                onClick={() => setEditingProductRow(idx)}
-                                                title="Clic para editar"
+                                                className={`w-full border border-slate-200 rounded p-2 text-sm bg-white min-h-[40px] ${isEffectivelyReadOnly ? '' : 'cursor-text hover:border-blue-300'}`}
+                                                onClick={() => { if (!isEffectivelyReadOnly) setEditingProductRow(idx); }}
+                                                title={isEffectivelyReadOnly ? '' : 'Clic para editar'}
                                             >
                                                 <div className="font-bold text-slate-800 uppercase">{nombre}</div>
                                                 {detalle && (
