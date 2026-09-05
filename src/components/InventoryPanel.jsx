@@ -541,9 +541,13 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                               <ShoppingCart className="h-4 w-4" /> Agregar Compra
                           </Button>
                           
-                          <Button onClick={openConsumeModal} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 font-bold shadow-sm">
-                              <PenTool className="h-4 w-4" /> Registrar Consumo
-                          </Button>
+                          {/* 🔧 FIX: "Registrar Consumo" ahora solo para Admin — Producción
+                              estaba autoajustando el inventario y se perdía el control real. */}
+                          {isAdmin && (
+                              <Button onClick={openConsumeModal} className="bg-blue-600 hover:bg-blue-700 text-white gap-2 font-bold shadow-sm">
+                                  <PenTool className="h-4 w-4" /> Registrar Consumo
+                              </Button>
+                          )}
 
                           <Button onClick={openAdjustModal} className="bg-amber-500 hover:bg-amber-600 text-white gap-2 font-bold shadow-sm">
                               <Scale className="h-4 w-4" /> Cuadre
@@ -773,10 +777,15 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                       </div>
                       
                       <div className="p-6 overflow-y-auto flex-1 bg-slate-50 min-h-[400px]">
-                          <div className="mb-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
-                              <label className="text-xs font-bold text-slate-600 uppercase mb-1 block">Nº Factura / Proveedor (Opcional)</label>
-                              <Input className="text-sm py-1.5" value={purchaseRef} onChange={e=>setPurchaseRef(e.target.value)} placeholder="Ej: Factura 001 - Importadora..." />
-                          </div>
+                          {/* 🔧 FIX: el N° Factura y Proveedor es información sensible del
+                              negocio (precios negociados por proveedor) — solo Admin debe
+                              verlo y registrarlo, por temas de privacidad. */}
+                          {isAdmin && (
+                              <div className="mb-4 bg-white p-3 rounded-lg border border-slate-200 shadow-sm">
+                                  <label className="text-xs font-bold text-slate-600 uppercase mb-1 block">Nº Factura / Proveedor (Opcional)</label>
+                                  <Input className="text-sm py-1.5" value={purchaseRef} onChange={e=>setPurchaseRef(e.target.value)} placeholder="Ej: Factura 001 - Importadora..." />
+                              </div>
+                          )}
 
                           <div className="space-y-2">
                               <label className="text-xs font-bold text-slate-600 uppercase block border-b border-slate-200 pb-1">Materiales Adquiridos</label>

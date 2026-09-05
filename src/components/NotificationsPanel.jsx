@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Bell, UserPlus, Info, Receipt, FileText, ExternalLink, X, CheckCircle2, ArrowRight, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ShieldCheck, DollarSign, Landmark, Calendar } from 'lucide-react';
+import { Bell, UserPlus, Info, Receipt, FileText, ExternalLink, X, CheckCircle2, ArrowRight, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ShieldCheck, DollarSign, Landmark, Calendar, ShoppingCart } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '../supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
@@ -137,6 +137,10 @@ const NotificationsPanel = ({
   const [accountingReports, setAccountingReports] = useState([]);
   const [todosLosVales, setTodosLosVales] = useState([]);
   const [loadingResumen, setLoadingResumen] = useState(true);
+  // 🔧 NUEVO: compras recientes registradas en Inventario (Admin ve un
+  // registro de cada compra, con quién la hizo, qué material, y la
+  // factura/proveedor si él mismo la ingresó).
+  const [comprasRecientes, setComprasRecientes] = useState([]);
   const [cerrandoDia, setCerrandoDia] = useState(false);
   const [comprobanteGeneral, setComprobanteGeneral] = useState(null);
 
@@ -239,6 +243,9 @@ const NotificationsPanel = ({
 
         const { data: valesData } = await supabase.from('vales_caja').select('*').order('fecha', { ascending: false }).limit(300);
         setTodosLosVales(valesData || []);
+
+        const { data: comprasData } = await supabase.from('historial_inventario').select('*').eq('tipo', 'INGRESO').order('created_at', { ascending: false }).limit(50);
+        setComprasRecientes(comprasData || []);
       } catch (error) {
         console.error("Error cargando resumen diario:", error);
       } finally {
@@ -599,6 +606,45 @@ const NotificationsPanel = ({
                     </div>
                     );
                 })() : null}
+
+                {/* 🔧 NUEVO: Compras Registradas (solo Admin) — un registro de cada
+                    compra hecha en Inventario, con quién la hizo, qué material, y
+                    la factura/proveedor si el propio Admin la ingresó. */}
+                {isAdmin && (
+                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
+                        <div className="bg-emerald-50 p-4 border-b border-emerald-100 flex justify-between items-center">
+                            <h3 className="font-bold text-emerald-800 flex items-center gap-2">
+                                <ShoppingCart className="h-4 w-4"/> Compras Registradas
+                            </h3>
+                            <span className="bg-emerald-200 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded-full">{comprasRecientes.length}</span>
+                        </div>
+                        <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
+                            {loadingResumen ? (
+                                <div className="p-8 text-center text-slate-400"><Loader2 className="h-6 w-6 animate-spin mx-auto"/></div>
+                            ) : comprasRecientes.length > 0 ? comprasRecientes.map(compra => {
+                                // El motivo guarda algo como "Ingreso por Compra - Fac/Ref: Factura 001 - Importadora..."
+                                const refMatch = (compra.motivo || '').match(/Fac\/Ref:\s*(.+)/);
+                                const referencia = refMatch ? refMatch[1].trim() : null;
+                                return (
+                                    <div key={compra.id} className="p-4 hover:bg-emerald-50/30 transition-colors">
+                                        <div className="flex justify-between items-start mb-1">
+                                            <p className="text-sm font-bold text-slate-800">{compra.material_nombre}</p>
+                                            <span className="text-sm font-black text-emerald-600 shrink-0">+{compra.cantidad_cambio}</span>
+                                        </div>
+                                        <p className="text-xs text-slate-500">{formatDate(compra.created_at)} · Registrado por {compra.usuario || 'Sistema'}</p>
+                                        {referencia && (
+                                            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 mt-1.5">
+                                                <span className="font-bold">Factura/Proveedor:</span> {referencia}
+                                            </p>
+                                        )}
+                                    </div>
+                                );
+                            }) : (
+                                <div className="p-8 text-center text-slate-400 text-sm italic">No hay compras registradas todavía.</div>
+                            )}
+                        </div>
+                    </div>
+                )}
             </div>
 
             {/* COLUMNA DERECHA: ÓRDENES DE TRABAJO PENDIENTES */}
