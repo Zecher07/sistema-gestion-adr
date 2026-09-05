@@ -89,7 +89,9 @@ const ProformaPrintTemplate = ({ data }) => {
                         );
                     })()}
                 </td>
-                <td className="py-3 px-2 text-right">${Number(item.precioUnitario || item.precio).toFixed(2)}</td>
+                {/* 🔧 FIX: Total ÷ Cantidad, para que cuadre con lo que ve el cliente
+                    (evita mostrar el precio interno por m² sin explicación). */}
+                <td className="py-3 px-2 text-right">${(Number(item.total || (item.cantidad * (item.precioUnitario || item.precio))) / (Number(item.cantidad) || 1)).toFixed(2)}</td>
                 <td className="py-3 px-2 text-right font-medium">${Number(item.total || (item.cantidad * (item.precioUnitario || item.precio))).toFixed(2)}</td>
               </tr>
             ))}
