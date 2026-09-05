@@ -159,7 +159,7 @@ const ProformaDetailsModal = ({
                                               );
                                           })()}
                                       </td>
-                                      <td className="px-4 py-2 text-right text-slate-600">{formatCurrency(prod.precioUnitario)}</td>
+                                      <td className="px-4 py-2 text-right text-slate-600">{formatCurrency((prod.total || (prod.cantidad * prod.precioUnitario)) / (prod.cantidad || 1))}</td>
                                       <td className="px-4 py-2 text-right font-semibold text-slate-900">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
                                   </tr>
                               ))}
@@ -326,7 +326,9 @@ const ProformaDetailsModal = ({
                                             );
                                         })()}
                                     </td>
-                                    <td className="border-r border-black p-1.5 text-right">{formatCurrency(prod.precioUnitario)}</td>
+                                    {/* 🔧 FIX: Total ÷ Cantidad, para que cuadre con lo que ve el
+                                        cliente (evita mostrar el precio interno por m²). */}
+                                    <td className="border-r border-black p-1.5 text-right">{formatCurrency((prod.total || (prod.cantidad * prod.precioUnitario)) / (prod.cantidad || 1))}</td>
                                     <td className="border-r border-black p-1.5 text-right">$0.00</td>
                                     <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
                                 </tr>

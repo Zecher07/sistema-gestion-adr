@@ -142,11 +142,26 @@ const WorkAreaList = ({
     });
   }, [rawFilteredOrders, searchTerm]);
 
-  const totalItems = searchFilteredOrders.length;
+  // 🔧 NUEVO: ordenar por Fecha de Entrega (la más próxima/atrasada primero),
+  // en vez del orden en que llegan las órdenes — así el equipo de producción
+  // ve de un vistazo qué hay que sacar primero. Las órdenes sin fecha se van
+  // al final.
+  const sortedOrders = useMemo(() => {
+      return [...searchFilteredOrders].sort((a, b) => {
+          const fechaA = a.fechaEntrega || a.fecha_entrega;
+          const fechaB = b.fechaEntrega || b.fecha_entrega;
+          if (!fechaA && !fechaB) return 0;
+          if (!fechaA) return 1;
+          if (!fechaB) return -1;
+          return new Date(fechaA) - new Date(fechaB);
+      });
+  }, [searchFilteredOrders]);
+
+  const totalItems = sortedOrders.length;
   const totalPages = Math.ceil(totalItems / itemsPerPage);
   const startIndex = (currentPage - 1) * itemsPerPage;
   const endIndex = Math.min(startIndex + itemsPerPage, totalItems);
-  const paginatedOrders = searchFilteredOrders.slice(startIndex, endIndex);
+  const paginatedOrders = sortedOrders.slice(startIndex, endIndex);
 
   // 🔧 FIX: antes esta función siempre asumía que la fecha traía hora, y hacía
   // "new Date(dateString)" directo. Para órdenes viejas donde fecha_entrega se guardó
@@ -172,6 +187,21 @@ const WorkAreaList = ({
     if (order.order_number) return order.order_number.toString().padStart(7, '0');
     if (order.orderNumber) return order.orderNumber.toString().padStart(7, '0');
     return (order.id || '').toString().slice(-7).padStart(7, '0');
+  };
+
+  // 🔧 NUEVO: semáforo de colores para la Fecha de Entrega — rojo (atrasado),
+  // naranja (vence hoy), verde (a tiempo). Ayuda al equipo de producción a
+  // ver de un vistazo qué sacar primero.
+  const getFechaEntregaSemaforo = (order) => {
+      const fecha = order.fechaEntrega || order.fecha_entrega;
+      if (!fecha) return 'bg-slate-100 text-slate-500 border-slate-200';
+      const fechaEntrega = new Date(fecha);
+      const hoy = new Date();
+      const finDeHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 23, 59, 59, 999);
+      const inicioDeHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 0, 0, 0, 0);
+      if (fechaEntrega < inicioDeHoy) return 'bg-red-100 text-red-700 border-red-300 font-bold'; // atrasado
+      if (fechaEntrega <= finDeHoy) return 'bg-orange-100 text-orange-700 border-orange-300 font-bold'; // vence hoy
+      return 'bg-green-100 text-green-700 border-green-200'; // a tiempo
   };
 
   const calculateProductStats = (order) => {
@@ -403,7 +433,11 @@ const WorkAreaList = ({
                                        {stats.completed} / {stats.total}
                                    </span>
                                </td>
-                               <td className="px-6 py-3 text-slate-600">{formatDate(order.fechaEntrega || order.fecha_entrega)}</td>
+                               <td className="px-6 py-3">
+                                   <span className={cn("px-2 py-1 rounded border text-xs whitespace-nowrap", getFechaEntregaSemaforo(order))}>
+                                       {formatDate(order.fechaEntrega || order.fecha_entrega)}
+                                   </span>
+                               </td>
                                <td className="px-6 py-3 text-slate-800 uppercase text-xs font-semibold">{order.cliente || order.cliente_nombre}</td>
                                <td className="px-6 py-3 text-slate-600 uppercase text-xs">{order.tipoLetrero || order.tipo_trabajo}</td>
                                

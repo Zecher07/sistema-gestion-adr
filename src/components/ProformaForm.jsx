@@ -469,27 +469,35 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
             ? parseFloat(item.precioMinimoManual) : minCatalogo;
 
         if (item.es_por_metro) {
-            const areaIndividual = (b / 100) * (a / 100); 
-            const areaTotal = parseFloat((areaIndividual * q).toFixed(2));
-            
-            if (['base', 'altura', 'cantidad', 'precioMinimoManual'].includes(field) && item.precioBaseOriginal !== undefined) {
-                if (areaTotal > 0) {
-                    item.precioUnitario = getPriceForQty(areaTotal, item, esMayorista);
-                } else {
-                    item.precioUnitario = '';
+            // 🔧 NUEVO: si el usuario está editando el Total directamente, se
+            // respeta ese valor tal cual — antes siempre se recalculaba
+            // automáticamente, así que no había forma de escribir un total
+            // manual para productos por m².
+            if (field === 'total') {
+                item.total = parseFloat(value) || 0;
+            } else {
+                const areaIndividual = (b / 100) * (a / 100); 
+                const areaTotal = parseFloat((areaIndividual * q).toFixed(2));
+                
+                if (['base', 'altura', 'cantidad', 'precioMinimoManual'].includes(field) && item.precioBaseOriginal !== undefined) {
+                    if (areaTotal > 0) {
+                        item.precioUnitario = getPriceForQty(areaTotal, item, esMayorista);
+                    } else {
+                        item.precioUnitario = '';
+                    }
                 }
+
+                const pUnit = parseFloat(item.precioUnitario) || 0;
+                let precioPorPieza = areaIndividual * pUnit;
+
+                if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
+                    precioPorPieza = PRECIO_MINIMO_ITEM;
+                }
+
+                let calcTotal = precioPorPieza * q;
+                if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
+                item.total = calcTotal;
             }
-
-            const pUnit = parseFloat(item.precioUnitario) || 0;
-            let precioPorPieza = areaIndividual * pUnit;
-
-            if (areaIndividual > 0 && precioPorPieza < PRECIO_MINIMO_ITEM) {
-                precioPorPieza = PRECIO_MINIMO_ITEM;
-            }
-
-            let calcTotal = precioPorPieza * q;
-            if (calcTotal > 0) calcTotal = roundUpToHalf(calcTotal);
-            item.total = calcTotal;
 
         } else {
             if (field === 'cantidad' && item.precioBaseOriginal !== undefined) {
@@ -821,8 +829,20 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                                    onChange={e => updateProduct(idx, 'precioUnitario', e.target.value)} 
                                />
                            </td>
-                           <td className="p-2 text-right font-bold text-slate-800 align-top pt-5">
-                               $ {Number(row.total || 0).toFixed(2)}
+                           <td className="p-2 text-right font-bold text-slate-800 align-top pt-4">
+                               {row.es_por_metro ? (
+                                   <div className="flex items-center justify-end gap-0.5">
+                                       <span className="text-xs">$</span>
+                                       <input
+                                           type="number" step="0.01"
+                                           className="w-20 text-right border-none bg-transparent focus:ring-0 text-sm p-0 font-bold h-9"
+                                           value={row.total !== undefined ? row.total : ''}
+                                           onChange={e => updateProduct(idx, 'total', e.target.value)}
+                                       />
+                                   </div>
+                               ) : (
+                                   <>$ {Number(row.total || 0).toFixed(2)}</>
+                               )}
                            </td>
                            <td className="p-2 text-center align-top pt-4">
                                {(row.nombre || row.descripcion) && (
