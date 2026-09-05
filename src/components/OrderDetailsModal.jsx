@@ -1327,7 +1327,12 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                         })()}
                                     </td>
                                     <td className="border-r-2 border-black p-2 font-medium align-middle text-right">
-                                        {formatCurrency(prod.precio || prod.precioUnitario)}
+                                        {/* 🔧 FIX: antes mostraba el precio interno (por m² en productos que
+                                            se cobran así), lo que confundía al cliente porque Cantidad ×
+                                            Unitario no coincidía con el Total. Ahora se calcula al revés:
+                                            Total ÷ Cantidad, para que los números siempre cuadren tal como
+                                            el cliente los espera ver, sin exponer el cálculo interno por m². */}
+                                        {formatCurrency((prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario))) / (prod.cantidad || 1))}
                                     </td>
                                     <td className="p-2 font-bold align-middle text-right">
                                         {formatCurrency(prod.total || (prod.cantidad * (prod.precio || prod.precioUnitario)))}
