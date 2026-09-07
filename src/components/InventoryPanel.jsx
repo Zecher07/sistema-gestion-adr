@@ -29,7 +29,22 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   const canEditInventory = user?.role === 'Administrador' || user?.role === 'Producción';
   const isReadOnly = !canEditInventory || mode === 'view';
   const isAdmin = user?.role === 'Administrador';
-  const isProduccion = user?.role === 'Producción'; 
+  const isProduccion = user?.role === 'Producción';
+
+  // 🔧 CAMBIO 9: si se llega aquí desde "Revisar Descuadre" del Centro de
+  // Notificaciones, ahí se dejó guardado el detalle del descuadre. Lo leemos
+  // una sola vez, lo mostramos en un recuadro rojo arriba, y limpiamos la
+  // llave para que no reaparezca al recargar.
+  const [descuadreBanner, setDescuadreBanner] = useState(null);
+  useEffect(() => {
+      try {
+          const raw = sessionStorage.getItem('descuadreARevisar');
+          if (raw) {
+              setDescuadreBanner(JSON.parse(raw));
+              sessionStorage.removeItem('descuadreARevisar');
+          }
+      } catch (e) { /* nada */ }
+  }, []);
 
   // Modal Crear/Editar Material
   const [isModalOpen, setIsModalOpen] = useState(false);
@@ -513,7 +528,49 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   return (
     <>
       <div className="space-y-4 animate-in fade-in print:hidden">
-          
+
+          {/* 🔧 CAMBIO 9: detalle del descuadre que se venía a revisar (viene del
+              Centro de Notificaciones). Se puede cerrar con la X. */}
+          {descuadreBanner && (
+              <div className="bg-red-50 border border-red-300 rounded-xl p-4">
+                  <div className="flex items-start justify-between gap-3">
+                      <div className="flex items-start gap-3">
+                          <Scale className="h-5 w-5 text-red-600 shrink-0 mt-0.5" />
+                          <div>
+                              <p className="text-sm font-bold text-red-800">
+                                  Descuadre a revisar — registrado por {(descuadreBanner.usuario || 'Sistema').toUpperCase()}
+                                  {descuadreBanner.fecha ? ` · ${new Date(descuadreBanner.fecha).toLocaleString('es-ES', { day: '2-digit', month: '2-digit', year: 'numeric', hour: '2-digit', minute: '2-digit' })}` : ''}
+                              </p>
+                              {descuadreBanner.perdidaTotal > 0 && (
+                                  <p className="text-xs text-red-700 mt-0.5">
+                                      Pérdida monetaria estimada: <span className="font-bold">${Number(descuadreBanner.perdidaTotal).toFixed(2)}</span>
+                                  </p>
+                              )}
+                          </div>
+                      </div>
+                      <button onClick={() => setDescuadreBanner(null)} className="text-red-400 hover:text-red-600 shrink-0">
+                          <X className="h-4 w-4" />
+                      </button>
+                  </div>
+                  <div className="mt-3 bg-white border border-red-200 rounded-lg overflow-x-auto">
+                      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 px-3 py-1.5 bg-red-50 text-[9px] font-bold text-red-400 uppercase min-w-[420px]">
+                          <span>Material</span><span className="text-right">Diferencia</span><span className="text-right">Quedó en</span><span className="text-right">Pérdida</span>
+                      </div>
+                      {(descuadreBanner.filas || []).map((f, fi) => (
+                          <div key={fi} className="px-3 py-2 border-t border-red-100 min-w-[420px]">
+                              <div className="grid grid-cols-[1fr_auto_auto_auto] gap-3 items-center text-[11px]">
+                                  <span className="font-medium text-slate-700">{f.material_nombre}</span>
+                                  <span className={cn("text-right font-bold", f.cantidad_cambio < 0 ? "text-red-600" : "text-green-600")}>{f.cantidad_cambio > 0 ? '+' : ''}{f.cantidad_cambio}</span>
+                                  <span className="text-right text-slate-500">{f.cantidad_resultante}</span>
+                                  <span className="text-right text-red-600 font-medium">{f.perdida > 0 ? `$${Number(f.perdida).toFixed(2)}` : '—'}</span>
+                              </div>
+                              {f.motivo && <p className="text-[10px] text-slate-400 mt-1">Motivo: {String(f.motivo).replace('Cuadre de Inventario: ', '')}</p>}
+                          </div>
+                      ))}
+                  </div>
+              </div>
+          )}
+
           <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col xl:flex-row justify-between items-center gap-4">
               <div>
                   <h2 className="text-2xl font-bold text-slate-800 flex items-center gap-2">
