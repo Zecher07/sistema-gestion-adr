@@ -1,9 +1,17 @@
 import React, { useState, useEffect, useMemo } from 'react';
-import { Bell, UserPlus, Info, Receipt, FileText, ExternalLink, X, CheckCircle2, ArrowRight, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ShieldCheck, DollarSign, Landmark, Calendar, ShoppingCart } from 'lucide-react';
+import { Bell, UserPlus, Info, Receipt, FileText, ExternalLink, X, CheckCircle2, ArrowRight, Loader2, ChevronDown, ChevronUp, ChevronLeft, ChevronRight, ShieldCheck, DollarSign, Landmark, Calendar, ShoppingCart, Scale } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { supabase } from '../supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
 import { cn } from '@/lib/utils';
+
+// 🔧 CAMBIO 9: el aviso de "jornadas sin auditar" y toda la maquinaria de
+// "jornada pendiente de archivar" SOLO aplican desde esta fecha en adelante.
+// Antes de septiembre 2026 hubo muchos cambios seguidos al sistema y los días
+// viejos daban falsos positivos (ej. el 8 de junio salía como "pendiente"
+// disque porque las cajas no estaban verificadas por Contabilidad, lo cual
+// era falso). No extender hacia atrás sin revisar esto primero.
+const FECHA_INICIO_AUDITORIA = '2026-09-01';
 
 // 🔧 NUEVO: calendario propio (un <input type="date"> normal no permite marcar
 // días con datos adentro del calendario nativo del navegador). Este sí lo hace:
@@ -141,8 +149,22 @@ const NotificationsPanel = ({
   // registro de cada compra, con quién la hizo, qué material, y la
   // factura/proveedor si él mismo la ingresó).
   const [comprasRecientes, setComprasRecientes] = useState([]);
+  // 🔧 NUEVO: cuadres de inventario (auditorías) recientes — para que Admin
+  // se entere apenas alguien ejecuta un cuadre, en vez de que quede "en el aire".
+  const [cuadresRecientes, setCuadresRecientes] = useState([]);
+  const [preciosInventario, setPreciosInventario] = useState({}); // { material_id: precio }
+  const [marcandoRevisado, setMarcandoRevisado] = useState(null); // id del grupo que se está guardando
   const [cerrandoDia, setCerrandoDia] = useState(false);
   const [comprobanteGeneral, setComprobanteGeneral] = useState(null);
+  // 🔧 CAMBIO 9: verificación MANUAL del depósito bancario del día. Admin revisa
+  // la cuenta por fuera y marca este check; se guarda al instante (no espera al
+  // botón de archivar). Se bloquea una vez que el día queda archivado/cerrado.
+  const [depositoVerificado, setDepositoVerificado] = useState(false);
+  const [guardandoDeposito, setGuardandoDeposito] = useState(false);
+  // 🔧 CAMBIO 9: id del vale que se está marcando como auditado (spinner local).
+  const [auditandoVale, setAuditandoVale] = useState(null);
+  // 🔧 CAMBIO 9: id del grupo de auditoría cuyo detalle de descuadre está abierto.
+  const [auditoriaExpandida, setAuditoriaExpandida] = useState(null);
 
   // 🔧 FIX: esta función se había perdido en una edición anterior — es la que
   // hace que las flechitas de navegar día a día realmente funcionen.
@@ -161,6 +183,7 @@ const NotificationsPanel = ({
       const diasConActividad = new Set(dailyClosings.map(c => c.date ? String(c.date).split('T')[0].trim() : null).filter(Boolean));
       return Array.from(diasConActividad)
           .filter(fecha => fecha < hoyStr) // solo días pasados, no hoy
+          .filter(fecha => fecha >= FECHA_INICIO_AUDITORIA) // 🔧 CAMBIO 9: no mirar días previos a sept-2026
           .filter(fecha => {
               const reporte = accountingReports.find(r => r.fecha === fecha);
               return !reporte || reporte.estado !== 'CERRADO';
@@ -169,7 +192,16 @@ const NotificationsPanel = ({
   }, [dailyClosings, accountingReports, hoyStr]);
 
   const reporteDelDiaActual = accountingReports.find(r => r.fecha === fechaMaestra);
-  const diaEstaCerrado = reporteDelDiaActual?.estado === 'CERRADO';
+  // "CERRADO" = lo cerró Contabilidad desde su panel; "ARCHIVADA" = jornada
+  // archivada desde aquí con TODOS los checks (cajas + depósito + vales). En
+  // ambos casos el día queda bloqueado y no se vuelve a editar.
+  const diaEstaArchivado = reporteDelDiaActual?.estado === 'ARCHIVADA';
+  const diaEstaCerrado = reporteDelDiaActual?.estado === 'CERRADO' || diaEstaArchivado;
+
+  // 🔧 CAMBIO 9: al cambiar de día, sincroniza el check de depósito con lo guardado.
+  useEffect(() => {
+      setDepositoVerificado(reporteDelDiaActual?.deposito_verificado === true);
+  }, [fechaMaestra, reporteDelDiaActual?.deposito_verificado]);
 
   // Sube el comprobante general (igual que en AccountingPanel.jsx)
   const handleUploadComprobante = (e) => {
@@ -179,6 +211,47 @@ const NotificationsPanel = ({
       const reader = new FileReader();
       reader.onloadend = () => setComprobanteGeneral(reader.result);
       reader.readAsDataURL(file);
+  };
+
+  // 🔧 CAMBIO 9: marca/desmarca "Depósito Bancario Verificado" del día y lo
+  // guarda de inmediato en cierres_contables (upsert por fecha). No espera al
+  // botón de archivar. Solo Admin y solo si el día NO está cerrado/archivado.
+  const toggleDepositoVerificado = async () => {
+      if (!isAdmin || diaEstaCerrado || guardandoDeposito) return;
+      const nuevoValor = !depositoVerificado;
+      setDepositoVerificado(nuevoValor); // feedback inmediato
+      setGuardandoDeposito(true);
+      try {
+          const { error } = await supabase.from('cierres_contables').upsert(
+              { fecha: fechaMaestra, deposito_verificado: nuevoValor, updated_at: new Date().toISOString() },
+              { onConflict: 'fecha' }
+          );
+          if (error) throw error;
+          const { data: accData } = await supabase.from('cierres_contables').select('*').order('fecha', { ascending: false }).limit(60);
+          setAccountingReports(accData || []);
+      } catch (error) {
+          setDepositoVerificado(!nuevoValor); // revertir si falló
+          alert('No se pudo guardar la verificación del depósito: ' + error.message);
+      } finally {
+          setGuardandoDeposito(false);
+      }
+  };
+
+  // 🔧 CAMBIO 9: marca un vale del día como auditado (revisado por Admin). Se
+  // guarda en la columna nueva vales_caja.auditado (ver agregar_auditado_vales.sql).
+  const toggleValeAuditado = async (vale) => {
+      if (!isAdmin || diaEstaCerrado || auditandoVale) return;
+      const nuevoValor = !vale.auditado;
+      setAuditandoVale(vale.id);
+      try {
+          const { error } = await supabase.from('vales_caja').update({ auditado: nuevoValor }).eq('id', vale.id);
+          if (error) throw error;
+          setTodosLosVales(prev => prev.map(v => v.id === vale.id ? { ...v, auditado: nuevoValor } : v));
+      } catch (error) {
+          alert('No se pudo marcar el vale: ' + error.message);
+      } finally {
+          setAuditandoVale(null);
+      }
   };
 
   // 🔧 NUEVO: "Finalizar y Archivar Jornada de Hoy" — misma validación y misma
@@ -193,6 +266,16 @@ const NotificationsPanel = ({
       if (!comprobanteGeneral && resumen.totals.cash > 0) {
           return alert('Debes subir el comprobante de depósito general de efectivo antes de finalizar.');
       }
+      // 🔧 CAMBIO 9: además de las cajas y el comprobante, exige el check manual
+      // de depósito bancario y que TODOS los vales del día estén auditados.
+      if (!depositoVerificado) {
+          return alert('Debes marcar el check "Depósito Bancario Verificado" antes de archivar la jornada.');
+      }
+      const valesDelDiaAux = valesPorDia[fechaMaestra] || [];
+      const valesSinAuditarAux = valesDelDiaAux.filter(v => !v.auditado).length;
+      if (valesSinAuditarAux > 0) {
+          return alert(`No se puede archivar: faltan ${valesSinAuditarAux} vale(s) del día por auditar.`);
+      }
       setCerrandoDia(true);
       try {
           const payload = {
@@ -202,8 +285,9 @@ const NotificationsPanel = ({
               total_efectivo_esperado: resumen.totals.cash,
               total_transferencias_esperado: resumen.totals.transfers,
               detalles_vendedores: reporteDelDiaActual?.detalles_vendedores || [],
-              comprobante_general: comprobanteGeneral,
-              estado: 'CERRADO',
+              comprobante_general: comprobanteGeneral || reporteDelDiaActual?.comprobante_general || null,
+              deposito_verificado: true,
+              estado: 'ARCHIVADA',
               updated_at: new Date().toISOString()
           };
           const { error } = await supabase.from('cierres_contables').upsert(payload, { onConflict: 'fecha' });
@@ -246,6 +330,14 @@ const NotificationsPanel = ({
 
         const { data: comprasData } = await supabase.from('historial_inventario').select('*').eq('tipo', 'INGRESO').order('created_at', { ascending: false }).limit(50);
         setComprasRecientes(comprasData || []);
+
+        const { data: cuadresData } = await supabase.from('historial_inventario').select('*').like('motivo', 'Cuadre de Inventario:%').order('created_at', { ascending: false }).limit(50);
+        setCuadresRecientes(cuadresData || []);
+
+        const { data: inventarioData } = await supabase.from('inventario').select('id, valor_perdida, valor_compra');
+        const mapaPrecios = {};
+        (inventarioData || []).forEach(m => { mapaPrecios[m.id] = Number(m.valor_perdida || m.valor_compra) || 0; });
+        setPreciosInventario(mapaPrecios);
       } catch (error) {
         console.error("Error cargando resumen diario:", error);
       } finally {
@@ -324,6 +416,49 @@ const NotificationsPanel = ({
   const diasConDatosContables = useMemo(() => new Set(dailyClosings.map(c => c.date ? String(c.date).split('T')[0].trim() : null).filter(Boolean)), [dailyClosings]);
   const diasConVales = useMemo(() => new Set(Object.keys(valesPorDia)), [valesPorDia]);
   const diasConAlgunDato = useMemo(() => new Set([...diasConDatosContables, ...diasConVales]), [diasConDatosContables, diasConVales]);
+
+  // 🔧 NUEVO: agrupa filas de historial_inventario en "sesiones" (mismo
+  // usuario + mismo minuto), para mostrar un cuadre o una compra con varios
+  // materiales como UNA sola tarea, tal como se ve en el diseño del cliente.
+  const agruparPorSesion = (filas) => {
+      const grupos = {};
+      filas.forEach(f => {
+          const minuto = (f.created_at || '').slice(0, 16); // "2026-09-02T14:30"
+          const clave = `${f.usuario || 'Sistema'}|${minuto}`;
+          if (!grupos[clave]) grupos[clave] = { id: clave, usuario: f.usuario, fecha: f.created_at, filas: [] };
+          grupos[clave].filas.push(f);
+      });
+      return Object.values(grupos).sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  };
+
+  // Tareas de AUDITORÍA: sesiones de cuadre con al menos una pérdida, sin revisar
+  const tareasAuditoria = useMemo(() => {
+      const pendientes = cuadresRecientes.filter(c => !c.revisado);
+      return agruparPorSesion(pendientes).filter(g => g.filas.some(f => f.cantidad_cambio < 0));
+  }, [cuadresRecientes]);
+
+  // Tareas de RECEPCIÓN: sesiones de compra hechas por alguien que NO es
+  // Admin (porque a ellos les escondimos el campo de Factura/Proveedor),
+  // todavía sin costear.
+  const tareasRecepcion = useMemo(() => {
+      const pendientes = comprasRecientes.filter(c => !c.revisado && !(c.motivo || '').includes('Fac/Ref:'));
+      return agruparPorSesion(pendientes);
+  }, [comprasRecientes]);
+
+  // Marca todas las filas de una sesión (cuadre o compra) como revisadas
+  const marcarSesionRevisada = async (grupo, tipo) => {
+      setMarcandoRevisado(grupo.id);
+      try {
+          const ids = grupo.filas.map(f => f.id);
+          await supabase.from('historial_inventario').update({ revisado: true }).in('id', ids);
+          if (tipo === 'auditoria') setCuadresRecientes(prev => prev.map(c => ids.includes(c.id) ? { ...c, revisado: true } : c));
+          else setComprasRecientes(prev => prev.map(c => ids.includes(c.id) ? { ...c, revisado: true } : c));
+      } catch (error) {
+          console.error('Error al marcar como revisado:', error);
+      } finally {
+          setMarcandoRevisado(null);
+      }
+  };
 
   // Calcula el resumen de Control Contable para UN día específico — misma
   // lógica (ya corregida) de AccountingPanel.jsx, agrupando por id de
@@ -404,6 +539,28 @@ const NotificationsPanel = ({
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
+  // 🔧 CAMBIO 9: ¿están TODOS los checks del día? Recién ahí se habilita el botón
+  // "Archivar Jornada" de arriba. Mientras falte algo, la jornada sale como
+  // PENDIENTE y el botón queda gris con un tooltip de qué falta.
+  const construirEstadoArchivo = () => {
+      if (!isAdmin) return { listo: false, faltantes: [] };
+      if (diaEstaCerrado) return { listo: false, faltantes: [] }; // ya archivado/cerrado
+      if (fechaMaestra < FECHA_INICIO_AUDITORIA) return { listo: false, faltantes: ['Esta fecha es anterior a septiembre 2026 (no se audita).'] };
+      const resumen = getResumenContableDelDia(fechaMaestra);
+      const faltantes = [];
+      const cajasFaltantes = resumen.totals.totalSellers - resumen.totals.verifiedCount;
+      if (resumen.totals.totalSellers === 0) faltantes.push('No hay cajas de vendedores registradas para esta fecha.');
+      if (cajasFaltantes > 0) faltantes.push(`${cajasFaltantes} caja(s) de vendedores sin verificar en Control Contable.`);
+      const comprobanteOk = diaEstaCerrado ? reporteDelDiaActual?.comprobante_general : comprobanteGeneral;
+      if (resumen.totals.cash > 0 && !comprobanteOk) faltantes.push('Falta subir el comprobante de depósito del efectivo.');
+      if (!depositoVerificado) faltantes.push('Falta marcar el check "Depósito Bancario Verificado".');
+      const valesDelDia = valesPorDia[fechaMaestra] || [];
+      const valesSinAuditar = valesDelDia.filter(v => !v.auditado).length;
+      if (valesSinAuditar > 0) faltantes.push(`${valesSinAuditar} vale(s) del día sin auditar.`);
+      return { listo: faltantes.length === 0, faltantes };
+  };
+  const estadoArchivo = construirEstadoArchivo();
+
   return (
     <div className="space-y-6 animate-in fade-in">
         <div className="bg-white p-6 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-center gap-4">
@@ -424,14 +581,26 @@ const NotificationsPanel = ({
                         <MiniCalendario fecha={fechaMaestra} onChange={setFechaMaestra} tieneDatos={(d) => diasConAlgunDato.has(d)} colorPunto="bg-purple-500" colorBoton="indigo" />
                         <button onClick={() => cambiarDia(1)} disabled={fechaMaestra >= hoyStr} className="p-1.5 hover:bg-slate-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"><ChevronRight className="h-4 w-4 text-slate-500"/></button>
                     </div>
-                    <span className={cn("text-xs font-bold px-3 py-2 rounded-lg uppercase", diaEstaCerrado ? "bg-green-100 text-green-700" : fechaMaestra === hoyStr ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700")}>
-                        {diaEstaCerrado ? 'Día Cerrado' : fechaMaestra === hoyStr ? 'Hoy - En Curso' : 'Pendiente'}
+                    <span className={cn("text-xs font-bold px-3 py-2 rounded-lg uppercase", diaEstaArchivado ? "bg-green-100 text-green-700" : diaEstaCerrado ? "bg-green-100 text-green-700" : fechaMaestra === hoyStr ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700")}>
+                        {diaEstaArchivado ? 'Jornada Archivada' : diaEstaCerrado ? 'Día Cerrado' : fechaMaestra === hoyStr ? 'Hoy - En Curso' : 'Pendiente'}
                     </span>
                     {!diaEstaCerrado && (
-                        <Button onClick={handleFinalizarJornada} disabled={cerrandoDia} className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2">
-                            {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle2 className="h-4 w-4"/>}
-                            Finalizar y Archivar Jornada
-                        </Button>
+                        <div className="flex flex-col items-end gap-1">
+                            <Button
+                                onClick={handleFinalizarJornada}
+                                disabled={cerrandoDia || !estadoArchivo.listo}
+                                title={estadoArchivo.listo ? 'Archivar esta jornada' : 'Faltan pasos para archivar:\n• ' + estadoArchivo.faltantes.join('\n• ')}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle2 className="h-4 w-4"/>}
+                                Archivar Jornada
+                            </Button>
+                            {!estadoArchivo.listo && estadoArchivo.faltantes.length > 0 && (
+                                <span className="text-[10px] text-slate-400 max-w-[260px] text-right leading-tight">
+                                    Faltan {estadoArchivo.faltantes.length} paso(s): {estadoArchivo.faltantes[0]}
+                                </span>
+                            )}
+                        </div>
                     )}
                 </div>
             )}
@@ -469,7 +638,7 @@ const NotificationsPanel = ({
                                 <p className="text-[10px] text-slate-400 mt-0.5">Fecha: {new Date(fechaMaestra + 'T12:00:00').toLocaleDateString('es-ES')}</p>
                             </div>
                             <span className={cn("text-[10px] font-bold px-2 py-1 rounded-full uppercase", diaEstaCerrado ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700")}>
-                                {diaEstaCerrado ? 'Día Cerrado' : 'Abierto'}
+                                {diaEstaArchivado ? 'Archivada' : diaEstaCerrado ? 'Día Cerrado' : 'Pendiente'}
                             </span>
                         </div>
                         <div className="p-4">
@@ -509,6 +678,27 @@ const NotificationsPanel = ({
                                                 </label>
                                             )}
                                         </div>
+
+                                        {/* 🔧 CAMBIO 9: check manual de depósito bancario — lo marca Admin
+                                            tras verificar el ingreso en la cuenta. Se guarda al instante. */}
+                                        <button
+                                            type="button"
+                                            onClick={toggleDepositoVerificado}
+                                            disabled={diaEstaCerrado || guardandoDeposito}
+                                            className={cn(
+                                                "w-full flex items-center justify-between rounded p-2 border transition-colors text-left",
+                                                depositoVerificado ? "bg-green-50 border-green-300" : "bg-white border-slate-200 hover:bg-slate-50",
+                                                (diaEstaCerrado || guardandoDeposito) && "opacity-60 cursor-not-allowed"
+                                            )}
+                                        >
+                                            <span className={cn("flex items-center gap-1.5 font-medium", depositoVerificado ? "text-green-700" : "text-slate-500")}>
+                                                {guardandoDeposito ? <Loader2 className="h-3.5 w-3.5 animate-spin"/> : <Landmark className="h-3.5 w-3.5"/>}
+                                                Depósito Bancario Verificado
+                                            </span>
+                                            <span className={cn("h-4 w-4 rounded border flex items-center justify-center shrink-0", depositoVerificado ? "bg-green-600 border-green-600" : "border-slate-300")}>
+                                                {depositoVerificado && <CheckCircle2 className="h-3 w-3 text-white"/>}
+                                            </span>
+                                        </button>
 
                                         {resumen.sellersData.length > 0 ? (
                                             <div className="bg-white border border-slate-200 rounded overflow-hidden">
@@ -577,7 +767,14 @@ const NotificationsPanel = ({
                                 </h3>
                                 <span className="text-sm font-black text-red-600">-${totalEgresos.toFixed(2)}</span>
                             </div>
-                            <p className="text-[10px] text-slate-400">Fecha: {new Date(fechaMaestra + 'T12:00:00').toLocaleDateString('es-ES')} · Total Egresos</p>
+                            <p className="text-[10px] text-slate-400">
+                                Fecha: {new Date(fechaMaestra + 'T12:00:00').toLocaleDateString('es-ES')} · Total Egresos
+                                {valesDelDia.length > 0 && (
+                                    <> · <span className={cn("font-bold", valesDelDia.every(v => v.auditado) ? "text-green-600" : "text-amber-600")}>
+                                        {valesDelDia.filter(v => v.auditado).length}/{valesDelDia.length} auditados
+                                    </span></>
+                                )}
+                            </p>
                         </div>
                         <div className="p-4 space-y-2 max-h-[500px] overflow-y-auto">
                             {loadingResumen ? (
@@ -591,7 +788,23 @@ const NotificationsPanel = ({
                                                     <p className="text-xs font-bold text-slate-800">VC-{String(vale.id).padStart(5, '0')} · {vale.vendedor}</p>
                                                     <p className="text-[10px] text-slate-500 truncate">{vale.concepto}</p>
                                                 </div>
-                                                <span className="text-xs font-black text-red-600 shrink-0">-{formatCurrency(vale.monto)}</span>
+                                                <div className="flex items-center gap-2 shrink-0">
+                                                    <span className="text-xs font-black text-red-600">-{formatCurrency(vale.monto)}</span>
+                                                    {/* 🔧 CAMBIO 9: check de auditoría por vale */}
+                                                    <button
+                                                        type="button"
+                                                        onClick={() => toggleValeAuditado(vale)}
+                                                        disabled={diaEstaCerrado || auditandoVale === vale.id}
+                                                        className={cn(
+                                                            "text-[10px] font-bold px-2 py-1 rounded border flex items-center gap-1 transition-colors",
+                                                            vale.auditado ? "bg-green-100 border-green-300 text-green-700" : "bg-white border-slate-300 text-slate-500 hover:bg-slate-50",
+                                                            (diaEstaCerrado || auditandoVale === vale.id) && "opacity-60 cursor-not-allowed"
+                                                        )}
+                                                    >
+                                                        {auditandoVale === vale.id ? <Loader2 className="h-3 w-3 animate-spin"/> : <CheckCircle2 className="h-3 w-3"/>}
+                                                        {vale.auditado ? 'Auditado' : 'Auditar'}
+                                                    </button>
+                                                </div>
                                             </div>
                                         ))
                                     ) : (
@@ -607,48 +820,118 @@ const NotificationsPanel = ({
                     );
                 })() : null}
 
-                {/* 🔧 NUEVO: Compras Registradas (solo Admin) — un registro de cada
-                    compra hecha en Inventario, con quién la hizo, qué material, y
-                    la factura/proveedor si el propio Admin la ingresó. */}
-                {isAdmin && (
+            </div>
+
+            {/* COLUMNA DERECHA: TAREAS DE INVENTARIO + ÓRDENES DE TRABAJO */}
+            <div className="xl:col-span-2 space-y-6">
+                {/* 🔧 NUEVO: Bandeja de Tareas de Inventario (solo Admin) — auditorías
+                    con descuadre y recepciones de material pendientes de costear,
+                    como tareas accionables (no una lista pasiva). */}
+                {isAdmin && (tareasAuditoria.length > 0 || tareasRecepcion.length > 0) && (
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div className="bg-emerald-50 p-4 border-b border-emerald-100 flex justify-between items-center">
-                            <h3 className="font-bold text-emerald-800 flex items-center gap-2">
-                                <ShoppingCart className="h-4 w-4"/> Compras Registradas
+                        <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
+                            <h3 className="font-bold text-slate-700 flex items-center gap-2">
+                                <FileText className="h-5 w-5 text-indigo-500"/> Bandeja de Tareas de Inventario
                             </h3>
-                            <span className="bg-emerald-200 text-emerald-800 text-xs font-bold px-2 py-0.5 rounded-full">{comprasRecientes.length}</span>
+                            <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">{tareasAuditoria.length + tareasRecepcion.length} Tareas</span>
                         </div>
-                        <div className="divide-y divide-slate-100 max-h-[400px] overflow-y-auto">
-                            {loadingResumen ? (
-                                <div className="p-8 text-center text-slate-400"><Loader2 className="h-6 w-6 animate-spin mx-auto"/></div>
-                            ) : comprasRecientes.length > 0 ? comprasRecientes.map(compra => {
-                                // El motivo guarda algo como "Ingreso por Compra - Fac/Ref: Factura 001 - Importadora..."
-                                const refMatch = (compra.motivo || '').match(/Fac\/Ref:\s*(.+)/);
-                                const referencia = refMatch ? refMatch[1].trim() : null;
+                        <div className="divide-y divide-slate-100">
+                            {tareasAuditoria.map(grupo => {
+                                const perdidaTotal = grupo.filas.reduce((acc, f) => {
+                                    if (f.cantidad_cambio >= 0) return acc;
+                                    return acc + (Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0));
+                                }, 0);
+                                const detalles = grupo.filas.map(f => `${f.material_nombre} (${f.cantidad_cambio > 0 ? '+' : ''}${f.cantidad_cambio})`).join(', ');
+                                const estaExpandida = auditoriaExpandida === grupo.id;
+                                // 🔧 CAMBIO 9: al pulsar "Revisar Descuadre" se guarda el detalle
+                                // de esta sesión de cuadre para que la pantalla de Inventario lo
+                                // muestre en un recuadro rojo al llegar (no solo "te lleva").
+                                const irARevisarDescuadre = () => {
+                                    try {
+                                        sessionStorage.setItem('descuadreARevisar', JSON.stringify({
+                                            usuario: grupo.usuario || 'Sistema',
+                                            fecha: grupo.fecha,
+                                            perdidaTotal,
+                                            filas: grupo.filas.map(f => ({
+                                                material_nombre: f.material_nombre,
+                                                cantidad_cambio: f.cantidad_cambio,
+                                                cantidad_resultante: f.cantidad_resultante,
+                                                motivo: f.motivo,
+                                                perdida: f.cantidad_cambio < 0 ? Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0) : 0,
+                                            })),
+                                        }));
+                                    } catch (e) { /* sessionStorage no disponible: seguimos igual */ }
+                                    onViewChange('inventario-gestionar');
+                                };
                                 return (
-                                    <div key={compra.id} className="p-4 hover:bg-emerald-50/30 transition-colors">
-                                        <div className="flex justify-between items-start mb-1">
-                                            <p className="text-sm font-bold text-slate-800">{compra.material_nombre}</p>
-                                            <span className="text-sm font-black text-emerald-600 shrink-0">+{compra.cantidad_cambio}</span>
+                                    <div key={grupo.id} className="p-4 bg-red-50/50">
+                                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                                            <div className="flex items-start gap-3">
+                                                <Info className="h-5 w-5 text-red-500 shrink-0 mt-0.5"/>
+                                                <div>
+                                                    <p className="text-sm font-bold text-red-800">AUDITORÍA: DESCUADRE CON PÉRDIDA REGISTRADO POR {(grupo.usuario || '').toUpperCase()}</p>
+                                                    <p className="text-xs text-slate-600 mt-0.5">
+                                                        {perdidaTotal > 0 && <>Pérdida monetaria: <span className="font-bold">{formatCurrency(perdidaTotal)}</span>. </>}
+                                                        Detalles: {detalles}.
+                                                    </p>
+                                                    <button onClick={() => setAuditoriaExpandida(estaExpandida ? null : grupo.id)} className="text-[11px] font-bold text-red-600 hover:underline mt-1">
+                                                        {estaExpandida ? 'Ocultar detalle ▲' : 'Ver detalle del descuadre ▼'}
+                                                    </button>
+                                                </div>
+                                            </div>
+                                            <div className="flex gap-2 shrink-0 self-end md:self-center">
+                                                <Button size="sm" variant="outline" className="text-xs h-8 border-red-300 text-red-700 hover:bg-red-100" onClick={irARevisarDescuadre}>
+                                                    Revisar Descuadre
+                                                </Button>
+                                                <Button size="sm" className="text-xs h-8 bg-red-600 hover:bg-red-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => marcarSesionRevisada(grupo, 'auditoria')}>
+                                                    {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : <CheckCircle2 className="h-3 w-3 mr-1"/>} Marcar como revisado
+                                                </Button>
+                                            </div>
                                         </div>
-                                        <p className="text-xs text-slate-500">{formatDate(compra.created_at)} · Registrado por {compra.usuario || 'Sistema'}</p>
-                                        {referencia && (
-                                            <p className="text-xs text-emerald-700 bg-emerald-50 border border-emerald-200 rounded px-2 py-1 mt-1.5">
-                                                <span className="font-bold">Factura/Proveedor:</span> {referencia}
-                                            </p>
+                                        {estaExpandida && (
+                                            <div className="mt-3 bg-white border border-red-200 rounded-lg overflow-hidden">
+                                                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-3 py-1.5 bg-red-50 text-[9px] font-bold text-red-400 uppercase">
+                                                    <span>Material</span><span className="text-right">Diferencia</span><span className="text-right">Quedó en</span><span className="text-right">Pérdida</span>
+                                                </div>
+                                                {grupo.filas.map((f, fi) => (
+                                                    <div key={fi} className="px-3 py-2 border-t border-red-100">
+                                                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center text-[11px]">
+                                                            <span className="font-medium text-slate-700">{f.material_nombre}</span>
+                                                            <span className={cn("text-right font-bold", f.cantidad_cambio < 0 ? "text-red-600" : "text-green-600")}>{f.cantidad_cambio > 0 ? '+' : ''}{f.cantidad_cambio}</span>
+                                                            <span className="text-right text-slate-500">{f.cantidad_resultante}</span>
+                                                            <span className="text-right text-red-600 font-medium">{f.cantidad_cambio < 0 ? formatCurrency(Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0)) : '—'}</span>
+                                                        </div>
+                                                        {f.motivo && <p className="text-[10px] text-slate-400 mt-1">Motivo: {String(f.motivo).replace('Cuadre de Inventario: ', '')}</p>}
+                                                    </div>
+                                                ))}
+                                            </div>
                                         )}
                                     </div>
                                 );
-                            }) : (
-                                <div className="p-8 text-center text-slate-400 text-sm italic">No hay compras registradas todavía.</div>
-                            )}
+                            })}
+                            {tareasRecepcion.map(grupo => {
+                                const materiales = grupo.filas.map(f => f.material_nombre).join(', ');
+                                return (
+                                    <div key={grupo.id} className="p-4 bg-emerald-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                                        <div className="flex items-start gap-3">
+                                            <Info className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5"/>
+                                            <div>
+                                                <p className="text-sm font-bold text-emerald-800">RECEPCIÓN: MATERIALES PENDIENTES DE COSTEO</p>
+                                                <p className="text-xs text-slate-600 mt-0.5">Nuevos materiales ingresados por {grupo.usuario || 'Producción'} ({materiales})</p>
+                                            </div>
+                                        </div>
+                                        <div className="flex gap-2 shrink-0 self-end md:self-center">
+                                            <Button size="sm" className="text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => { onViewChange('inventario-gestionar'); marcarSesionRevisada(grupo, 'recepcion'); }}>
+                                                {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : null} Costear y Asignar Proveedor
+                                            </Button>
+                                        </div>
+                                    </div>
+                                );
+                            })}
                         </div>
                     </div>
                 )}
-            </div>
 
-            {/* COLUMNA DERECHA: ÓRDENES DE TRABAJO PENDIENTES */}
-            <div className="xl:col-span-2">
                 <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-full flex flex-col">
                     <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
                         <h3 className="font-bold text-slate-700 flex items-center gap-2">

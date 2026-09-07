@@ -629,33 +629,38 @@ function App() {
               <div>
                 <h2 className="text-2xl font-bold text-slate-800 mb-2">¡Hola, {user.name}! 👋</h2>
                 <p className="text-slate-500 mb-4">Panel de Control General</p>
-                {/* 🔧 NUEVO: botones de acción rápida — crear orden o cotización
-                    directo desde Inicio, sin tener que ir a otra pantalla primero. */}
-                <div className="flex flex-wrap gap-3">
-                    <Button onClick={() => setShowForm(true)} className="bg-green-600 hover:bg-green-700 text-white gap-2">
-                        <PlusCircle className="h-4 w-4" /> Crear Nueva Orden de Venta
-                    </Button>
-                    <Button onClick={() => setShowProformaForm(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
-                        <FileText className="h-4 w-4" /> Nueva Cotización
-                    </Button>
-                </div>
+                {/* 🔧 FIX: estos botones son de Ventas/Admin (crear orden/cotización,
+                    tema de comisiones) — no deben verse en el portal de Producción. */}
+                {user.role !== 'Producción' && (
+                    <div className="flex flex-wrap gap-3">
+                        <Button onClick={() => setShowForm(true)} className="bg-green-600 hover:bg-green-700 text-white gap-2">
+                            <PlusCircle className="h-4 w-4" /> Crear Nueva Orden de Venta
+                        </Button>
+                        <Button onClick={() => setShowProformaForm(true)} className="bg-blue-600 hover:bg-blue-700 text-white gap-2">
+                            <FileText className="h-4 w-4" /> Nueva Cotización
+                        </Button>
+                    </div>
+                )}
               </div>
               {user.role === 'Administrador' && (<Button variant="outline" onClick={() => setCurrentView('configuracion')} className="gap-2"><Settings className="h-4 w-4" /> Configurar Permisos</Button>)}
             </div>
 
-            {/* 🔧 NUEVO: tarjeta destacada de Ventas Finalizadas del mes en curso */}
-            <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 flex items-center justify-between gap-4 flex-wrap">
-                <div className="flex items-center gap-4">
-                    <div className="h-14 w-14 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-                        <TrendingUp className="h-7 w-7 text-blue-600" />
-                    </div>
-                    <div>
-                        <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">Ventas Finalizadas ({nombreMes})</p>
-                        <p className="text-3xl font-black text-slate-800">${ventasFinalizadasMes.toFixed(2)} USD</p>
-                        <p className="text-xs text-slate-500 mt-0.5">Monto total acumulado de órdenes entregadas y cobradas al 100% en el mes</p>
+            {/* 🔧 FIX: la tarjeta de Ventas Finalizadas (tema de comisiones) tampoco
+                debe verse en el portal de Producción. */}
+            {user.role !== 'Producción' && (
+                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 flex items-center justify-between gap-4 flex-wrap">
+                    <div className="flex items-center gap-4">
+                        <div className="h-14 w-14 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
+                            <TrendingUp className="h-7 w-7 text-blue-600" />
+                        </div>
+                        <div>
+                            <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">Ventas Finalizadas ({nombreMes})</p>
+                            <p className="text-3xl font-black text-slate-800">${ventasFinalizadasMes.toFixed(2)} USD</p>
+                            <p className="text-xs text-slate-500 mt-0.5">Monto total acumulado de órdenes entregadas y cobradas al 100% en el mes</p>
+                        </div>
                     </div>
                 </div>
-            </div>
+            )}
 
             <Stats orders={orders} user={user} />
             <div className="mt-8"><WorkAreaList orders={orders} user={user} staffUsers={staffUsers} kanbanTasks={kanbanTasks} onKanbanUpdate={handleKanbanUpdate} onKanbanCreate={handleKanbanCreate} onKanbanDelete={handleKanbanDelete} onViewOrder={(o) => handleViewOrder(o, 'tasks')} initialMode='list' onAbonoOrder={handleAbonoOrderRequest} /></div>
