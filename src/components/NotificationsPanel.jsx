@@ -185,8 +185,12 @@ const NotificationsPanel = ({
           .filter(fecha => fecha < hoyStr) // solo días pasados, no hoy
           .filter(fecha => fecha >= FECHA_INICIO_AUDITORIA) // 🔧 CAMBIO 9: no mirar días previos a sept-2026
           .filter(fecha => {
+              // 🔧 FIX: una jornada cuenta como "auditada" tanto si está 'CERRADO'
+              // (flujo viejo de Contabilidad) como 'ARCHIVADA' (flujo nuevo). Antes
+              // solo miraba 'CERRADO', así que un día recién archivado seguía
+              // apareciendo en el aviso "jornadas sin auditar".
               const reporte = accountingReports.find(r => r.fecha === fecha);
-              return !reporte || reporte.estado !== 'CERRADO';
+              return !reporte || (reporte.estado !== 'CERRADO' && reporte.estado !== 'ARCHIVADA');
           })
           .sort((a, b) => new Date(a) - new Date(b)); // más antigua primero
   }, [dailyClosings, accountingReports, hoyStr]);
@@ -204,6 +208,21 @@ const NotificationsPanel = ({
   useEffect(() => {
       setDepositoVerificado(reporteDelDiaActual?.deposito_verificado === true);
   }, [fechaMaestra, reporteDelDiaActual?.deposito_verificado]);
+
+  // 🔧 PERF: archivar/reabrir/marcar el depósito se sentía LENTO porque después
+  // de cada guardado se volvían a bajar ~60 filas de `cierres_contables` con
+  // `select('*')` — y esas filas traen `comprobante_general` (la foto de la
+  // papeleta en base64) y `detalles_vendedores`, o sea varios MB. En vez de eso,
+  // actualizamos en memoria SOLO la fila del día que acabamos de escribir.
+  const aplicarCambioReporteLocal = (patch) => {
+      setAccountingReports(prev => {
+          const idx = prev.findIndex(r => r.fecha === fechaMaestra);
+          if (idx === -1) return [{ fecha: fechaMaestra, ...patch }, ...prev];
+          const copia = [...prev];
+          copia[idx] = { ...copia[idx], ...patch };
+          return copia;
+      });
+  };
 
   // Sube el comprobante general (igual que en AccountingPanel.jsx)
   const handleUploadComprobante = (e) => {
@@ -230,8 +249,7 @@ const NotificationsPanel = ({
               { onConflict: 'fecha' }
           );
           if (error) throw error;
-          const { data: accData } = await supabase.from('cierres_contables').select('*').order('fecha', { ascending: false }).limit(60);
-          setAccountingReports(accData || []);
+          aplicarCambioReporteLocal({ deposito_verificado: nuevoValor });
       } catch (error) {
           setDepositoVerificado(!nuevoValor); // revertir si falló
           alert('No se pudo guardar la verificación del depósito: ' + error.message);
@@ -295,8 +313,7 @@ const NotificationsPanel = ({
           };
           const { error } = await supabase.from('cierres_contables').upsert(payload, { onConflict: 'fecha' });
           if (error) throw error;
-          const { data: accData } = await supabase.from('cierres_contables').select('*').order('fecha', { ascending: false }).limit(60);
-          setAccountingReports(accData || []);
+          aplicarCambioReporteLocal(payload);
       } catch (error) {
           alert('Error al finalizar la jornada: ' + error.message);
       } finally {
@@ -317,8 +334,7 @@ const NotificationsPanel = ({
               { onConflict: 'fecha' }
           );
           if (error) throw error;
-          const { data: accData } = await supabase.from('cierres_contables').select('*').order('fecha', { ascending: false }).limit(60);
-          setAccountingReports(accData || []);
+          aplicarCambioReporteLocal({ estado: null });
       } catch (error) {
           alert('No se pudo reabrir la jornada: ' + error.message);
       } finally {
