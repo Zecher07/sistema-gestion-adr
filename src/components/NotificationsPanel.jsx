@@ -192,11 +192,13 @@ const NotificationsPanel = ({
   }, [dailyClosings, accountingReports, hoyStr]);
 
   const reporteDelDiaActual = accountingReports.find(r => r.fecha === fechaMaestra);
-  // "CERRADO" = lo cerró Contabilidad desde su panel; "ARCHIVADA" = jornada
-  // archivada desde aquí con TODOS los checks (cajas + depósito + vales). En
-  // ambos casos el día queda bloqueado y no se vuelve a editar.
+  // "ARCHIVADA" = jornada archivada desde aquí con TODOS los checks. "CERRADO" =
+  // estado viejo que ponía el panel de Contabilidad (ya en retiro).
+  // 🔧 AJUSTE: el Admin SIEMPRE puede editar los checks y (re)archivar, aunque el
+  // día figure como cerrado/archivado — es Admin. Antes había un `diaEstaCerrado`
+  // que bloqueaba todos los botones; se eliminó. Solo queda `diaEstaArchivado`
+  // para saber si mostrar "Archivar" o "Reabrir".
   const diaEstaArchivado = reporteDelDiaActual?.estado === 'ARCHIVADA';
-  const diaEstaCerrado = reporteDelDiaActual?.estado === 'CERRADO' || diaEstaArchivado;
 
   // 🔧 CAMBIO 9: al cambiar de día, sincroniza el check de depósito con lo guardado.
   useEffect(() => {
@@ -215,9 +217,10 @@ const NotificationsPanel = ({
 
   // 🔧 CAMBIO 9: marca/desmarca "Depósito Bancario Verificado" del día y lo
   // guarda de inmediato en cierres_contables (upsert por fecha). No espera al
-  // botón de archivar. Solo Admin y solo si el día NO está cerrado/archivado.
+  // botón de archivar. El Admin puede hacerlo aunque el día ya esté
+  // cerrado/archivado (es Admin).
   const toggleDepositoVerificado = async () => {
-      if (!isAdmin || diaEstaCerrado || guardandoDeposito) return;
+      if (!isAdmin || guardandoDeposito) return;
       const nuevoValor = !depositoVerificado;
       setDepositoVerificado(nuevoValor); // feedback inmediato
       setGuardandoDeposito(true);
@@ -240,7 +243,7 @@ const NotificationsPanel = ({
   // 🔧 CAMBIO 9: marca un vale del día como auditado (revisado por Admin). Se
   // guarda en la columna nueva vales_caja.auditado (ver agregar_auditado_vales.sql).
   const toggleValeAuditado = async (vale) => {
-      if (!isAdmin || diaEstaCerrado || auditandoVale) return;
+      if (!isAdmin || auditandoVale) return;
       const nuevoValor = !vale.auditado;
       setAuditandoVale(vale.id);
       try {
@@ -259,11 +262,11 @@ const NotificationsPanel = ({
   // lugares con lógicas distintas de cuándo se puede cerrar un día.
   const handleFinalizarJornada = async () => {
       const resumen = getResumenContableDelDia(fechaMaestra);
-      const faltantes = resumen.totals.totalSellers - resumen.totals.verifiedCount;
-      if (faltantes > 0) {
-          return alert(`No se puede finalizar: faltan ${faltantes} caja(s) de vendedores por verificar en Control Contable.`);
-      }
-      if (!comprobanteGeneral && resumen.totals.cash > 0) {
+      // 🔧 CAMBIO 10 (traído adelante): ya NO se exige "cajas de vendedores
+      // verificadas una por una" — eso lo hacía Contabilidad (rol eliminado).
+      // Queda: comprobante/papeleta (si hubo efectivo) + check de depósito + vales.
+      const comprobanteYaGuardado = comprobanteGeneral || reporteDelDiaActual?.comprobante_general;
+      if (!comprobanteYaGuardado && resumen.totals.cash > 0) {
           return alert('Debes subir el comprobante de depósito general de efectivo antes de finalizar.');
       }
       // 🔧 CAMBIO 9: además de las cajas y el comprobante, exige el check manual
@@ -296,6 +299,28 @@ const NotificationsPanel = ({
           setAccountingReports(accData || []);
       } catch (error) {
           alert('Error al finalizar la jornada: ' + error.message);
+      } finally {
+          setCerrandoDia(false);
+      }
+  };
+
+  // 🔧 AJUSTE: reabrir una jornada ya archivada / cerrada. Solo Admin. Deja el
+  // día editable de nuevo (los checks se conservan) para corregir algo y volver
+  // a archivarlo.
+  const handleReabrirJornada = async () => {
+      if (!isAdmin) return;
+      if (!window.confirm('¿Reabrir esta jornada? Podrás corregir los checks y volver a archivarla.')) return;
+      setCerrandoDia(true);
+      try {
+          const { error } = await supabase.from('cierres_contables').upsert(
+              { fecha: fechaMaestra, estado: null, updated_at: new Date().toISOString() },
+              { onConflict: 'fecha' }
+          );
+          if (error) throw error;
+          const { data: accData } = await supabase.from('cierres_contables').select('*').order('fecha', { ascending: false }).limit(60);
+          setAccountingReports(accData || []);
+      } catch (error) {
+          alert('No se pudo reabrir la jornada: ' + error.message);
       } finally {
           setCerrandoDia(false);
       }
@@ -544,14 +569,12 @@ const NotificationsPanel = ({
   // PENDIENTE y el botón queda gris con un tooltip de qué falta.
   const construirEstadoArchivo = () => {
       if (!isAdmin) return { listo: false, faltantes: [] };
-      if (diaEstaCerrado) return { listo: false, faltantes: [] }; // ya archivado/cerrado
+      if (diaEstaArchivado) return { listo: false, faltantes: [] }; // ya archivada (se muestra botón "Reabrir")
       if (fechaMaestra < FECHA_INICIO_AUDITORIA) return { listo: false, faltantes: ['Esta fecha es anterior a septiembre 2026 (no se audita).'] };
       const resumen = getResumenContableDelDia(fechaMaestra);
       const faltantes = [];
-      const cajasFaltantes = resumen.totals.totalSellers - resumen.totals.verifiedCount;
-      if (resumen.totals.totalSellers === 0) faltantes.push('No hay cajas de vendedores registradas para esta fecha.');
-      if (cajasFaltantes > 0) faltantes.push(`${cajasFaltantes} caja(s) de vendedores sin verificar en Control Contable.`);
-      const comprobanteOk = diaEstaCerrado ? reporteDelDiaActual?.comprobante_general : comprobanteGeneral;
+      // 🔧 CAMBIO 10 (traído adelante): sin requisito de "cajas por vendedor".
+      const comprobanteOk = comprobanteGeneral || reporteDelDiaActual?.comprobante_general;
       if (resumen.totals.cash > 0 && !comprobanteOk) faltantes.push('Falta subir el comprobante de depósito del efectivo.');
       if (!depositoVerificado) faltantes.push('Falta marcar el check "Depósito Bancario Verificado".');
       const valesDelDia = valesPorDia[fechaMaestra] || [];
@@ -581,10 +604,20 @@ const NotificationsPanel = ({
                         <MiniCalendario fecha={fechaMaestra} onChange={setFechaMaestra} tieneDatos={(d) => diasConAlgunDato.has(d)} colorPunto="bg-purple-500" colorBoton="indigo" />
                         <button onClick={() => cambiarDia(1)} disabled={fechaMaestra >= hoyStr} className="p-1.5 hover:bg-slate-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"><ChevronRight className="h-4 w-4 text-slate-500"/></button>
                     </div>
-                    <span className={cn("text-xs font-bold px-3 py-2 rounded-lg uppercase", diaEstaArchivado ? "bg-green-100 text-green-700" : diaEstaCerrado ? "bg-green-100 text-green-700" : fechaMaestra === hoyStr ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700")}>
-                        {diaEstaArchivado ? 'Jornada Archivada' : diaEstaCerrado ? 'Día Cerrado' : fechaMaestra === hoyStr ? 'Hoy - En Curso' : 'Pendiente'}
+                    <span className={cn("text-xs font-bold px-3 py-2 rounded-lg uppercase", diaEstaArchivado ? "bg-green-100 text-green-700" : fechaMaestra === hoyStr ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700")}>
+                        {diaEstaArchivado ? 'Jornada Archivada' : fechaMaestra === hoyStr ? 'Hoy - En Curso' : 'Pendiente'}
                     </span>
-                    {!diaEstaCerrado && (
+                    {diaEstaArchivado ? (
+                        <Button
+                            onClick={handleReabrirJornada}
+                            disabled={cerrandoDia}
+                            variant="outline"
+                            className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50"
+                        >
+                            {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <ChevronLeft className="h-4 w-4"/>}
+                            Reabrir Jornada
+                        </Button>
+                    ) : (
                         <div className="flex flex-col items-end gap-1">
                             <Button
                                 onClick={handleFinalizarJornada}
@@ -637,8 +670,8 @@ const NotificationsPanel = ({
                                 </h3>
                                 <p className="text-[10px] text-slate-400 mt-0.5">Fecha: {new Date(fechaMaestra + 'T12:00:00').toLocaleDateString('es-ES')}</p>
                             </div>
-                            <span className={cn("text-[10px] font-bold px-2 py-1 rounded-full uppercase", diaEstaCerrado ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700")}>
-                                {diaEstaArchivado ? 'Archivada' : diaEstaCerrado ? 'Día Cerrado' : 'Pendiente'}
+                            <span className={cn("text-[10px] font-bold px-2 py-1 rounded-full uppercase", diaEstaArchivado ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700")}>
+                                {diaEstaArchivado ? 'Archivada' : 'Pendiente'}
                             </span>
                         </div>
                         <div className="p-4">
@@ -646,7 +679,7 @@ const NotificationsPanel = ({
                                 <div className="p-8 text-center text-slate-400"><Loader2 className="h-6 w-6 animate-spin mx-auto"/></div>
                             ) : (() => {
                                 const resumen = getResumenContableDelDia(fechaMaestra);
-                                const comprobanteActual = diaEstaCerrado ? reporteDelDiaActual?.comprobante_general : comprobanteGeneral;
+                                const comprobanteActual = comprobanteGeneral || reporteDelDiaActual?.comprobante_general;
                                 return (
                                     <div className="text-xs space-y-3">
                                         <div className="grid grid-cols-3 gap-2">
@@ -672,7 +705,7 @@ const NotificationsPanel = ({
                                             </span>
                                             {comprobanteActual ? (
                                                 <img src={comprobanteActual} className="h-8 w-8 object-cover rounded border border-slate-300" alt="comprobante"/>
-                                            ) : !diaEstaCerrado && (
+                                            ) : (
                                                 <label className="text-[10px] text-indigo-600 font-bold cursor-pointer hover:underline">
                                                     Subir <input type="file" accept="image/*" className="hidden" onChange={handleUploadComprobante}/>
                                                 </label>
@@ -684,11 +717,11 @@ const NotificationsPanel = ({
                                         <button
                                             type="button"
                                             onClick={toggleDepositoVerificado}
-                                            disabled={diaEstaCerrado || guardandoDeposito}
+                                            disabled={guardandoDeposito}
                                             className={cn(
                                                 "w-full flex items-center justify-between rounded p-2 border transition-colors text-left",
                                                 depositoVerificado ? "bg-green-50 border-green-300" : "bg-white border-slate-200 hover:bg-slate-50",
-                                                (diaEstaCerrado || guardandoDeposito) && "opacity-60 cursor-not-allowed"
+                                                guardandoDeposito && "opacity-60 cursor-not-allowed"
                                             )}
                                         >
                                             <span className={cn("flex items-center gap-1.5 font-medium", depositoVerificado ? "text-green-700" : "text-slate-500")}>
@@ -717,9 +750,8 @@ const NotificationsPanel = ({
                                         ) : (
                                             <p className="text-slate-400 italic text-center py-2">Sin datos para esta fecha.</p>
                                         )}
-                                        <Button size="sm" variant="outline" className="w-full text-xs h-7 border-indigo-200 text-indigo-700 hover:bg-indigo-50" onClick={() => onViewChange('contabilidad-cierre')}>
-                                            Ir a Control Contable <ArrowRight className="h-3 w-3 ml-1"/>
-                                        </Button>
+                                        {/* 🔧 CAMBIO 10: se quitó el botón "Ir a Control Contable"
+                                            (pantalla eliminada junto con el rol Contabilidad). */}
                                     </div>
                                 );
                             })()}
@@ -794,11 +826,11 @@ const NotificationsPanel = ({
                                                     <button
                                                         type="button"
                                                         onClick={() => toggleValeAuditado(vale)}
-                                                        disabled={diaEstaCerrado || auditandoVale === vale.id}
+                                                        disabled={auditandoVale === vale.id}
                                                         className={cn(
                                                             "text-[10px] font-bold px-2 py-1 rounded border flex items-center gap-1 transition-colors",
                                                             vale.auditado ? "bg-green-100 border-green-300 text-green-700" : "bg-white border-slate-300 text-slate-500 hover:bg-slate-50",
-                                                            (diaEstaCerrado || auditandoVale === vale.id) && "opacity-60 cursor-not-allowed"
+                                                            auditandoVale === vale.id && "opacity-60 cursor-not-allowed"
                                                         )}
                                                     >
                                                         {auditandoVale === vale.id ? <Loader2 className="h-3 w-3 animate-spin"/> : <CheckCircle2 className="h-3 w-3"/>}

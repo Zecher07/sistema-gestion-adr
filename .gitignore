@@ -1,3 +1,8 @@
 .env
 .env.local
 node_modules/
+
+# Notas de trabajo con Claude (no van al repo)
+CLAUDE.md
+BACKLOG.md
+SNAPSHOT.md
