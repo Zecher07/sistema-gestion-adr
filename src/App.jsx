@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
 import { Menu, Settings, X, Loader2, PlusCircle, FileText, TrendingUp } from 'lucide-react'; 
@@ -39,6 +39,32 @@ import NotificationsPanel from './components/NotificationsPanel'; // 🔥 NUEVO 
 
 const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
 const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
+
+// 🔧 FIX (bug reportado 16-sept): Supabase/PostgREST corta cada `select()` en
+// 1000 filas por defecto — SIN avisar con ningún error, simplemente devuelve
+// las primeras 1000 y calla. `clientes` y `ordenes` ya superan esa cantidad,
+// así que clientes/órdenes recién creados (o los que quedan "después" del
+// corte) podían desaparecer silenciosamente de toda la app — aunque estuvieran
+// perfectamente guardados en la base — mientras que una búsqueda puntual (ej.
+// el chequeo de "cliente duplicado" en ClientForm.jsx, que sí los encontraba
+// por nombre/RUC exacto) los seguía viendo. Esta función pagina con `.range()`
+// hasta traer TODAS las filas, sin importar cuántas sean.
+const fetchAllRows = async (table, selectCols = '*', orderBy = null) => {
+    const PAGE_SIZE = 1000;
+    let all = [];
+    let from = 0;
+    while (true) {
+        let q = supabase.from(table).select(selectCols).range(from, from + PAGE_SIZE - 1);
+        if (orderBy) q = q.order(orderBy.column, { ascending: orderBy.ascending !== false });
+        const { data, error } = await q;
+        if (error) throw error;
+        if (!data || data.length === 0) break;
+        all = all.concat(data);
+        if (data.length < PAGE_SIZE) break; // ya llegamos a la última página
+        from += PAGE_SIZE;
+    }
+    return all;
+};
 
 function App() {
   const [user, setUser] = useState(null);
@@ -109,7 +135,14 @@ function App() {
   const { toast } = useToast();
   const [canUserAnulate, setCanUserAnulate] = useState(false);
   const [canUserEdit, setCanUserEdit] = useState(false);
-  
+  // 🔧 FIX (bug reportado 16-sept): `fetchAllData` corre cada 5s — si avisáramos
+  // con un toast CADA VEZ que falla, y la falla persiste (ej. problema temporal
+  // de cuota/conexión con Supabase), spamearía un toast cada 5 segundos. Este
+  // ref guarda si ya se avisó, para avisar UNA sola vez por corte y volver a
+  // poder avisar si pasa de nuevo más adelante (se resetea apenas una carga
+  // funciona bien).
+  const fetchErrorWarnedRef = useRef(false);
+
   const normalizeText = (text) => {
     if (!text) return "";
     return String(text).toLowerCase().normalize("NFD").replace(/[\u0300-\u036f]/g, "").trim();
@@ -120,7 +153,10 @@ function App() {
       const currentUser = userOverride || user; 
       if (!currentUser) return;
 
-      const { data: clientesData } = await supabase.from('clientes').select('*');
+      // 🔧 FIX (bug reportado): antes era `select('*')` sin paginar — cortaba en
+      // 1000 filas sin avisar. Ahora trae TODOS los clientes, sin importar
+      // cuántos haya (ver `fetchAllRows` arriba).
+      const clientesData = await fetchAllRows('clientes', '*', { column: 'id', ascending: true });
       if (clientesData) setClients(clientesData);
 
       const { data: profilesData } = await supabase.from('profiles').select('id, full_name, role').order('full_name');
@@ -131,10 +167,11 @@ function App() {
       // 🔧 REFACTOR: agregamos vendedor_ids / recibido_por_*_id para que el filtrado
       // de "mis órdenes" funcione por ID en vez de por nombre (ver src/utils/userMatch.js)
       const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion, ruc, cliente_telefono';
-      
-      let ordersQuery = supabase.from('ordenes').select(colOrdenes).order('created_at', { ascending: false });
-      const { data: ordenesData } = await ordersQuery;
-      
+
+      // 🔧 FIX (mismo bug): `ordenes` también se paginaba de más — con 1000+
+      // órdenes, algunas desaparecían solas según cómo cayera el corte.
+      const ordenesData = await fetchAllRows('ordenes', colOrdenes, { column: 'created_at', ascending: false });
+
       // 🔧 FIX: antes cada Vendedor solo veía SUS PROPIAS cotizaciones (filtro
       // .ilike('responsable_nombre', su nombre)). El pedido fue que todos los
       // vendedores vean todas las cotizaciones de cualquiera, por si alguien
@@ -167,7 +204,22 @@ function App() {
               setCanUserAnulate(!!roleData?.can_anulate); setCanUserEdit(!!roleData?.can_edit);
           }
       }
-    } catch (error) { console.error("Error cargando datos:", error); }
+      fetchErrorWarnedRef.current = false; // se pudo cargar todo bien: listo para avisar de nuevo si algo vuelve a fallar
+    } catch (error) {
+      console.error("Error cargando datos:", error);
+      // 🔧 FIX (bug reportado): antes esto quedaba SOLO en la consola — el
+      // usuario veía datos viejos/incompletos (ej. un cliente recién creado
+      // "desaparecido") sin ningún aviso de que algo falló al cargar.
+      if (!fetchErrorWarnedRef.current) {
+          fetchErrorWarnedRef.current = true;
+          toast({
+              title: "⚠️ No se pudo actualizar la información",
+              description: "Hubo un problema cargando los datos más recientes (clientes/órdenes). Puede ser algo temporal — si sigue pasando, revisa tu conexión o el estado de la cuenta de Supabase.",
+              variant: "destructive",
+              duration: 8000,
+          });
+      }
+    }
   };
 
   useEffect(() => {
