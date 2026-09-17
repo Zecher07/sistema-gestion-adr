@@ -104,7 +104,12 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
     if (targetUserId && targetUserName) {
         loadDailyData(selectedDate, targetUserId, targetUserName);
     }
-  }, [selectedDate, targetUserId, targetUserName]);
+  // 🔧 FIX: 'orders' faltaba aquí. Sin esta dependencia, el saldo inicial se
+  // calculaba una sola vez con los datos que hubiera disponibles en ese
+  // instante (a veces incompletos, justo al entrar a la pantalla) y nunca se
+  // volvía a recalcular cuando 'orders' terminaba de cargar o se actualizaba
+  // — solo un refresh completo de la página lo corregía por casualidad.
+  }, [selectedDate, targetUserId, targetUserName, orders]);
 
   const loadDailyData = async (date, userId, userName) => {
     setLoading(true);
