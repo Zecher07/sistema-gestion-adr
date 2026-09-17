@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { supabase } from '../supabaseClient';
 import { Calendar as CalendarIcon, Printer, Loader2, Save, FileSpreadsheet, ChevronLeft, ChevronRight, History, AlertCircle, CheckCircle2, Undo2, Edit2, Bug, Trash2, ExternalLink, Receipt, Users, Search } from 'lucide-react';
 import { Button } from '@/components/ui/button';
@@ -64,6 +64,13 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
   const [editingOpening, setEditingOpening] = useState(false);
   const isEditable = selectedDate === todayStr || isAdmin;
 
+  // 🔧 FIX: 'orders' llega nuevo cada 5s (poll de App.jsx), así que loadDailyData
+  // se puede disparar varias veces solapadas. Sin este control, si una llamada
+  // más vieja tarda más en responder que una más nueva, la vieja pisa el
+  // resultado bueno al final (por eso a veces "se pierde" la caja anterior).
+  // Solo se aplica el resultado de la ÚLTIMA llamada pedida.
+  const loadRequestIdRef = useRef(0);
+
   // 🔥 DETECCIÓN DE MÉTODO DE PAGO 🔥
   const formatPaymentMethod = (method) => {
       if (!method) return 'EFECTIVO';
@@ -112,6 +119,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
   }, [selectedDate, targetUserId, targetUserName, orders]);
 
   const loadDailyData = async (date, userId, userName) => {
+    const requestId = ++loadRequestIdRef.current;
     setLoading(true);
     setEditingOpening(false);
     setDebugInfo(null);
@@ -120,26 +128,29 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
 
     try {
       const { data: todosLosValesDB } = await supabase.from('vales_caja').select('*');
-          
+      if (requestId !== loadRequestIdRef.current) return; // llegó otra llamada más nueva mientras esperábamos
+
       const valesFiltrados = (todosLosValesDB || []).filter(v => {
           const fechaValeLimpia = v.fecha ? v.fecha.split('T')[0] : "";
           const coincideFecha = fechaValeLimpia === date;
-          const estaAprobado = v.status === 'APROBADO'; 
+          const estaAprobado = v.status === 'APROBADO';
           return coincideFecha && isUserMatch(v.vendedor, userName, v.vendedor_id, userId) && estaAprobado;
       });
       setValesDelDia(valesFiltrados);
 
       const { data: currentReport, error } = await supabase.from('daily_closings').select('*').eq('date', date).eq('user_id', userId).maybeSingle();
       if (error) throw error;
+      if (requestId !== loadRequestIdRef.current) return;
 
       if (currentReport && !isToday) {
         const opening = Number(currentReport.opening_cash) || 0;
         setLedgerData({ openingCash: opening, amountToAccounting: Number(currentReport.amount_to_accounting) || 0, manualTransactions: currentReport.manual_transactions || [] });
         setDebugInfo({ status: "Reporte Histórico Cerrado", source: "DB (Estático)", baseCash: opening, floatingOrders: 0, floatingSum: 0, floatingVales: 0, totalCalculated: opening, searchWindow: "N/A", isSaved: true });
-        return; 
+        return;
       }
 
       const { data: lastReport } = await supabase.from('daily_closings').select('date, final_balance').eq('user_id', userId).lt('date', date).order('date', { ascending: false }).limit(1).maybeSingle();
+      if (requestId !== loadRequestIdRef.current) return;
 
       let baseCash = 0; let lastReportDateStr = '2000-01-01'; let foundPrevious = false;
       if (lastReport) { baseCash = Number(lastReport.final_balance); lastReportDateStr = lastReport.date; foundPrevious = true; }
@@ -201,7 +212,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
 
       setDebugInfo({ status: isToday ? "Modo VIVO (Hoy)" : "Calculado por falta de reporte", source: foundPrevious ? `Cierre del ${lastReportDateStr}` : "Inicio de los tiempos", baseCash: baseCash, floatingOrders: floatingCount, floatingSum: floatingSum, floatingVales: floatingValesSum, totalCalculated: totalCalculatedOpening, searchWindow: `> ${lastReportDateStr} y < ${date}`, isSaved: !!currentReport });
 
-    } catch (error) { toast({ title: "Error", description: "Fallo cálculo.", variant: "destructive" }); } finally { setLoading(false); }
+    } catch (error) { if (requestId === loadRequestIdRef.current) toast({ title: "Error", description: "Fallo cálculo.", variant: "destructive" }); } finally { if (requestId === loadRequestIdRef.current) setLoading(false); }
   };
 
   const handleForceRecalculate = async () => {
