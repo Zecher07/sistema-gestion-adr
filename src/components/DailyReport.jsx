@@ -107,16 +107,108 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
       }
   }, [targetUserId, staffList, isAdmin, user.name]);
 
+  // 🔧 FIX: separamos la parte de RED (vales del día, cierre actual, último cierre
+  // anterior) de la parte de CÁLCULO (que depende de 'orders'). La red solo se
+  // pide una vez al entrar o cambiar de fecha/vendedor — nunca en cada poll de
+  // 'orders' (cada 5s), para no mostrar el spinner de "Calculando..." todo el
+  // rato ni pisar ediciones manuales en curso (Entregar a Contabilidad, etc.).
+  const remoteDataRef = useRef(null); // { todosLosValesDB, currentReport, lastReport, isToday, date, userId, userName }
+
+  const computeOpeningFromOrders = (remote, ordersList) => {
+      const { todosLosValesDB, currentReport, lastReport, isToday, date, userId, userName } = remote;
+
+      if (currentReport && !isToday) {
+          const opening = Number(currentReport.opening_cash) || 0;
+          return {
+              openingCash: opening,
+              debugInfo: { status: "Reporte Histórico Cerrado", source: "DB (Estático)", baseCash: opening, floatingOrders: 0, floatingSum: 0, floatingVales: 0, totalCalculated: opening, searchWindow: "N/A", isSaved: true }
+          };
+      }
+
+      let baseCash = 0; let lastReportDateStr = '2000-01-01'; let foundPrevious = false;
+      if (lastReport) { baseCash = Number(lastReport.final_balance); lastReportDateStr = lastReport.date; foundPrevious = true; }
+
+      // 🔧 FIX TIMEOUT DE RAÍZ: en vez de volver a pedirle esto a la base de datos
+      // (que seguía dando timeout incluso ya optimizado), filtramos directamente
+      // sobre las órdenes que YA tenemos en memoria (el prop 'orders' que App.jsx
+      // ya trae completo, sin límite). Cero consultas nuevas = cero riesgo de timeout.
+      const userOrders = ordersList.filter(o =>
+          o.recibido_por_anticipo_id === userId ||
+          o.recibido_por_saldo_id === userId ||
+          (Array.isArray(o.vendedor_ids) && o.vendedor_ids.includes(userId))
+      ).sort((a, b) => new Date(b.created_at || b.createdAt) - new Date(a.created_at || a.createdAt)).slice(0, 1000);
+
+      let floatingSum = 0; let floatingCount = 0;
+
+      if (userOrders) {
+          userOrders.forEach(o => {
+              const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
+              const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
+              const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
+
+              const isAfterLastReport = createdDateStr > lastReportDateStr;
+              const isBeforeToday = createdDateStr < date;
+              const recibioAnticipo = isUserMatch(o.recibido_por_anticipo, userName, o.recibido_por_anticipo_id, userId)
+                  || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: userId, name: userName }));
+
+              const formaAnticipo = formatPaymentMethod(o.formaPagoAnticipo || o.forma_pago_anticipo);
+              if (isAfterLastReport && isBeforeToday && recibioAnticipo && formaAnticipo === 'EFECTIVO') {
+                  if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') { floatingSum += Number(o.anticipo); floatingCount++; }
+              }
+
+              const isUpdatedAfterLastReport = balanceDateStr > lastReportDateStr;
+              const isUpdatedBeforeToday = balanceDateStr < date;
+
+              // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
+              const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
+
+              const recibioSaldo = isUserMatch(o.recibido_por_saldo, userName, o.recibido_por_saldo_id, userId)
+                  || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: userId, name: userName }));
+              const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
+
+              const formaSaldo = formatPaymentMethod(o.formaPagoSaldo || o.forma_pago_saldo);
+              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && saldoCobrado > 0 && recibioSaldo && formaSaldo === 'EFECTIVO') {
+                  floatingSum += saldoCobrado; floatingCount++;
+              }
+          });
+      }
+
+      let floatingValesSum = 0;
+      const valesFlotantes = (todosLosValesDB || []).filter(v => {
+          const fechaVale = v.fecha ? v.fecha.split('T')[0] : "";
+          return isUserMatch(v.vendedor, userName, v.vendedor_id, userId) && v.status === 'APROBADO' && fechaVale > lastReportDateStr && fechaVale < date;
+      });
+      floatingValesSum = valesFlotantes.reduce((sum, v) => sum + Number(v.monto), 0);
+
+      const totalCalculatedOpening = baseCash + floatingSum - floatingValesSum;
+      return {
+          openingCash: totalCalculatedOpening,
+          debugInfo: { status: isToday ? "Modo VIVO (Hoy)" : "Calculado por falta de reporte", source: foundPrevious ? `Cierre del ${lastReportDateStr}` : "Inicio de los tiempos", baseCash: baseCash, floatingOrders: floatingCount, floatingSum: floatingSum, floatingVales: floatingValesSum, totalCalculated: totalCalculatedOpening, searchWindow: `> ${lastReportDateStr} y < ${date}`, isSaved: !!currentReport }
+      };
+  };
+
   useEffect(() => {
     if (targetUserId && targetUserName) {
         loadDailyData(selectedDate, targetUserId, targetUserName);
     }
-  // 🔧 FIX: 'orders' faltaba aquí. Sin esta dependencia, el saldo inicial se
-  // calculaba una sola vez con los datos que hubiera disponibles en ese
-  // instante (a veces incompletos, justo al entrar a la pantalla) y nunca se
-  // volvía a recalcular cuando 'orders' terminaba de cargar o se actualizaba
-  // — solo un refresh completo de la página lo corregía por casualidad.
-  }, [selectedDate, targetUserId, targetUserName, orders]);
+  // 🔧 A propósito SIN 'orders' aquí — este efecto solo pide datos a la red
+  // (vales del día, cierres). El recálculo por 'orders' nuevas vive aparte,
+  // más abajo, y no toca la red ni el spinner de carga.
+  }, [selectedDate, targetUserId, targetUserName]);
+
+  // 🔧 Recalcula el saldo inicial EN MEMORIA (sin red, sin spinner) cada vez que
+  // llegan órdenes nuevas/actualizadas. No pisa 'amountToAccounting' ni
+  // 'manualTransactions' (edición del Admin), y se salta el recálculo mientras
+  // el Admin está escribiendo un valor manual de apertura (editingOpening).
+  useEffect(() => {
+      const remote = remoteDataRef.current;
+      if (!remote || remote.date !== selectedDate || remote.userId !== targetUserId) return;
+      if (editingOpening) return;
+      const { openingCash, debugInfo } = computeOpeningFromOrders(remote, orders);
+      setLedgerData(prev => ({ ...prev, openingCash }));
+      setDebugInfo(debugInfo);
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [orders]);
 
   const loadDailyData = async (date, userId, userName) => {
     const requestId = ++loadRequestIdRef.current;
@@ -142,75 +234,18 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
       if (error) throw error;
       if (requestId !== loadRequestIdRef.current) return;
 
-      if (currentReport && !isToday) {
-        const opening = Number(currentReport.opening_cash) || 0;
-        setLedgerData({ openingCash: opening, amountToAccounting: Number(currentReport.amount_to_accounting) || 0, manualTransactions: currentReport.manual_transactions || [] });
-        setDebugInfo({ status: "Reporte Histórico Cerrado", source: "DB (Estático)", baseCash: opening, floatingOrders: 0, floatingSum: 0, floatingVales: 0, totalCalculated: opening, searchWindow: "N/A", isSaved: true });
-        return;
+      let lastReport = null;
+      if (!(currentReport && !isToday)) {
+          const { data: lastReportData } = await supabase.from('daily_closings').select('date, final_balance').eq('user_id', userId).lt('date', date).order('date', { ascending: false }).limit(1).maybeSingle();
+          if (requestId !== loadRequestIdRef.current) return;
+          lastReport = lastReportData;
       }
 
-      const { data: lastReport } = await supabase.from('daily_closings').select('date, final_balance').eq('user_id', userId).lt('date', date).order('date', { ascending: false }).limit(1).maybeSingle();
-      if (requestId !== loadRequestIdRef.current) return;
+      remoteDataRef.current = { todosLosValesDB: todosLosValesDB || [], currentReport, lastReport, isToday, date, userId, userName };
 
-      let baseCash = 0; let lastReportDateStr = '2000-01-01'; let foundPrevious = false;
-      if (lastReport) { baseCash = Number(lastReport.final_balance); lastReportDateStr = lastReport.date; foundPrevious = true; }
-
-      // 🔧 FIX TIMEOUT DE RAÍZ: en vez de volver a pedirle esto a la base de datos
-      // (que seguía dando timeout incluso ya optimizado), filtramos directamente
-      // sobre las órdenes que YA tenemos en memoria (el prop 'orders' que App.jsx
-      // ya trae completo, sin límite). Cero consultas nuevas = cero riesgo de timeout.
-      const userOrders = orders.filter(o =>
-          o.recibido_por_anticipo_id === userId ||
-          o.recibido_por_saldo_id === userId ||
-          (Array.isArray(o.vendedor_ids) && o.vendedor_ids.includes(userId))
-      ).sort((a, b) => new Date(b.created_at || b.createdAt) - new Date(a.created_at || a.createdAt)).slice(0, 1000);
-
-      let floatingSum = 0; let floatingCount = 0;
-
-      if (userOrders) {
-          userOrders.forEach(o => {
-              const createdDateStr = toLocalDateStr(o.created_at || o.createdAt);
-              const updatedDateStr = toLocalDateStr(o.updated_at || o.updatedAt);
-              const balanceDateStr = o.fecha_pago_saldo ? toLocalDateStr(o.fecha_pago_saldo) : updatedDateStr;
-
-              const isAfterLastReport = createdDateStr > lastReportDateStr;
-              const isBeforeToday = createdDateStr < date;
-              const recibioAnticipo = isUserMatch(o.recibido_por_anticipo, userName, o.recibido_por_anticipo_id, userId)
-                  || (!o.recibido_por_anticipo && !o.recibido_por_anticipo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: userId, name: userName }));
-              
-              const formaAnticipo = formatPaymentMethod(o.formaPagoAnticipo || o.forma_pago_anticipo);
-              if (isAfterLastReport && isBeforeToday && recibioAnticipo && formaAnticipo === 'EFECTIVO') {
-                  if (Number(o.anticipo) > 0 && o.status !== 'ANULADA') { floatingSum += Number(o.anticipo); floatingCount++; }
-              }
-
-              const isUpdatedAfterLastReport = balanceDateStr > lastReportDateStr;
-              const isUpdatedBeforeToday = balanceDateStr < date;
-              
-              // 🔥 SOLUCIÓN AL DINERO FANTASMA: Quitamos 'VENTAS POR RETIRAR' 🔥
-              const isClosed = o.status === 'FINALIZADA' || o.status === 'ENTREGADO';
-              
-              const recibioSaldo = isUserMatch(o.recibido_por_saldo, userName, o.recibido_por_saldo_id, userId)
-                  || (!o.recibido_por_saldo && !o.recibido_por_saldo_id && isUserInList(o.vendedor_ids, o.vendedor, { id: userId, name: userName }));
-              const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
-              
-              const formaSaldo = formatPaymentMethod(o.formaPagoSaldo || o.forma_pago_saldo);
-              if (isUpdatedAfterLastReport && isUpdatedBeforeToday && isClosed && saldoCobrado > 0 && recibioSaldo && formaSaldo === 'EFECTIVO') {
-                  floatingSum += saldoCobrado; floatingCount++;
-              }
-          });
-      }
-
-      let floatingValesSum = 0;
-      const valesFlotantes = (todosLosValesDB || []).filter(v => {
-          const fechaVale = v.fecha ? v.fecha.split('T')[0] : "";
-          return isUserMatch(v.vendedor, userName, v.vendedor_id, userId) && v.status === 'APROBADO' && fechaVale > lastReportDateStr && fechaVale < date;
-      });
-      floatingValesSum = valesFlotantes.reduce((sum, v) => sum + Number(v.monto), 0);
-
-      const totalCalculatedOpening = baseCash + floatingSum - floatingValesSum;
-      setLedgerData({ openingCash: totalCalculatedOpening, amountToAccounting: currentReport ? Number(currentReport.amount_to_accounting) : 0, manualTransactions: currentReport ? (currentReport.manual_transactions || []) : [] });
-
-      setDebugInfo({ status: isToday ? "Modo VIVO (Hoy)" : "Calculado por falta de reporte", source: foundPrevious ? `Cierre del ${lastReportDateStr}` : "Inicio de los tiempos", baseCash: baseCash, floatingOrders: floatingCount, floatingSum: floatingSum, floatingVales: floatingValesSum, totalCalculated: totalCalculatedOpening, searchWindow: `> ${lastReportDateStr} y < ${date}`, isSaved: !!currentReport });
+      const { openingCash, debugInfo } = computeOpeningFromOrders(remoteDataRef.current, orders);
+      setLedgerData({ openingCash, amountToAccounting: currentReport ? Number(currentReport.amount_to_accounting) : 0, manualTransactions: currentReport ? (currentReport.manual_transactions || []) : [] });
+      setDebugInfo(debugInfo);
 
     } catch (error) { if (requestId === loadRequestIdRef.current) toast({ title: "Error", description: "Fallo cálculo.", variant: "destructive" }); } finally { if (requestId === loadRequestIdRef.current) setLoading(false); }
   };
