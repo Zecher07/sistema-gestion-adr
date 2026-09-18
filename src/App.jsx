@@ -415,8 +415,20 @@ function App() {
 
       const savedDescuentoMonto = finData.descuentoMonto || (finData.descuento ? finData.descuento * (proforma.iva > 0 ? (1 + (proforma.iva_percentage || 15)/100) : 1) : 0);
 
+      // 🔧 FIX: la cotización no guarda el id del cliente, así que la orden nacía sin
+      // `cliente_id` y no veía el crédito ni la ficha del cliente. Lo buscamos por
+      // RUC (clientes.empresa) y, si no, por nombre exacto SOLO si es único.
+      const normTxt = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
+      const rucProforma = String(proforma.cliente_identificacion || '').trim();
+      let clienteEncontrado = rucProforma ? (clients || []).find(c => String(c.empresa || '').trim() === rucProforma) : null;
+      if (!clienteEncontrado) {
+          const porNombre = (clients || []).filter(c => normTxt(c.nombre) === normTxt(proforma.cliente_nombre));
+          if (porNombre.length === 1) clienteEncontrado = porNombre[0];
+      }
+
       const prefilledOrderData = {
-          cliente_nombre: proforma.cliente_nombre, cliente: proforma.cliente_nombre, ruc: proforma.cliente_identificacion, 
+          cliente_id: clienteEncontrado ? clienteEncontrado.id : null,
+          cliente_nombre: proforma.cliente_nombre, cliente: proforma.cliente_nombre, ruc: proforma.cliente_identificacion,
           productos: (proforma.items || []).map(item => ({ cantidad: item.cantidad, descripcion: item.descripcion, observaciones: item.observaciones, precio: item.precioUnitario, total: item.total })),
           financials: { subtotal: proforma.subtotal, iva: proforma.iva, total: proforma.total, ivaPercentage: proforma.iva_percentage || 15, saldo: proforma.total, diasEntrega: proforma.dias_entrega || finData.diasEntrega || 0, descuentoMonto: savedDescuentoMonto },
           descuentoMonto: savedDescuentoMonto,
