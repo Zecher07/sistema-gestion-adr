@@ -26,8 +26,9 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
   const [editingVale, setEditingVale] = useState(null); 
   const [staffList, setStaffList] = useState([]); 
 
-  // 🔥 NUEVO: PERMISO COMBINADO ADMIN + CONTABILIDAD 🔥
-  const isAdminOrContabilidad = user?.role === 'Administrador' || user?.role === 'Contabilidad';
+  // 🔧 CAMBIO 10 (Fase 6): rol Contabilidad eliminado — antes este permiso era
+  // "Admin o Contabilidad", ahora es solo Admin.
+  const isAdmin = user?.role === 'Administrador';
 
   const [formData, setFormData] = useState({
     fecha: getLocalDate(), 
@@ -40,10 +41,10 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
 
   useEffect(() => {
     fetchVales();
-    if (isAdminOrContabilidad) {
+    if (isAdmin) {
         fetchStaff();
     }
-  }, [isAdminOrContabilidad]);
+  }, [isAdmin]);
 
   const fetchStaff = async () => {
       // 🔧 Solo Vendedores, y con id (antes solo traía el nombre)
@@ -56,7 +57,7 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
     try {
       let query = supabase.from('vales_caja').select('*').order('fecha', { ascending: false }).order('id', { ascending: false });
       
-      if (!isAdminOrContabilidad) {
+      if (!isAdmin) {
           // 🔧 FIX: filtrar por id, no por nombre (así no se rompe si cambia el nombre)
           query = query.eq('vendedor_id', user?.id);
       }
@@ -141,8 +142,8 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
       }
 
       // 🔧 FIX TIMEOUT: reutilizamos 'vales' (ya cargado en el estado) en vez de
-      // hacer otra consulta. Para Admin/Contabilidad ya trae TODOS los vales;
-      // para un vendedor normal, ya trae solo los suyos (ver fetchVales arriba).
+      // hacer otra consulta. Para Admin ya trae TODOS los vales; para un
+      // vendedor normal, ya trae solo los suyos (ver fetchVales arriba).
       const valesAprobados = vales.filter(v =>
           v.status === 'APROBADO' &&
           (v.vendedor_id ? v.vendedor_id === vendedorId : v.vendedor === vendedorNombre) &&
@@ -188,11 +189,6 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
   };
 
   const handleSave = async () => {
-    // 🔧 FIX (respaldo): aunque ya se ocultó el botón, Contabilidad nunca debe poder
-    // crear un vale nuevo — no maneja caja en absoluto.
-    if (!editingVale && user?.role === 'Contabilidad') {
-        return toast({ title: "No permitido", description: "Contabilidad no puede solicitar vales de caja.", variant: "destructive" });
-    }
     if (!formData.recibido_por.trim()) {
         return toast({ title: "Atención", description: "Debe indicar quién recibió el dinero.", variant: "destructive" });
     }
@@ -201,6 +197,20 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
     }
     if (!formData.vendedor || !formData.vendedor_id) {
         return toast({ title: "Atención", description: "Debe asignar un vendedor de origen.", variant: "destructive" });
+    }
+
+    // 🔧 CAMBIO 10 (Fase 6): el vale se aprueba al instante al crearlo (ya no
+    // queda "Pendiente") y el vendedor no lo puede cancelar después — por eso
+    // se pide una confirmación explícita y bien clara justo antes de guardar.
+    // No aplica al editar un vale ya existente (eso no mueve dinero de nuevo).
+    if (!editingVale) {
+        const confirmado = window.confirm(
+            `¿Confirmas este retiro de $${Number(formData.monto || 0).toFixed(2)}?\n\n` +
+            `El vale quedará APROBADO de inmediato y el dinero se descuenta ` +
+            `al momento de la caja de ${formData.vendedor || 'origen'}. NO podrás cancelarlo tú mismo después — ` +
+            `solo un Administrador puede revertirlo.`
+        );
+        if (!confirmado) return;
     }
 
     setSaving(true);
@@ -226,17 +236,19 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
           concepto: formData.concepto.trim(),
           monto: montoRequerido,
           recibido_por: formData.recibido_por.trim(),
-          status: editingVale ? editingVale.status : 'PENDIENTE' 
+          // 🔧 CAMBIO 10 (Fase 6): nace APROBADO (antes 'PENDIENTE'). Al editar,
+          // se conserva el estado que ya tenía (editar no vuelve a aprobar/pedir nada).
+          status: editingVale ? editingVale.status : 'APROBADO'
       };
 
       if (editingVale) {
           const { error } = await supabase.from('vales_caja').update(payload).eq('id', editingVale.id);
           if (error) throw error;
-          toast({ title: "Actualizado", description: "El vale ha sido modificado y está pendiente de revisión." });
+          toast({ title: "Actualizado", description: "El vale ha sido modificado." });
       } else {
           const { error } = await supabase.from('vales_caja').insert([payload]);
           if (error) throw error;
-          toast({ title: "Vale Registrado", description: "El vale está pendiente de aprobación." });
+          toast({ title: "Vale Registrado y Aprobado", description: "El dinero ya quedó descontado de la caja." });
       }
       
       setIsModalOpen(false);
@@ -306,16 +318,14 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                     <Receipt className="h-6 w-6 text-red-600" /> Vales de Caja
                 </h2>
                 <p className="text-slate-500">
-                    {isAdminOrContabilidad ? "Administra y aprueba los vales de caja de los vendedores." : "Registra tus retiros. Un administrador o contabilidad debe aprobarlos para que sean válidos."}
+                    {/* 🔧 CAMBIO 10 (Fase 6): los vales ya no quedan "Pendientes" — se
+                        aprueban al instante y el vendedor no los puede cancelar después. */}
+                    {isAdmin ? "Administra los vales de caja de los vendedores." : "Registra tus retiros. Se aprueban al instante — no podrás cancelarlos después."}
                 </p>
             </div>
-            {/* 🔧 FIX: Contabilidad NUNCA debe poder solicitar un vale — no maneja caja
-                en absoluto. Solo Admin o el propio Vendedor pueden crear uno nuevo. */}
-            {user?.role !== 'Contabilidad' && (
-                <Button onClick={() => handleOpenModal()} className="bg-red-600 hover:bg-red-700 text-white gap-2 shadow-sm">
-                    <Plus className="h-4 w-4" /> Nuevo Vale
-                </Button>
-            )}
+            <Button onClick={() => handleOpenModal()} className="bg-red-600 hover:bg-red-700 text-white gap-2 shadow-sm">
+                <Plus className="h-4 w-4" /> Nuevo Vale
+            </Button>
         </div>
 
         <div className="grid grid-cols-1 gap-6">
@@ -338,14 +348,14 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                                     <th className="px-6 py-3 font-semibold">Concepto</th>
                                     <th className="px-6 py-3 font-semibold text-center">Estado</th>
                                     <th className="px-6 py-3 font-semibold text-right">Monto</th>
-                                    {isAdminOrContabilidad && <th className="px-6 py-3 font-semibold text-center">Acciones</th>}
+                                    {isAdmin && <th className="px-6 py-3 font-semibold text-center">Acciones</th>}
                                 </tr>
                             </thead>
                             <tbody className="divide-y divide-slate-200 bg-white">
                                 {loading ? (
-                                    <tr><td colSpan={isAdminOrContabilidad ? "8" : "7"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
+                                    <tr><td colSpan={isAdmin ? "8" : "7"} className="text-center py-10 text-slate-400"><Loader2 className="h-8 w-8 animate-spin mx-auto mb-2"/> Cargando vales...</td></tr>
                                 ) : filteredVales.length === 0 ? (
-                                    <tr><td colSpan={isAdminOrContabilidad ? "8" : "7"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
+                                    <tr><td colSpan={isAdmin ? "8" : "7"} className="text-center py-10 text-slate-500">No hay vales registrados.</td></tr>
                                 ) : (
                                     filteredVales.map(vale => {
                                         const isAprobado = vale.status === 'APROBADO';
@@ -375,7 +385,7 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                                                 -$ {Number(vale.monto).toFixed(2)}
                                             </td>
                                             
-                                            {isAdminOrContabilidad && (
+                                            {isAdmin && (
                                                 <td className="px-6 py-3 text-center">
                                                     <div className="flex items-center justify-center gap-2">
                                                         {isProcessingThis ? (
@@ -422,20 +432,30 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                         <button onClick={() => setIsModalOpen(false)} className="hover:bg-slate-700 p-1 rounded"><X className="h-5 w-5" /></button>
                     </div>
                     
-                    <div className="bg-yellow-50 text-yellow-800 text-xs p-3 border-b border-yellow-200 flex items-start gap-2">
-                        <Info className="h-4 w-4 shrink-0 mt-0.5" />
-                        <p>Los vales creados o editados pasarán a estado <strong>PENDIENTE</strong> hasta que un administrador o contabilidad los apruebe.</p>
-                    </div>
+                    {/* 🔧 CAMBIO 10 (Fase 6): advertencia fuerte al crear — el vale queda
+                        APROBADO de inmediato y no se puede cancelar desde aquí. Al editar
+                        uno ya existente, el aviso es más suave (no vuelve a mover dinero). */}
+                    {!editingVale ? (
+                        <div className="bg-red-50 text-red-800 text-xs p-3 border-b border-red-200 flex items-start gap-2">
+                            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                            <p><strong>Este vale se aprueba al instante.</strong> Asegúrate de que el dinero realmente sale de caja — una vez guardado, NO podrás cancelarlo tú mismo. Solo un Administrador puede revertirlo.</p>
+                        </div>
+                    ) : (
+                        <div className="bg-yellow-50 text-yellow-800 text-xs p-3 border-b border-yellow-200 flex items-start gap-2">
+                            <Info className="h-4 w-4 shrink-0 mt-0.5" />
+                            <p>Estás editando un vale ya registrado.</p>
+                        </div>
+                    )}
 
                     <div className="p-6 space-y-4">
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Fecha</label>
-                            <Input type="date" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} disabled={!isAdminOrContabilidad} className={!isAdminOrContabilidad ? "bg-slate-50 cursor-not-allowed" : ""} />
+                            <Input type="date" value={formData.fecha} onChange={e => setFormData({...formData, fecha: e.target.value})} disabled={!isAdmin} className={!isAdmin ? "bg-slate-50 cursor-not-allowed" : ""} />
                         </div>
                         
                         <div>
                             <label className="text-xs font-bold text-slate-500 uppercase mb-1 block">Caja de Origen (Vendedor)</label>
-                            {isAdminOrContabilidad ? (
+                            {isAdmin ? (
                                 <select 
                                     className="w-full border border-slate-300 rounded-md px-3 py-2 text-sm bg-white outline-none focus:border-blue-500"
                                     value={formData.vendedor_id}
@@ -471,7 +491,7 @@ const ValesCajaPanel = ({ user, orders = [] }) => {
                     <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-3">
                         <Button variant="outline" onClick={() => setIsModalOpen(false)}>Cancelar</Button>
                         <Button onClick={handleSave} disabled={saving} className="bg-red-600 hover:bg-red-700 text-white shadow-md">
-                            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} {editingVale ? 'Actualizar' : 'Solicitar Retiro'}
+                            {saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} {editingVale ? 'Actualizar' : 'Confirmar y Aprobar Retiro'}
                         </Button>
                     </div>
                 </motion.div>

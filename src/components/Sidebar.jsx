@@ -81,8 +81,10 @@ const Sidebar = ({ user, onLogout, currentView, onViewChange, allowedViews = [] 
       ]
     },
     { id: 'facturacion-panel', label: 'Facturación', icon: Receipt },
-    { id: 'contabilidad', label: 'Contabilidad', icon: ShieldCheck, submenu: [
-        { label: 'Cierre Contable (Órdenes)', id: 'contabilidad-cierre' },
+    // 🔧 CAMBIO 10: rol Contabilidad eliminado. Se quita "Cierre Contable
+    // (Órdenes)". El "Libro Diario General" (reporte global de la empresa) se
+    // conserva bajo el grupo "Finanzas".
+    { id: 'contabilidad', label: 'Finanzas', icon: ShieldCheck, submenu: [
         { label: 'Libro Diario General', id: 'libro-diario-general' }
       ]
     },

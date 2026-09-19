@@ -5,7 +5,7 @@ import { Input } from '@/components/ui/Text';
 import { Label } from '@/components/ui/label';
 import { useToast } from '@/components/ui/use-toast';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
-import { UserPlus, Users, Trash2, Pencil, X, Lock, AlertTriangle } from 'lucide-react';
+import { UserPlus, Users, Trash2, Pencil, X, Lock, AlertTriangle, Power, PowerOff } from 'lucide-react';
 
 const DOMINIO_INTERNO = "@graficasadr.com"; 
 
@@ -48,6 +48,23 @@ const UserManagement = () => {
     setEditingId(null);
     setOriginalUsername('');
     setFormData({ username: '', password: '', fullName: '', role: 'Vendedor' });
+  };
+
+  // 🔧 CAMBIO 10: desactivar / reactivar un usuario SIN borrarlo (conserva toda
+  // su info en la base: órdenes creadas, reportes de caja, etc.). Un usuario
+  // con activo=false no puede iniciar sesión (ver Login.jsx). Se usa para sacar
+  // del sistema a las cuentas del rol Contabilidad (ya eliminado) sin perder datos.
+  const toggleActivo = async (u) => {
+    // Si hoy está inactivo (activo === false) lo reactivamos; si no, lo desactivamos.
+    const objetivo = (u.activo === false);
+    try {
+      const { error } = await supabase.from('profiles').update({ activo: objetivo }).eq('id', u.id);
+      if (error) throw error;
+      toast({ title: objetivo ? 'Usuario reactivado' : 'Usuario desactivado', description: objetivo ? `${u.full_name} ya puede iniciar sesión.` : `${u.full_name} no podrá iniciar sesión. Sus datos se conservan.` });
+      fetchUsers();
+    } catch (error) {
+      toast({ title: 'Error', description: error.message || 'No se pudo cambiar el estado.', variant: 'destructive' });
+    }
   };
 
   const handleSubmit = async (e) => {
@@ -212,7 +229,10 @@ const UserManagement = () => {
                   <option value="Administrador">Administrador</option>
                   <option value="Vendedor">Vendedor</option>
                   <option value="Producción">Producción</option>
-                  <option value="Contabilidad">Contabilidad</option>
+                  {/* 🔧 CAMBIO 10: rol 'Contabilidad' eliminado del sistema.
+                      Si un usuario viejo todavía lo tiene, aquí se ve pero hay que
+                      reasignarlo a Vendedor o desactivar la cuenta. */}
+                  {formData.role === 'Contabilidad' && <option value="Contabilidad">Contabilidad (obsoleto — reasignar)</option>}
                 </select>
               </div>
 
@@ -239,30 +259,43 @@ const UserManagement = () => {
           <CardContent className="pt-6">
             <div className="space-y-3">
               {users.map(u => (
-                <div key={u.id} className="p-3 border rounded-lg flex justify-between items-center bg-white hover:bg-slate-50 transition-colors">
+                <div key={u.id} className={`p-3 border rounded-lg flex justify-between items-center transition-colors ${u.activo === false ? 'bg-slate-100 opacity-60' : 'bg-white hover:bg-slate-50'}`}>
                   <div className="overflow-hidden">
-                    <div className="font-bold text-slate-800 truncate">{u.full_name}</div>
+                    <div className="font-bold text-slate-800 truncate flex items-center gap-2">
+                      {u.full_name}
+                      {u.activo === false && <span className="px-1.5 py-0.5 rounded text-[9px] font-bold bg-slate-200 text-slate-600 border border-slate-300">INACTIVO</span>}
+                    </div>
                     <div className="text-xs text-blue-600 font-mono">
                        User: {u.email ? u.email.replace(DOMINIO_INTERNO, '') : '...'}
                     </div>
                     <span className={`mt-1 inline-block px-2 py-0.5 rounded text-[10px] font-bold border ${
                         u.role === 'Administrador' ? 'bg-purple-100 text-purple-700 border-purple-200' :
                         u.role === 'Producción' ? 'bg-orange-100 text-orange-700 border-orange-200' :
-                        u.role === 'Contabilidad' ? 'bg-green-100 text-green-700 border-green-200' :
+                        u.role === 'Contabilidad' ? 'bg-slate-100 text-slate-600 border-slate-300' :
                         'bg-blue-100 text-blue-700 border-blue-200'
                       }`}>
-                        {u.role}
+                        {u.role}{u.role === 'Contabilidad' ? ' (obsoleto)' : ''}
                     </span>
                   </div>
-                  
+
                   <div className="flex gap-1">
+                    {/* 🔧 CAMBIO 10: desactivar/reactivar sin borrar (conserva datos) */}
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className={`h-8 w-8 ${u.activo === false ? 'text-slate-400 hover:text-green-600' : 'text-slate-500 hover:text-amber-600'}`}
+                        title={u.activo === false ? 'Reactivar acceso' : 'Desactivar acceso (no borra datos)'}
+                        onClick={() => toggleActivo(u)}
+                    >
+                        {u.activo === false ? <Power className="h-4 w-4" /> : <PowerOff className="h-4 w-4" />}
+                    </Button>
                     <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-yellow-600" onClick={() => handleEditClick(u)}>
                         <Pencil className="h-4 w-4" />
                     </Button>
-                    <Button 
-                        variant="ghost" 
-                        size="icon" 
-                        className="h-8 w-8 text-slate-500 hover:text-red-600" 
+                    <Button
+                        variant="ghost"
+                        size="icon"
+                        className="h-8 w-8 text-slate-500 hover:text-red-600"
                         onClick={() => setUserToDelete(u)}
                     >
                         <Trash2 className="h-4 w-4" />

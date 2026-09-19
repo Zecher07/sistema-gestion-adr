@@ -32,23 +32,75 @@ import InvoiceDetailsModal from '@/components/InvoiceDetailsModal';
 import InventoryPanel from '@/components/InventoryPanel';
 import CatalogPanel from '@/components/CatalogPanel';
 import ValesCajaPanel from './components/ValesCajaPanel'; 
-import AccountingPanel from '@/components/AccountingPanel'; 
+// 🔧 CAMBIO 10: 'Control Contable' (AccountingPanel) sale del menú y de las rutas
+// al eliminarse el rol Contabilidad. El archivo se conserva por si guarda lógica
+// reutilizable, pero ya no se importa.
+// import AccountingPanel from '@/components/AccountingPanel';
 import AbonosModal from '@/components/AbonosModal'; 
 import GeneralLedgerPanel from './components/GeneralLedgerPanel';
 import NotificationsPanel from './components/NotificationsPanel'; // 🔥 NUEVO PANEL DE NOTIFICACIONES
 
-const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
-const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
+// 🔧 CAMBIO 10 (Fase 1+2): sin 'CONTABILIDAD'. 'VERIFICACIÓN' se inserta
+// dinámicamente antes de 'FINALIZADA' SOLO si la orden tuvo algún pago
+// no-efectivo (transferencia/depósito/cheque/tarjeta) en anticipo, algún abono
+// o el saldo. Con todo en efectivo, va directo a FINALIZADA.
+const esPagoNoEfectivo = (metodo) => {
+    const m = String(metodo || '').toLowerCase();
+    return m.includes('transfer') || m.includes('depósito') || m.includes('deposito') || m.includes('cheque') || m.includes('tarjeta');
+};
 
-// 🔧 FIX (bug reportado 16-sept): Supabase/PostgREST corta cada `select()` en
-// 1000 filas por defecto — SIN avisar con ningún error, simplemente devuelve
-// las primeras 1000 y calla. `clientes` y `ordenes` ya superan esa cantidad,
-// así que clientes/órdenes recién creados (o los que quedan "después" del
-// corte) podían desaparecer silenciosamente de toda la app — aunque estuvieran
-// perfectamente guardados en la base — mientras que una búsqueda puntual (ej.
-// el chequeo de "cliente duplicado" en ClientForm.jsx, que sí los encontraba
-// por nombre/RUC exacto) los seguía viendo. Esta función pagina con `.range()`
-// hasta traer TODAS las filas, sin importar cuántas sean.
+const ordenNecesitaVerificacion = (order) => {
+    if (!order) return false;
+    const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
+    if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) return true;
+    if (Array.isArray(order.abonos)) {
+        for (const a of order.abonos) {
+            if (Number(a.monto) > 0 && esPagoNoEfectivo(a.metodoPago || a.metodo_pago)) return true;
+        }
+    }
+    const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
+    const totalAbonos = (order.abonos || []).reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+    const retencion = Number(order.retencion || order.financials?.retencion || 0);
+    const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+    if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) return true;
+    return false;
+};
+
+// Misma clave para cada pago en TODOS los archivos que la usan (App.jsx,
+// OrderDetailsModal.jsx, NotificationsPanel.jsx): 'anticipo', 'abono_<i>', 'saldo'.
+const todosPagosVerificados = (order) => {
+    const verificados = order?.pagos_verificados || {};
+    const pAnticipo = order?.formaPagoAnticipo || order?.forma_pago_anticipo || '';
+    if (Number(order?.anticipo) > 0 && esPagoNoEfectivo(pAnticipo) && !verificados.anticipo) return false;
+    const abonos = Array.isArray(order?.abonos) ? order.abonos : [];
+    for (let i = 0; i < abonos.length; i++) {
+        const a = abonos[i];
+        if (Number(a.monto) > 0 && esPagoNoEfectivo(a.metodoPago || a.metodo_pago) && !verificados[`abono_${i}`]) return false;
+    }
+    const pSaldo = order?.formaPagoSaldo || order?.financials?.formaPagoSaldo || '';
+    const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+    const retencion = Number(order?.retencion || order?.financials?.retencion || 0);
+    const saldoFinal = (Number(order?.financials?.total) || 0) - (Number(order?.anticipo) || 0) - retencion - totalAbonos;
+    if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo) && !verificados.saldo) return false;
+    return true;
+};
+
+const getWorkflowForOrder = (order) => {
+    const tipo = String(order?.tipoOrden || order?.tipo_trabajo || order?.tipoLetrero || '').toUpperCase();
+    const isVC = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
+    const base = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
+    return ordenNecesitaVerificacion(order) ? [...base, 'VERIFICACIÓN', 'FINALIZADA'] : [...base, 'FINALIZADA'];
+};
+
+// 🔧 FIX (bug reportado): Supabase/PostgREST corta cada `select()` en 1000 filas
+// por defecto — SIN avisar con ningún error, simplemente devuelve las primeras
+// 1000 y calla. `clientes` y `ordenes` ya superan (o están por superar) esa
+// cantidad, así que clientes/órdenes recién creados (o los que quedan
+// "después" del corte) podían desaparecer silenciosamente de toda la app —
+// aunque estuvieran perfectamente guardados en la base — mientras que una
+// búsqueda puntual (ej. el chequeo de "cliente duplicado" en ClientForm.jsx,
+// que sí los encontraba por nombre/RUC exacto) los seguía viendo. Esta función
+// pagina con `.range()` hasta traer TODAS las filas, sin importar cuántas sean.
 const fetchAllRows = async (table, selectCols = '*', orderBy = null) => {
     const PAGE_SIZE = 1000;
     let all = [];
@@ -135,12 +187,11 @@ function App() {
   const { toast } = useToast();
   const [canUserAnulate, setCanUserAnulate] = useState(false);
   const [canUserEdit, setCanUserEdit] = useState(false);
-  // 🔧 FIX (bug reportado 16-sept): `fetchAllData` corre cada 5s — si avisáramos
-  // con un toast CADA VEZ que falla, y la falla persiste (ej. problema temporal
-  // de cuota/conexión con Supabase), spamearía un toast cada 5 segundos. Este
-  // ref guarda si ya se avisó, para avisar UNA sola vez por corte y volver a
-  // poder avisar si pasa de nuevo más adelante (se resetea apenas una carga
-  // funciona bien).
+  // \ud83d\udd27 FIX (bug reportado): `fetchAllData` corre cada 5s \u2014 si avis\u00e1ramos con un
+  // toast CADA VEZ que falla, y la falla persiste (ej. problema temporal de
+  // cuota/conexi\u00f3n con Supabase), spamear\u00eda un toast cada 5 segundos. Este ref
+  // guarda si ya se avis\u00f3, para avisar UNA sola vez por corte y volver a poder
+  // avisar si pasa de nuevo m\u00e1s adelante (se resetea apenas una carga funciona).
   const fetchErrorWarnedRef = useRef(false);
 
   const normalizeText = (text) => {
@@ -154,8 +205,8 @@ function App() {
       if (!currentUser) return;
 
       // 🔧 FIX (bug reportado): antes era `select('*')` sin paginar — cortaba en
-      // 1000 filas sin avisar. Ahora trae TODOS los clientes, sin importar
-      // cuántos haya (ver `fetchAllRows` arriba).
+      // 1000 filas sin avisar. Ahora trae TODOS los clientes, sin importar cuántos
+      // haya (ver `fetchAllRows` arriba).
       const clientesData = await fetchAllRows('clientes', '*', { column: 'id', ascending: true });
       if (clientesData) setClients(clientesData);
 
@@ -169,9 +220,9 @@ function App() {
       const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion, ruc, cliente_telefono';
 
       // 🔧 FIX (mismo bug): `ordenes` también se paginaba de más — con 1000+
-      // órdenes, algunas desaparecían solas según cómo cayera el corte.
+      // órdenes, las más viejas (o según cómo cayera el corte) desaparecían solas.
       const ordenesData = await fetchAllRows('ordenes', colOrdenes, { column: 'created_at', ascending: false });
-
+      
       // 🔧 FIX: antes cada Vendedor solo veía SUS PROPIAS cotizaciones (filtro
       // .ilike('responsable_nombre', su nombre)). El pedido fue que todos los
       // vendedores vean todas las cotizaciones de cualquiera, por si alguien
@@ -237,9 +288,18 @@ function App() {
         // se revisa el rol REAL contra la base de datos apenas carga la página,
         // y se autocorrige sola si hay una diferencia — sin necesidad de
         // cerrar sesión.
-        supabase.from('profiles').select('id, full_name, role').eq('id', loadedUser.id).single()
+        supabase.from('profiles').select('id, full_name, role, activo').eq('id', loadedUser.id).single()
             .then(({ data: perfilReal, error }) => {
                 if (error || !perfilReal) return;
+                // 🔧 CAMBIO 10: si la cuenta fue desactivada, cerrar sesión aquí mismo.
+                if (perfilReal.activo === false) {
+                    supabase.auth.signOut();
+                    localStorage.removeItem('currentUser');
+                    sessionStorage.removeItem('currentView');
+                    setUser(null);
+                    setAllowedViews([]);
+                    return;
+                }
                 const cambioAlgo = perfilReal.role !== loadedUser.role || perfilReal.full_name !== loadedUser.name;
                 if (cambioAlgo) {
                     const usuarioActualizado = { ...loadedUser, name: perfilReal.full_name, role: perfilReal.role };
@@ -332,7 +392,9 @@ function App() {
                 let relevant = false;
                 if (isUserInList(newRecord?.vendedor_ids, newRecord?.vendedor, user)) relevant = true;
                 if (user.role === 'Producción' && newRecord.status === 'PRODUCCION') relevant = true;
-                if (user.role === 'Contabilidad' && newRecord.status === 'CONTABILIDAD') relevant = true;
+                // 🔧 CAMBIO 10 (Fase 2): Admin se entera al toque cuando una orden
+                // llega a 'VERIFICACIÓN' (queda esperando sus checks).
+                if (user.role === 'Administrador' && newRecord.status === 'VERIFICACIÓN') relevant = true;
 
                 if (relevant) {
                     const notif = {
@@ -451,9 +513,7 @@ function App() {
   const handleViewOrder = (o, src) => { setViewOrder(o); setViewOrderSource(src); };
 
   const handleEditOrderRequest = (o) => {
-      const isContabilidadAllowed = user.role === 'Contabilidad' && o.status === 'CONTABILIDAD';
-
-      if (user.role !== 'Administrador' && !isContabilidadAllowed && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
+      if (user.role !== 'Administrador' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "Solo puedes editar las órdenes donde estés asignado.", variant: "destructive" });
           return;
       }
@@ -461,7 +521,7 @@ function App() {
   };
 
   const handleAbonoOrderRequest = (o) => {
-      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
+      if (user.role !== 'Administrador' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "Solo puedes registrar abonos en tus propias órdenes.", variant: "destructive" });
           return;
       }
@@ -469,7 +529,7 @@ function App() {
   };
 
   const handlePaymentOrderRequest = (o) => {
-      if (user.role !== 'Administrador' && user.role !== 'Contabilidad' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
+      if (user.role !== 'Administrador' && !isUserInList(o?.vendedor_ids, o?.vendedor, user)) {
           toast({ title: "Acceso Denegado", description: "No tienes permisos para cobrar en esta orden.", variant: "destructive" });
           return;
       }
@@ -502,19 +562,29 @@ function App() {
   };
 
   const handleAdvanceWorkflow = async (order) => {
-    if (user.role !== 'Administrador' && user.role !== 'Producción' && user.role !== 'Contabilidad' && !isUserInList(order?.vendedor_ids, order?.vendedor, user)) {
+    if (user.role !== 'Administrador' && user.role !== 'Producción' && !isUserInList(order?.vendedor_ids, order?.vendedor, user)) {
         toast({ title: "Acceso Denegado", description: "No tienes permisos para avanzar esta orden.", variant: "destructive" });
         return;
     }
-    const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
-    const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
-
-    const flow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
+    const flow = getWorkflowForOrder(order);
     const currentStatus = order.status;
     const idx = flow.indexOf(currentStatus);
-    
+
     if (idx !== -1 && idx < flow.length - 1) {
         const nextStatus = flow[idx + 1];
+        // 🔧 CAMBIO 10 (Fase 2): de 'VERIFICACIÓN' a 'FINALIZADA' solo Admin, y
+        // solo si ya están marcados los checks de CADA pago no-efectivo (se
+        // marcan desde el Centro de Notificaciones).
+        if (currentStatus === 'VERIFICACIÓN') {
+            if (user.role !== 'Administrador') {
+                toast({ title: "Acceso Denegado", description: "Solo un Administrador puede aprobar la Verificación de Pago.", variant: "destructive" });
+                return;
+            }
+            if (!todosPagosVerificados(order)) {
+                toast({ title: "Verificación incompleta", description: "Faltan pagos por verificar en el Centro de Notificaciones.", variant: "destructive" });
+                return;
+            }
+        }
         try {
             const { error } = await supabase.from('ordenes').update({ status: nextStatus }).eq('id', order.id);
             if(error) throw error;
@@ -528,10 +598,7 @@ function App() {
         toast({ title: "Acceso Denegado", description: "Solo el Administrador puede revertir estados.", variant: "destructive" });
         return;
     }
-    const tipo = String(order.tipoOrden || order.tipo_trabajo || order.tipoLetrero || '').toUpperCase();
-    const isVentaCorta = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
-
-    const flow = isVentaCorta ? WORKFLOW_VC : WORKFLOW_VPVC;
+    const flow = getWorkflowForOrder(order);
     const currentStatus = order.status;
     const idx = flow.indexOf(currentStatus);
     
@@ -579,8 +646,9 @@ function App() {
     if (currentView === 'clientes-lista') return ( <ClientsPanel clients={clients} orders={orders} user={user} onCreateNew={() => { setEditingClient(null); setShowClientFormModal(true); }} onEditClient={(client) => { setEditingClient(client); setShowClientFormModal(true); }} onViewOrder={(o) => handleViewOrder(o, 'clientes')} initialExpedienteClientId={pendingExpedienteClientId} onExpedienteOpened={() => setPendingExpedienteClientId(null)} /> );
     if (currentView === 'configuracion') return <AnulationConfig />;
     if (currentView === 'vales') return <ValesCajaPanel user={user} orders={orders} />;
-    if (currentView === 'contabilidad-cierre') return <AccountingPanel user={user} orders={orders} staffUsers={staffUsers} onViewOrder={handleViewOrder} />;
-    
+    // 🔧 CAMBIO 10: ruta 'contabilidad-cierre' eliminada (rol Contabilidad fuera).
+
+
     // 🔥 NUEVA VISTA: PANEL DE NOTIFICACIONES 🔥
     if (currentView === 'notificaciones') {
         return (
@@ -794,8 +862,7 @@ function App() {
         onAnulateOrder={handleAnulateOrderRequest} 
         canAnulate={user.role === 'Administrador' || (canUserAnulate && isUserInList(viewOrder?.vendedor_ids, viewOrder?.vendedor, user))} 
         canEdit={
-          user.role === 'Administrador' || 
-          (user.role === 'Contabilidad' && viewOrder?.status === 'CONTABILIDAD') || 
+          user.role === 'Administrador' ||
           (canUserEdit && isUserInList(viewOrder?.vendedor_ids, viewOrder?.vendedor, user))
         } 
         onAbonoOrder={handleAbonoOrderRequest} 

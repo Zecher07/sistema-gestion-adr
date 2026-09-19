@@ -165,6 +165,16 @@ const NotificationsPanel = ({
   const [auditandoVale, setAuditandoVale] = useState(null);
   // 🔧 CAMBIO 9: id del grupo de auditoría cuyo detalle de descuadre está abierto.
   const [auditoriaExpandida, setAuditoriaExpandida] = useState(null);
+  // 🔧 NUEVO: pestaña activa del panel derecho ('trabajo' | 'inventario') — antes
+  // eran dos tarjetas apiladas y la de abajo se perdía.
+  const [bandejaTab, setBandejaTab] = useState('trabajo');
+  // 🔧 CAMBIO 10 (Fase 2): checks de "PAGO POR VERIFICAR" que ya se guardaron en
+  // esta sesión, para reflejarlos al instante sin esperar a que 'orders' (prop)
+  // se vuelva a cargar. Igual para las órdenes que ya se finalizaron desde acá.
+  const [pagosVerifOverride, setPagosVerifOverride] = useState({}); // { [orderId]: pagos_verificados }
+  const [guardandoPago, setGuardandoPago] = useState(null); // `${orderId}:${key}` que se está guardando
+  const [finalizandoOrden, setFinalizandoOrden] = useState(null); // id de la orden que se está finalizando
+  const [ordenesFinalizadasLocal, setOrdenesFinalizadasLocal] = useState([]); // ids ya finalizados desde aquí
 
   // 🔧 FIX: esta función se había perdido en una edición anterior — es la que
   // hace que las flechitas de navegar día a día realmente funcionen.
@@ -438,7 +448,8 @@ const NotificationsPanel = ({
   };
 
   const workItems = getWorkItems();
-  const totalCount = realtimeEvents.length + workItems.length + pendingVales.length;
+  // 🔧 CAMBIO 10 (Fase 2): + órdenes en VERIFICACIÓN esperando checks del Admin.
+  const totalCount = realtimeEvents.length + workItems.length + pendingVales.length + (isAdmin ? (orders || []).filter(o => o.status === 'VERIFICACIÓN').length : 0);
 
   // Vales agrupados por fecha (para buscar rápido los del día elegido)
   const valesPorDia = useMemo(() => {
@@ -485,6 +496,36 @@ const NotificationsPanel = ({
       const pendientes = comprasRecientes.filter(c => !c.revisado && !(c.motivo || '').includes('Fac/Ref:'));
       return agruparPorSesion(pendientes);
   }, [comprasRecientes]);
+
+  // 🔧 NUEVO: una sola lista con auditorías + recepciones, ordenada de más
+  // reciente a más antigua (cada tarjeta conserva su estilo/rojo o verde).
+  const tareasInventario = useMemo(() => {
+      const audit = tareasAuditoria.map(g => ({ ...g, _tipo: 'auditoria' }));
+      const recep = tareasRecepcion.map(g => ({ ...g, _tipo: 'recepcion' }));
+      return [...audit, ...recep].sort((a, b) => new Date(b.fecha) - new Date(a.fecha));
+  }, [tareasAuditoria, tareasRecepcion]);
+
+  // 🔧 NUEVO: "07/09/2026 - 15:30" y "(Hace 2h)" para las tarjetas de inventario.
+  const fechaHoraCorta = (iso) => {
+      if (!iso) return '';
+      const d = new Date(iso);
+      if (isNaN(d.getTime())) return '';
+      const p = (n) => String(n).padStart(2, '0');
+      return `${p(d.getDate())}/${p(d.getMonth() + 1)}/${d.getFullYear()} - ${p(d.getHours())}:${p(d.getMinutes())}`;
+  };
+  const tiempoTranscurrido = (iso) => {
+      if (!iso) return '';
+      const diffMin = Math.floor((Date.now() - new Date(iso).getTime()) / 60000);
+      if (isNaN(diffMin)) return '';
+      if (diffMin < 1) return 'recién';
+      if (diffMin < 60) return `Hace ${diffMin}m`;
+      const h = Math.floor(diffMin / 60);
+      if (h < 24) return `Hace ${h}h`;
+      const dias = Math.floor(h / 24);
+      if (dias < 30) return `Hace ${dias}d`;
+      const meses = Math.floor(dias / 30);
+      return `Hace ${meses} mes${meses > 1 ? 'es' : ''}`;
+  };
 
   // Marca todas las filas de una sesión (cuadre o compra) como revisadas
   const marcarSesionRevisada = async (grupo, tipo) => {
@@ -579,6 +620,87 @@ const NotificationsPanel = ({
   };
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
+
+  // 🔧 CAMBIO 10 (Fase 2): tarjeta "PAGO POR VERIFICAR" — órdenes en estado
+  // VERIFICACIÓN esperando que Admin marque un check por CADA pago no-efectivo
+  // (anticipo / cada abono / saldo) antes de poder finalizarlas. MISMA lógica y
+  // MISMAS claves ('anticipo', 'abono_<i>', 'saldo') que en App.jsx y
+  // OrderDetailsModal.jsx — si se toca aquí, tocar también allá.
+  const esPagoNoEfectivo = (metodo) => {
+      const m = String(metodo || '').toLowerCase();
+      return m.includes('transfer') || m.includes('depósito') || m.includes('deposito') || m.includes('cheque') || m.includes('tarjeta');
+  };
+
+  const construirPagosAVerificar = (order) => {
+      const pagos = [];
+      const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
+      if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) {
+          pagos.push({ key: 'anticipo', label: `Anticipo — ${pAnticipo}`, monto: Number(order.anticipo) });
+      }
+      (order.abonos || []).forEach((a, i) => {
+          const metodo = a.metodoPago || a.metodo_pago || '';
+          if (Number(a.monto) > 0 && esPagoNoEfectivo(metodo)) {
+              pagos.push({ key: `abono_${i}`, label: `Abono #${i + 1} — ${metodo}`, monto: Number(a.monto) });
+          }
+      });
+      const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
+      const totalAbonos = (order.abonos || []).reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+      const retencion = Number(order.retencion || order.financials?.retencion || 0);
+      const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+      if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) {
+          pagos.push({ key: 'saldo', label: `Saldo — ${pSaldo}`, monto: saldoFinal });
+      }
+      return pagos;
+  };
+
+  // Órdenes en VERIFICACIÓN, con el override local de checks ya aplicado y las
+  // que ya se finalizaron desde aquí ocultas. Más reciente primero.
+  const ordenesEnVerificacion = useMemo(() => {
+      return (orders || [])
+          .filter(o => o.status === 'VERIFICACIÓN' && !ordenesFinalizadasLocal.includes(o.id))
+          .map(o => ({ ...o, pagos_verificados: pagosVerifOverride[o.id] ?? o.pagos_verificados ?? {} }))
+          .sort((a, b) => new Date(b.updated_at || b.updatedAt || b.created_at || 0) - new Date(a.updated_at || a.updatedAt || a.created_at || 0));
+  }, [orders, pagosVerifOverride, ordenesFinalizadasLocal]);
+
+  // Marca/desmarca un pago puntual de una orden y lo guarda al instante.
+  const toggleVerificacionPago = async (order, key) => {
+      const claveGuardando = `${order.id}:${key}`;
+      if (guardandoPago === claveGuardando) return;
+      const actuales = order.pagos_verificados || {};
+      const nuevoValor = !actuales[key];
+      const actualizado = { ...actuales, [key]: nuevoValor };
+      setGuardandoPago(claveGuardando);
+      setPagosVerifOverride(prev => ({ ...prev, [order.id]: actualizado })); // feedback inmediato
+      try {
+          const { error } = await supabase.from('ordenes').update({ pagos_verificados: actualizado }).eq('id', order.id);
+          if (error) throw error;
+      } catch (error) {
+          setPagosVerifOverride(prev => ({ ...prev, [order.id]: actuales })); // revertir si falló
+          alert('No se pudo guardar la verificación del pago: ' + error.message);
+      } finally {
+          setGuardandoPago(null);
+      }
+  };
+
+  // Aprueba y finaliza una orden en VERIFICACIÓN — solo si ya están todos los checks.
+  const finalizarOrdenVerificada = async (order) => {
+      const pagos = construirPagosAVerificar(order);
+      const faltan = pagos.filter(p => !(order.pagos_verificados || {})[p.key]);
+      if (faltan.length > 0) {
+          alert(`Faltan ${faltan.length} pago(s) por verificar en esta orden.`);
+          return;
+      }
+      setFinalizandoOrden(order.id);
+      try {
+          const { error } = await supabase.from('ordenes').update({ status: 'FINALIZADA' }).eq('id', order.id);
+          if (error) throw error;
+          setOrdenesFinalizadasLocal(prev => [...prev, order.id]);
+      } catch (error) {
+          alert('No se pudo finalizar la orden: ' + error.message);
+      } finally {
+          setFinalizandoOrden(null);
+      }
+  };
 
   // 🔧 CAMBIO 9: ¿están TODOS los checks del día? Recién ahí se habilita el botón
   // "Archivar Jornada" de arriba. Mientras falte algo, la jornada sale como
@@ -870,94 +992,204 @@ const NotificationsPanel = ({
 
             </div>
 
-            {/* COLUMNA DERECHA: TAREAS DE INVENTARIO + ÓRDENES DE TRABAJO */}
-            <div className="xl:col-span-2 space-y-6">
-                {/* 🔧 NUEVO: Bandeja de Tareas de Inventario (solo Admin) — auditorías
-                    con descuadre y recepciones de material pendientes de costear,
-                    como tareas accionables (no una lista pasiva). */}
-                {isAdmin && (tareasAuditoria.length > 0 || tareasRecepcion.length > 0) && (
-                    <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
-                        <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
-                            <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                                <FileText className="h-5 w-5 text-indigo-500"/> Bandeja de Tareas de Inventario
-                            </h3>
-                            <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">{tareasAuditoria.length + tareasRecepcion.length} Tareas</span>
-                        </div>
-                        <div className="divide-y divide-slate-100">
-                            {tareasAuditoria.map(grupo => {
-                                const perdidaTotal = grupo.filas.reduce((acc, f) => {
-                                    if (f.cantidad_cambio >= 0) return acc;
-                                    return acc + (Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0));
-                                }, 0);
-                                const detalles = grupo.filas.map(f => `${f.material_nombre} (${f.cantidad_cambio > 0 ? '+' : ''}${f.cantidad_cambio})`).join(', ');
-                                const estaExpandida = auditoriaExpandida === grupo.id;
-                                // 🔧 CAMBIO 9: al pulsar "Revisar Descuadre" se guarda el detalle
-                                // de esta sesión de cuadre para que la pantalla de Inventario lo
-                                // muestre en un recuadro rojo al llegar (no solo "te lleva").
-                                const irARevisarDescuadre = () => {
-                                    try {
-                                        sessionStorage.setItem('descuadreARevisar', JSON.stringify({
-                                            usuario: grupo.usuario || 'Sistema',
-                                            fecha: grupo.fecha,
-                                            perdidaTotal,
-                                            filas: grupo.filas.map(f => ({
-                                                material_nombre: f.material_nombre,
-                                                cantidad_cambio: f.cantidad_cambio,
-                                                cantidad_resultante: f.cantidad_resultante,
-                                                motivo: f.motivo,
-                                                perdida: f.cantidad_cambio < 0 ? Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0) : 0,
-                                            })),
-                                        }));
-                                    } catch (e) { /* sessionStorage no disponible: seguimos igual */ }
-                                    onViewChange('inventario-gestionar');
-                                };
+            {/* COLUMNA DERECHA: pestañas — Bandeja de Trabajo / Tareas de Inventario
+                🔧 NUEVO: antes eran dos tarjetas apiladas y la de abajo se perdía
+                (además la página quedaba en blanco más abajo). Ahora es UN panel
+                con dos pestañas y scroll interno. */}
+            <div className="xl:col-span-2">
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden flex flex-col">
+                    <div className="bg-slate-50 border-b border-slate-200 flex items-stretch overflow-x-auto">
+                        <button
+                            onClick={() => setBandejaTab('trabajo')}
+                            className={cn(
+                                "px-4 py-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap",
+                                bandejaTab === 'trabajo' ? "border-indigo-500 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:text-slate-700"
+                            )}
+                        >
+                            <FileText className="h-4 w-4"/> Bandeja de Trabajo ({user?.role})
+                            <span className="bg-indigo-100 text-indigo-800 text-[10px] font-bold px-2 py-0.5 rounded-full">{workItems.length}</span>
+                        </button>
+                        {isAdmin && (
+                            <button
+                                onClick={() => setBandejaTab('inventario')}
+                                className={cn(
+                                    "px-4 py-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap",
+                                    bandejaTab === 'inventario' ? "border-indigo-500 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:text-slate-700"
+                                )}
+                            >
+                                <FileText className="h-4 w-4"/> Tareas de Inventario
+                                <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", tareasInventario.length > 0 ? "bg-red-100 text-red-700" : "bg-slate-200 text-slate-500")}>{tareasInventario.length}</span>
+                            </button>
+                        )}
+                        {/* 🔧 CAMBIO 10 (Fase 2): pestaña nueva — órdenes con pago no-efectivo
+                            esperando que Admin marque el check de cada pago. */}
+                        {isAdmin && (
+                            <button
+                                onClick={() => setBandejaTab('verificacion')}
+                                className={cn(
+                                    "px-4 py-3 text-sm font-bold flex items-center gap-2 border-b-2 transition-colors whitespace-nowrap",
+                                    bandejaTab === 'verificacion' ? "border-indigo-500 text-indigo-600 bg-white" : "border-transparent text-slate-500 hover:text-slate-700"
+                                )}
+                            >
+                                <ShieldCheck className="h-4 w-4"/> Pagos por Verificar
+                                <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full", ordenesEnVerificacion.length > 0 ? "bg-fuchsia-100 text-fuchsia-700" : "bg-slate-200 text-slate-500")}>{ordenesEnVerificacion.length}</span>
+                            </button>
+                        )}
+                    </div>
+
+                    {isAdmin && bandejaTab === 'verificacion' ? (
+                        <div className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
+                            {ordenesEnVerificacion.length === 0 ? (
+                                <div className="p-12 text-center text-slate-400">
+                                    <CheckCircle2 className="h-10 w-10 text-green-400 mx-auto mb-2" />
+                                    <p className="text-sm">No hay pagos pendientes de verificar.</p>
+                                </div>
+                            ) : ordenesEnVerificacion.map(order => {
+                                const pagos = construirPagosAVerificar(order);
+                                const verificados = order.pagos_verificados || {};
+                                const faltan = pagos.filter(p => !verificados[p.key]).length;
+                                const todoListo = faltan === 0;
                                 return (
-                                    <div key={grupo.id} className="p-4 bg-red-50/50">
-                                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                                            <div className="flex items-start gap-3">
-                                                <Info className="h-5 w-5 text-red-500 shrink-0 mt-0.5"/>
-                                                <div>
-                                                    <p className="text-sm font-bold text-red-800">AUDITORÍA: DESCUADRE CON PÉRDIDA REGISTRADO POR {(grupo.usuario || '').toUpperCase()}</p>
-                                                    <p className="text-xs text-slate-600 mt-0.5">
-                                                        {perdidaTotal > 0 && <>Pérdida monetaria: <span className="font-bold">{formatCurrency(perdidaTotal)}</span>. </>}
-                                                        Detalles: {detalles}.
-                                                    </p>
-                                                    <button onClick={() => setAuditoriaExpandida(estaExpandida ? null : grupo.id)} className="text-[11px] font-bold text-red-600 hover:underline mt-1">
-                                                        {estaExpandida ? 'Ocultar detalle ▲' : 'Ver detalle del descuadre ▼'}
-                                                    </button>
-                                                </div>
+                                    <div key={order.id} className="p-4 bg-fuchsia-50/40">
+                                        <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3 mb-2">
+                                            <div>
+                                                <p className="text-sm font-bold text-fuchsia-900">
+                                                    Orden #{String(order.orderNumber || order.order_number || order.id).padStart(7, '0')} — {order.cliente || order.cliente_nombre}
+                                                </p>
+                                                <p className="text-[10px] text-slate-400 mt-0.5">{order.tipoLetrero || order.tipo_trabajo}</p>
                                             </div>
-                                            <div className="flex gap-2 shrink-0 self-end md:self-center">
-                                                <Button size="sm" variant="outline" className="text-xs h-8 border-red-300 text-red-700 hover:bg-red-100" onClick={irARevisarDescuadre}>
-                                                    Revisar Descuadre
-                                                </Button>
-                                                <Button size="sm" className="text-xs h-8 bg-red-600 hover:bg-red-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => marcarSesionRevisada(grupo, 'auditoria')}>
-                                                    {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : <CheckCircle2 className="h-3 w-3 mr-1"/>} Marcar como revisado
-                                                </Button>
-                                            </div>
+                                            <Button size="sm" variant="outline" className="text-xs h-8 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 shrink-0" onClick={() => onViewOrder(order)}>
+                                                Ver Orden <ExternalLink className="h-3 w-3 ml-1"/>
+                                            </Button>
                                         </div>
-                                        {estaExpandida && (
-                                            <div className="mt-3 bg-white border border-red-200 rounded-lg overflow-hidden">
-                                                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-3 py-1.5 bg-red-50 text-[9px] font-bold text-red-400 uppercase">
-                                                    <span>Material</span><span className="text-right">Diferencia</span><span className="text-right">Quedó en</span><span className="text-right">Pérdida</span>
-                                                </div>
-                                                {grupo.filas.map((f, fi) => (
-                                                    <div key={fi} className="px-3 py-2 border-t border-red-100">
-                                                        <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center text-[11px]">
-                                                            <span className="font-medium text-slate-700">{f.material_nombre}</span>
-                                                            <span className={cn("text-right font-bold", f.cantidad_cambio < 0 ? "text-red-600" : "text-green-600")}>{f.cantidad_cambio > 0 ? '+' : ''}{f.cantidad_cambio}</span>
-                                                            <span className="text-right text-slate-500">{f.cantidad_resultante}</span>
-                                                            <span className="text-right text-red-600 font-medium">{f.cantidad_cambio < 0 ? formatCurrency(Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0)) : '—'}</span>
-                                                        </div>
-                                                        {f.motivo && <p className="text-[10px] text-slate-400 mt-1">Motivo: {String(f.motivo).replace('Cuadre de Inventario: ', '')}</p>}
-                                                    </div>
-                                                ))}
-                                            </div>
-                                        )}
+                                        <div className="bg-white border border-fuchsia-200 rounded-lg overflow-hidden">
+                                            {pagos.map(pago => {
+                                                const clave = `${order.id}:${pago.key}`;
+                                                const marcado = !!verificados[pago.key];
+                                                return (
+                                                    <button
+                                                        key={pago.key}
+                                                        type="button"
+                                                        onClick={() => toggleVerificacionPago(order, pago.key)}
+                                                        disabled={guardandoPago === clave}
+                                                        className={cn(
+                                                            "w-full flex items-center justify-between gap-2 px-3 py-2 border-t border-fuchsia-100 first:border-t-0 text-left transition-colors",
+                                                            marcado ? "bg-green-50" : "hover:bg-slate-50",
+                                                            guardandoPago === clave && "opacity-60 cursor-not-allowed"
+                                                        )}
+                                                    >
+                                                        <span className={cn("text-xs font-medium", marcado ? "text-green-700" : "text-slate-600")}>{pago.label}</span>
+                                                        <span className="flex items-center gap-2 shrink-0">
+                                                            <span className="text-xs font-bold text-slate-700">{formatCurrency(pago.monto)}</span>
+                                                            <span className={cn("h-4 w-4 rounded border flex items-center justify-center", marcado ? "bg-green-600 border-green-600" : "border-slate-300")}>
+                                                                {guardandoPago === clave ? <Loader2 className="h-3 w-3 animate-spin text-slate-400"/> : marcado && <CheckCircle2 className="h-3 w-3 text-white"/>}
+                                                            </span>
+                                                        </span>
+                                                    </button>
+                                                );
+                                            })}
+                                        </div>
+                                        <div className="flex justify-end mt-2">
+                                            <Button
+                                                size="sm"
+                                                disabled={!todoListo || finalizandoOrden === order.id}
+                                                title={todoListo ? 'Aprobar y finalizar la orden' : `Faltan ${faltan} pago(s) por verificar`}
+                                                className="text-xs h-8 bg-fuchsia-600 hover:bg-fuchsia-700 text-white disabled:opacity-40 disabled:cursor-not-allowed"
+                                                onClick={() => finalizarOrdenVerificada(order)}
+                                            >
+                                                {finalizandoOrden === order.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : <CheckCircle2 className="h-3 w-3 mr-1"/>}
+                                                Aprobar y Finalizar
+                                            </Button>
+                                        </div>
                                     </div>
                                 );
                             })}
-                            {tareasRecepcion.map(grupo => {
+                        </div>
+                    ) : isAdmin && bandejaTab === 'inventario' ? (
+                        <div className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
+                            {tareasInventario.length === 0 ? (
+                                <div className="p-12 text-center text-slate-400">
+                                    <CheckCircle2 className="h-10 w-10 text-green-400 mx-auto mb-2" />
+                                    <p className="text-sm">No hay tareas de inventario pendientes.</p>
+                                </div>
+                            ) : tareasInventario.map(grupo => {
+                                const sello = (
+                                    <p className="text-[10px] font-medium text-slate-400 mt-0.5">
+                                        {fechaHoraCorta(grupo.fecha)} <span className="text-slate-500">({tiempoTranscurrido(grupo.fecha)})</span>
+                                    </p>
+                                );
+                                if (grupo._tipo === 'auditoria') {
+                                    const perdidaTotal = grupo.filas.reduce((acc, f) => {
+                                        if (f.cantidad_cambio >= 0) return acc;
+                                        return acc + (Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0));
+                                    }, 0);
+                                    const detalles = grupo.filas.map(f => `${f.material_nombre} (${f.cantidad_cambio > 0 ? '+' : ''}${f.cantidad_cambio})`).join(', ');
+                                    const estaExpandida = auditoriaExpandida === grupo.id;
+                                    const irARevisarDescuadre = () => {
+                                        try {
+                                            sessionStorage.setItem('descuadreARevisar', JSON.stringify({
+                                                usuario: grupo.usuario || 'Sistema',
+                                                fecha: grupo.fecha,
+                                                perdidaTotal,
+                                                filas: grupo.filas.map(f => ({
+                                                    material_nombre: f.material_nombre,
+                                                    cantidad_cambio: f.cantidad_cambio,
+                                                    cantidad_resultante: f.cantidad_resultante,
+                                                    motivo: f.motivo,
+                                                    perdida: f.cantidad_cambio < 0 ? Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0) : 0,
+                                                })),
+                                            }));
+                                        } catch (e) { /* sessionStorage no disponible: seguimos igual */ }
+                                        onViewChange('inventario-gestionar');
+                                    };
+                                    return (
+                                        <div key={grupo.id} className="p-4 bg-red-50/50">
+                                            <div className="flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
+                                                <div className="flex items-start gap-3">
+                                                    <Info className="h-5 w-5 text-red-500 shrink-0 mt-0.5"/>
+                                                    <div>
+                                                        <p className="text-sm font-bold text-red-800">AUDITORÍA: DESCUADRE CON PÉRDIDA REGISTRADO POR {(grupo.usuario || '').toUpperCase()}</p>
+                                                        {sello}
+                                                        <p className="text-xs text-slate-600 mt-0.5">
+                                                            {perdidaTotal > 0 && <>Pérdida monetaria: <span className="font-bold">{formatCurrency(perdidaTotal)}</span>. </>}
+                                                            Detalles: {detalles}.
+                                                        </p>
+                                                        <button onClick={() => setAuditoriaExpandida(estaExpandida ? null : grupo.id)} className="text-[11px] font-bold text-red-600 hover:underline mt-1">
+                                                            {estaExpandida ? 'Ocultar detalle ▲' : 'Ver detalle del descuadre ▼'}
+                                                        </button>
+                                                    </div>
+                                                </div>
+                                                <div className="flex gap-2 shrink-0 self-end md:self-center">
+                                                    <Button size="sm" variant="outline" className="text-xs h-8 border-red-300 text-red-700 hover:bg-red-100" onClick={irARevisarDescuadre}>
+                                                        Revisar Descuadre
+                                                    </Button>
+                                                    <Button size="sm" className="text-xs h-8 bg-red-600 hover:bg-red-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => marcarSesionRevisada(grupo, 'auditoria')}>
+                                                        {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : <CheckCircle2 className="h-3 w-3 mr-1"/>} Marcar como revisado
+                                                    </Button>
+                                                </div>
+                                            </div>
+                                            {estaExpandida && (
+                                                <div className="mt-3 bg-white border border-red-200 rounded-lg overflow-hidden">
+                                                    <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-3 py-1.5 bg-red-50 text-[9px] font-bold text-red-400 uppercase">
+                                                        <span>Material</span><span className="text-right">Diferencia</span><span className="text-right">Quedó en</span><span className="text-right">Pérdida</span>
+                                                    </div>
+                                                    {grupo.filas.map((f, fi) => (
+                                                        <div key={fi} className="px-3 py-2 border-t border-red-100">
+                                                            <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center text-[11px]">
+                                                                <span className="font-medium text-slate-700">{f.material_nombre}</span>
+                                                                <span className={cn("text-right font-bold", f.cantidad_cambio < 0 ? "text-red-600" : "text-green-600")}>{f.cantidad_cambio > 0 ? '+' : ''}{f.cantidad_cambio}</span>
+                                                                <span className="text-right text-slate-500">{f.cantidad_resultante}</span>
+                                                                <span className="text-right text-red-600 font-medium">{f.cantidad_cambio < 0 ? formatCurrency(Math.abs(f.cantidad_cambio) * (preciosInventario[f.material_id] || 0)) : '—'}</span>
+                                                            </div>
+                                                            {f.motivo && <p className="text-[10px] text-slate-400 mt-1">Motivo: {String(f.motivo).replace('Cuadre de Inventario: ', '')}</p>}
+                                                        </div>
+                                                    ))}
+                                                </div>
+                                            )}
+                                        </div>
+                                    );
+                                }
+                                // RECEPCIÓN
                                 const materiales = grupo.filas.map(f => f.material_nombre).join(', ');
                                 return (
                                     <div key={grupo.id} className="p-4 bg-emerald-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
@@ -965,6 +1197,7 @@ const NotificationsPanel = ({
                                             <Info className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5"/>
                                             <div>
                                                 <p className="text-sm font-bold text-emerald-800">RECEPCIÓN: MATERIALES PENDIENTES DE COSTEO</p>
+                                                {sello}
                                                 <p className="text-xs text-slate-600 mt-0.5">Nuevos materiales ingresados por {grupo.usuario || 'Producción'} ({materiales})</p>
                                             </div>
                                         </div>
@@ -977,65 +1210,56 @@ const NotificationsPanel = ({
                                 );
                             })}
                         </div>
-                    </div>
-                )}
-
-                <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden h-full flex flex-col">
-                    <div className="bg-slate-50 p-4 border-b border-slate-200 flex justify-between items-center">
-                        <h3 className="font-bold text-slate-700 flex items-center gap-2">
-                            <FileText className="h-5 w-5 text-indigo-500"/> Bandeja de Trabajo ({user?.role})
-                        </h3>
-                        <span className="bg-indigo-100 text-indigo-800 text-xs font-bold px-3 py-1 rounded-full">{workItems.length} Tareas</span>
-                    </div>
-                    
-                    <div className="overflow-x-auto flex-1">
-                        <table className="w-full text-sm text-left">
-                            <thead className="bg-slate-100 text-slate-600 text-xs uppercase font-bold border-b border-slate-200">
-                                <tr>
-                                    <th className="px-4 py-3">Orden</th>
-                                    <th className="px-4 py-3">Cliente</th>
-                                    <th className="px-4 py-3">Detalle / Proyecto</th>
-                                    <th className="px-4 py-3 text-center">Estado</th>
-                                    <th className="px-4 py-3 text-center">Acción</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-slate-100">
-                                {workItems.length > 0 ? workItems.map(order => (
-                                    <tr key={order.id} className="hover:bg-indigo-50/30 transition-colors group">
-                                        <td className="px-4 py-3 font-mono font-bold text-slate-500 whitespace-nowrap">
-                                            #{String(order.orderNumber || order.order_number || order.id).padStart(7, '0')}
-                                        </td>
-                                        <td className="px-4 py-3 font-bold text-slate-800 max-w-[200px] truncate" title={order.cliente || order.cliente_nombre}>
-                                            {order.cliente || order.cliente_nombre}
-                                        </td>
-                                        <td className="px-4 py-3 text-slate-600 max-w-[250px] truncate" title={order.tipoLetrero || order.tipo_trabajo}>
-                                            {order.tipoLetrero || order.tipo_trabajo}
-                                        </td>
-                                        <td className="px-4 py-3 text-center whitespace-nowrap">
-                                            <span className="text-[10px] font-bold px-2 py-1 rounded border bg-slate-100 text-slate-700 border-slate-300">
-                                                {order.status}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3 text-center">
-                                            <Button size="sm" onClick={() => onViewOrder(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-8">
-                                                <ExternalLink className="h-3 w-3 mr-1" /> Abrir
-                                            </Button>
-                                        </td>
-                                    </tr>
-                                )) : (
+                    ) : (
+                        <div className="overflow-x-auto max-h-[75vh] overflow-y-auto">
+                            <table className="w-full text-sm text-left">
+                                <thead className="bg-slate-100 text-slate-600 text-xs uppercase font-bold border-b border-slate-200 sticky top-0">
                                     <tr>
-                                        <td colSpan="5" className="px-4 py-16 text-center text-slate-400">
-                                            <div className="flex flex-col items-center gap-2">
-                                                <CheckCircle2 className="h-10 w-10 text-green-400" />
-                                                <span className="text-lg font-medium text-slate-600">¡Bandeja Limpia!</span>
-                                                <span className="text-sm">No tienes órdenes pendientes en tu departamento.</span>
-                                            </div>
-                                        </td>
+                                        <th className="px-4 py-3">Orden</th>
+                                        <th className="px-4 py-3">Cliente</th>
+                                        <th className="px-4 py-3">Detalle / Proyecto</th>
+                                        <th className="px-4 py-3 text-center">Estado</th>
+                                        <th className="px-4 py-3 text-center">Acción</th>
                                     </tr>
-                                )}
-                            </tbody>
-                        </table>
-                    </div>
+                                </thead>
+                                <tbody className="divide-y divide-slate-100">
+                                    {workItems.length > 0 ? workItems.map(order => (
+                                        <tr key={order.id} className="hover:bg-indigo-50/30 transition-colors group">
+                                            <td className="px-4 py-3 font-mono font-bold text-slate-500 whitespace-nowrap">
+                                                #{String(order.orderNumber || order.order_number || order.id).padStart(7, '0')}
+                                            </td>
+                                            <td className="px-4 py-3 font-bold text-slate-800 max-w-[200px] truncate" title={order.cliente || order.cliente_nombre}>
+                                                {order.cliente || order.cliente_nombre}
+                                            </td>
+                                            <td className="px-4 py-3 text-slate-600 max-w-[250px] truncate" title={order.tipoLetrero || order.tipo_trabajo}>
+                                                {order.tipoLetrero || order.tipo_trabajo}
+                                            </td>
+                                            <td className="px-4 py-3 text-center whitespace-nowrap">
+                                                <span className="text-[10px] font-bold px-2 py-1 rounded border bg-slate-100 text-slate-700 border-slate-300">
+                                                    {order.status}
+                                                </span>
+                                            </td>
+                                            <td className="px-4 py-3 text-center">
+                                                <Button size="sm" onClick={() => onViewOrder(order)} className="bg-indigo-600 hover:bg-indigo-700 text-white text-xs h-8">
+                                                    <ExternalLink className="h-3 w-3 mr-1" /> Abrir
+                                                </Button>
+                                            </td>
+                                        </tr>
+                                    )) : (
+                                        <tr>
+                                            <td colSpan="5" className="px-4 py-16 text-center text-slate-400">
+                                                <div className="flex flex-col items-center gap-2">
+                                                    <CheckCircle2 className="h-10 w-10 text-green-400" />
+                                                    <span className="text-lg font-medium text-slate-600">¡Bandeja Limpia!</span>
+                                                    <span className="text-sm">No tienes órdenes pendientes en tu departamento.</span>
+                                                </div>
+                                            </td>
+                                        </tr>
+                                    )}
+                                </tbody>
+                            </table>
+                        </div>
+                    )}
                 </div>
             </div>
 

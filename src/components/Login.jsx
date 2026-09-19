@@ -35,6 +35,20 @@ const Login = ({ onLogin }) => {
 
       if (profileError) throw profileError;
 
+      // 🔧 CAMBIO 10: cuentas desactivadas (activo === false) no pueden entrar.
+      // Se usa para sacar del sistema al personal de Contabilidad (rol eliminado)
+      // sin borrar sus datos históricos.
+      if (profileData.activo === false) {
+        await supabase.auth.signOut();
+        toast({
+          title: "Cuenta desactivada",
+          description: "Esta cuenta ya no tiene acceso al sistema. Contacta al administrador.",
+          variant: "destructive"
+        });
+        setLoading(false);
+        return;
+      }
+
       onLogin({
         id: profileData.id,
         name: profileData.full_name || username,
