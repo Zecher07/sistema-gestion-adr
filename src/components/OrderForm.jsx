@@ -195,6 +195,10 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const isEffectivelyReadOnly = isAdmin ? false : isPastPaso1;
   const isEditMode = !!(initialData && initialData.id);
   const isBottomReadOnly = (isAdmin || isContabilidad) ? false : isEffectivelyReadOnly;
+  // 🔧 CAMBIO 10 (Fase 3): el Nº de factura lo edita Ventas en CUALQUIER paso; solo se
+  // bloquea cuando la orden ya está cerrada.
+  const isOrdenCerrada = ['ANULADA', 'ARCHIVADA', 'FINALIZADA'].includes(initialData?.status);
+  const isNroFacturaReadOnly = isOrdenCerrada;
 
   const canEditRetention = !isBottomReadOnly || (isVendedor && initialData?.status === 'VENTAS POR RETIRAR');
 
@@ -547,6 +551,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
 
   }, [formData.productos, formData.descuentoMonto, formData.aplicarIva, formData.preciosIncluyenIva, formData.anticipo, formData.ivaPercentage, formData.retentionPercent, applyRetention, paymentMode, abonos, formData.retencion, isEditMode]);
 
+  const nroFacturaObligatorio = !isNroFacturaReadOnly && Number(financials.iva) > 0 && !String(formData.nroFactura || '').trim();
   const totalAPagar = financials.total - formData.retencion;
   const porcentajeAnticipoUI = totalAPagar > 0 ? ((formData.anticipo / totalAPagar) * 100).toFixed(1) : '0.0';
   const porcentajeSaldoUI = totalAPagar > 0 ? ((Math.max(financials.saldoPendiente, 0) / totalAPagar) * 100).toFixed(1) : '0.0';
@@ -1814,7 +1819,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                        <Info className="h-5 w-5 text-indigo-600 mt-0.5 shrink-0" />
                                        <div>
                                            <p className="text-xs text-indigo-800 font-bold uppercase tracking-tight">Saldo a Crédito Aprobado</p>
-                                           <p className="text-[10px] text-indigo-600 leading-snug mt-0.5">El cliente puede retirar. Contabilidad gestionará la cobranza de este saldo luego.</p>
+                                           <p className="text-[10px] text-indigo-600 leading-snug mt-0.5">El cliente puede retirar. Ventas gestionará la cobranza de este saldo luego.</p>
                                        </div>
                                    </div>
                                 )}
@@ -1872,7 +1877,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         </span>
                         <span className="text-lg font-bold text-orange-800">${Number(formData.retencion).toFixed(2)}</span>
                     </div>
-                    <p className="text-xs text-orange-700 mb-3">La captura o documento de la retención debe ser adjuntada únicamente por el departamento de Contabilidad.</p>
+                    <p className="text-xs text-orange-700 mb-3">La captura o documento de la retención debe ser adjuntada por Ventas antes de finalizar la orden.</p>
                     
                     <InlineComprobanteEdit
                         type="retencion"
@@ -1880,8 +1885,8 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                         onAdd={handleAddComprobantes}
                         onRemove={handleRemoveComprobante}
                         isProcessing={isProcessingComprobantes}
-                        disabled={!isContabilidad && !isAdmin} 
-                        canRemove={isContabilidad || isAdmin}
+                        disabled={!isVendedor && !isAdmin && !isContabilidad} 
+                        canRemove={isVendedor || isAdmin || isContabilidad}
                         onClickImage={setPreviewImage} 
                     />
                 </div>
@@ -1892,17 +1897,20 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                      <h4 className="text-sm font-bold text-blue-900 uppercase flex items-center gap-2">
                          <FileText className="h-4 w-4"/> Número de Factura
                      </h4>
-                     <p className="text-xs text-blue-700 mt-0.5 leading-snug">Uso de Contabilidad para adjuntar la factura antes de finalizar.</p>
+                     <p className="text-xs text-blue-700 mt-0.5 leading-snug">Ventas registra el número de la factura antes de finalizar.</p>
+                     {nroFacturaObligatorio && (
+                         <p className="text-[11px] text-amber-700 font-bold mt-1 leading-snug">Obligatorio: esta orden lleva IVA, no se podrá finalizar sin el número de factura.</p>
+                     )}
                  </div>
                  <div className="w-full sm:w-1/2 relative">
                      <span className="absolute left-3 top-2.5 text-blue-400 font-bold">N°</span>
                      <input 
                          type="text" 
-                         className={`w-full pl-8 pr-3 py-2 border rounded-md text-sm font-bold focus:outline-none transition-colors ${isBottomReadOnly ? 'bg-slate-100 border-slate-300 text-slate-500 cursor-not-allowed' : 'bg-white border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 text-slate-800'}`}
+                         className={`w-full pl-8 pr-3 py-2 border rounded-md text-sm font-bold focus:outline-none transition-colors ${isNroFacturaReadOnly ? 'bg-slate-100 border-slate-300 text-slate-500 cursor-not-allowed' : nroFacturaObligatorio ? 'bg-amber-50 border-amber-400 focus:border-amber-500 focus:ring-2 focus:ring-amber-400 text-slate-800' : 'bg-white border-blue-300 focus:border-blue-500 focus:ring-2 focus:ring-blue-500 text-slate-800'}`}
                          placeholder="Ej: 001-002-0000123" 
                          value={formData.nroFactura || ''} 
                          onChange={e => setFormData({...formData, nroFactura: e.target.value})} 
-                         readOnly={isBottomReadOnly} 
+                         readOnly={isNroFacturaReadOnly} 
                      />
                  </div>
              </div>

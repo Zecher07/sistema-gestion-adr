@@ -13,8 +13,55 @@ import { getValidSellers, formatResponsableName, removeDuplicateUsers } from '@/
 import { isUserInList } from '@/utils/userMatch';
 import ClientExpedienteModal from './ClientExpedienteModal';
 
-const WORKFLOW_VPVC = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA'];
-const WORKFLOW_VC = ['VENTAS', 'CONTABILIDAD', 'FINALIZADA'];
+// 🔧 CAMBIO 10 (Fase 1+2): sin 'CONTABILIDAD'. 'VERIFICACIÓN' se inserta
+// dinámicamente antes de 'FINALIZADA' SOLO si la orden tuvo algún pago
+// no-efectivo. MISMA lógica y MISMAS claves de pago que en App.jsx y
+// NotificationsPanel.jsx — si se toca aquí, tocar también allá.
+const esPagoNoEfectivo = (metodo) => {
+    const m = String(metodo || '').toLowerCase();
+    return m.includes('transfer') || m.includes('depósito') || m.includes('deposito') || m.includes('cheque') || m.includes('tarjeta');
+};
+
+const ordenNecesitaVerificacion = (order) => {
+    if (!order) return false;
+    const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
+    if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) return true;
+    if (Array.isArray(order.abonos)) {
+        for (const a of order.abonos) {
+            if (Number(a.monto) > 0 && esPagoNoEfectivo(a.metodoPago || a.metodo_pago)) return true;
+        }
+    }
+    const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
+    const totalAbonos = (order.abonos || []).reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+    const retencion = Number(order.retencion || order.financials?.retencion || 0);
+    const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+    if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) return true;
+    return false;
+};
+
+const todosPagosVerificados = (order) => {
+    const verificados = order?.pagos_verificados || {};
+    const pAnticipo = order?.formaPagoAnticipo || order?.forma_pago_anticipo || '';
+    if (Number(order?.anticipo) > 0 && esPagoNoEfectivo(pAnticipo) && !verificados.anticipo) return false;
+    const abonos = Array.isArray(order?.abonos) ? order.abonos : [];
+    for (let i = 0; i < abonos.length; i++) {
+        const a = abonos[i];
+        if (Number(a.monto) > 0 && esPagoNoEfectivo(a.metodoPago || a.metodo_pago) && !verificados[`abono_${i}`]) return false;
+    }
+    const pSaldo = order?.formaPagoSaldo || order?.financials?.formaPagoSaldo || '';
+    const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+    const retencion = Number(order?.retencion || order?.financials?.retencion || 0);
+    const saldoFinal = (Number(order?.financials?.total) || 0) - (Number(order?.anticipo) || 0) - retencion - totalAbonos;
+    if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo) && !verificados.saldo) return false;
+    return true;
+};
+
+const getWorkflowForOrder = (order) => {
+    const tipo = String(order?.tipoOrden || order?.tipo_trabajo || order?.tipoLetrero || '').toUpperCase();
+    const isVC = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
+    const base = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
+    return ordenNecesitaVerificacion(order) ? [...base, 'VERIFICACIÓN', 'FINALIZADA'] : [...base, 'FINALIZADA'];
+};
 
 const getPrintDesc = (prod) => {
     const text = prod.descripcion || prod.nombre || '';
@@ -385,13 +432,12 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
   const isAdmin = user?.role === 'Administrador';
   const isVendedor = user?.role === 'Vendedor';
   const isProduccion = user?.role === 'Producción';
-  const isContabilidad = user?.role === 'Contabilidad';
   
   const canEditProductionStatus = isAdmin || isProduccion;
   const isCancelled = order?.status === 'ANULADA';
   const isArchived = order?.status === 'ARCHIVADA';
 
-  const canActuallyEdit = canEdit || isAdmin || (isContabilidad && order?.status === 'CONTABILIDAD');
+  const canActuallyEdit = canEdit || isAdmin;
 
   useEffect(() => {
     if (order) {
@@ -482,23 +528,32 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                     pAnticipo.includes('crédit') || pAnticipo.includes('credit');
 
   const isVCStatus = order?.tipoOrden && order.tipoOrden.includes('(VC)');
-  const isGoingToContabilidad = order?.status === 'VENTAS POR RETIRAR' || (order?.status === 'VENTAS' && isVCStatus);
+  // 🔧 CAMBIO 10: antes esto bloqueaba el paso "a Contabilidad" mientras hubiera
+  // saldo sin cobrar. Ahora bloquea el paso a FINALIZADA/VERIFICACIÓN: Ventas
+  // debe cobrar el saldo (o dejarlo a crédito) antes de cerrar la orden.
+  const isGoingToCierre = order?.status === 'VENTAS POR RETIRAR' || (order?.status === 'VENTAS' && isVCStatus);
 
-  const lockToContabilidad = isGoingToContabilidad && !isCredito && saldoCalculado > 0 && !isAdmin;
+  const lockCobroSaldo = isGoingToCierre && !isCredito && saldoCalculado > 0 && !isAdmin;
 
   const historialCredito = parsedFinancials.historialFechasCredito || [];
 
+  // 🔧 CAMBIO 10 (Fase 2): en 'VERIFICACIÓN' solo Admin puede avanzar (a
+  // FINALIZADA) — ya cubierto por el `if (isAdmin) return true;` de arriba, así
+  // que para cualquier otro rol el `default: return false` es correcto.
   const canAdvance = useMemo(() => {
       if (!order) return false;
       if (isAdmin) return true;
       switch (order.status) {
           case 'VENTAS': return user?.role === 'Vendedor';
           case 'PRODUCCION': return user?.role === 'Producción';
-          case 'VENTAS POR RETIRAR': return user?.role === 'Vendedor' || user?.role === 'Contabilidad';
-          case 'CONTABILIDAD': return user?.role === 'Contabilidad';
+          case 'VENTAS POR RETIRAR': return user?.role === 'Vendedor';
           default: return false;
       }
   }, [order, user, isAdmin]);
+
+  // 🔧 CAMBIO 10 (Fase 2): pagos no-efectivo de esta orden que todavía le
+  // faltan el check del Admin (para el botón "Aprobar y Finalizar").
+  const pagosPendientesDeVerificar = order?.status === 'VERIFICACIÓN' && !todosPagosVerificados(order);
 
   if (!order) return null; 
 
@@ -611,7 +666,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
       });
 
       // 4. Saldo / Retiro / Crédito
-      const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'ENTREGADO'].includes(order.status);
+      const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'VERIFICACIÓN', 'ENTREGADO'].includes(order.status);
       if (isRelevantStatus) {
           const total = Number(order.financials?.total) || 0;
           const anticipo = Number(order.anticipo) || 0;
@@ -677,22 +732,30 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
   const canArchive = isAdmin && isFinalizada;
   
   const getWorkflowButtonConfig = () => {
-     const isVC = order.tipoOrden && order.tipoOrden.includes('(VC)');
-     const workflow = isVC ? WORKFLOW_VC : WORKFLOW_VPVC;
+     const workflow = getWorkflowForOrder(order);
      const currentIndex = workflow.indexOf(order.status);
-     
+
      const prevStatus = currentIndex > 0 ? workflow[currentIndex - 1] : null;
-     
+
      if (currentIndex === -1 || currentIndex >= workflow.length - 1) return { text: 'Continuar flujo', helper: '', prevStatus };
 
      const nextStatus = workflow[currentIndex + 1];
      let text = `Pasar a ${nextStatus}`;
 
+     // 🔧 CAMBIO 10: Ventas cierra la orden directo (ya no pasa por Contabilidad).
+     // El destino (FINALIZADA o VERIFICACIÓN) lo decide getWorkflowForOrder según
+     // si hubo algún pago no-efectivo.
      switch (order.status) {
-         case 'VENTAS': text = nextStatus === 'PRODUCCION' ? "Pasar a Producción" : "Pasar a Contabilidad"; break;
+         case 'VENTAS':
+             text = nextStatus === 'PRODUCCION' ? "Pasar a Producción" : nextStatus === 'VERIFICACIÓN' ? "Enviar a Verificación de Pago" : "Finalizar orden";
+             break;
          case 'PRODUCCION': text = `Pasar a Por Retirar – ${localVendedor || 'Sin asignar'}`; break;
-         case 'VENTAS POR RETIRAR': if (nextStatus === 'CONTABILIDAD') text = "Pasar a Contabilidad"; break;
-         case 'CONTABILIDAD': if (nextStatus === 'FINALIZADA') text = "Finalizar orden"; break;
+         case 'VENTAS POR RETIRAR':
+             text = nextStatus === 'VERIFICACIÓN' ? "Enviar a Verificación de Pago" : "Finalizar orden";
+             break;
+         case 'VERIFICACIÓN':
+             text = "Aprobar y Finalizar";
+             break;
          default: break;
      }
      return { text, helper: `Siguiente paso: ${nextStatus}`, nextStatus, prevStatus };
@@ -706,7 +769,8 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
       case 'VENTAS': return 'bg-yellow-100 text-yellow-800 border-yellow-300';
       case 'PRODUCCION': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'VENTAS POR RETIRAR': return 'bg-purple-100 text-purple-800 border-purple-300';
-      case 'CONTABILIDAD': return 'bg-indigo-100 text-indigo-800 border-indigo-300';
+      case 'VERIFICACIÓN': return 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300';
+      case 'CONTABILIDAD': return 'bg-indigo-100 text-indigo-800 border-indigo-300'; // legado (órdenes viejas)
       case 'FINALIZADA': return 'bg-green-100 text-green-800 border-green-300';
       case 'ENTREGADO': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
       case 'ANULADA': return 'bg-red-100 text-red-800 border-red-300';
@@ -984,7 +1048,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                             <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                                             <div>
                                                 <span className="text-emerald-800 font-bold text-xs uppercase block">Verificación de Banco</span>
-                                                <span className="text-emerald-600 text-[10px]">Aprobado por Contabilidad</span>
+                                                <span className="text-emerald-600 text-[10px]">Verificado por Admin</span>
                                             </div>
                                         </div>
                                         <InlineComprobante items={comprobantesData.verificacion_anticipo} onClickImage={setPreviewImage} />
@@ -1025,7 +1089,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                             <span className="text-orange-800 font-bold text-sm">Retención Registrada</span>
                                             <span className="text-lg font-bold text-orange-800">{formatCurrency(retencion)}</span>
                                         </div>
-                                        <p className="text-[10px] text-orange-600 font-medium">Documento subido por Contabilidad</p>
+                                        <p className="text-[10px] text-orange-600 font-medium">Documento de verificación de pago</p>
                                     </div>
                                     <InlineComprobante items={comprobantesData.retencion} onClickImage={setPreviewImage} />
                                 </div>
@@ -1063,7 +1127,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                                             <CheckCircle2 className="h-5 w-5 text-emerald-600" />
                                                             <div>
                                                                 <span className="text-emerald-800 font-bold text-xs uppercase block">Verificación de Banco</span>
-                                                                <span className="text-emerald-600 text-[10px]">Aprobado por Contabilidad</span>
+                                                                <span className="text-emerald-600 text-[10px]">Verificado por Admin</span>
                                                             </div>
                                                         </div>
                                                         <InlineComprobante items={(comprobantesData.verificacion_abonos || {})[i]} onClickImage={setPreviewImage} />
@@ -1140,52 +1204,37 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                 <>
                                     {!canAdvance ? (
                                          <Button size="lg" className="bg-slate-300 cursor-not-allowed text-slate-500 font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Tu rol no tiene permisos para avanzar esta orden">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
-                                    ) : lockToContabilidad ? (
-                                         <Button size="lg" className="bg-amber-500 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Debes cobrar el saldo pendiente antes de pasar a Contabilidad">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
+                                    ) : lockCobroSaldo ? (
+                                         <Button size="lg" className="bg-amber-500 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Debes cobrar el saldo pendiente (o dejarlo a crédito) antes de finalizar la orden">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
                                     ) : order.status === 'PRODUCCION' && !allProductsFinished ? (
                                          <Button size="lg" className="bg-slate-400 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Debes finalizar todos los productos primero">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
+                                    ) : order.status === 'VERIFICACIÓN' && pagosPendientesDeVerificar ? (
+                                         <Button size="lg" className="bg-fuchsia-300 cursor-not-allowed text-fuchsia-900 font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Faltan pagos por verificar — márcalos en el Centro de Notificaciones">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
                                     ) : (
-                                         <Button 
+                                         <Button
                                            size="lg" disabled={isAdvancing}
                                            className="bg-green-600 hover:bg-green-700 text-white font-bold text-lg px-8 py-6 shadow-lg transition-all hover:scale-105 flex items-center gap-3 disabled:opacity-75 disabled:hover:scale-100 disabled:cursor-wait"
-                                           onClick={async () => { 
-                                               if (workflowConfig.nextStatus === 'FINALIZADA') {
+                                           onClick={async () => {
+                                               // 🔧 CAMBIO 10: al salir de VENTAS/VENTAS POR RETIRAR (hacia FINALIZADA
+                                               // directo o hacia VERIFICACIÓN) se exige comprobante del vendedor +
+                                               // retención. La verificación bancaria que hacía Contabilidad se quitó
+                                               // de aquí — ahora es el Admin quien la marca (Fase 2, Centro de
+                                               // Notificaciones) antes de que la orden pase de VERIFICACIÓN a FINALIZADA.
+                                               if (workflowConfig.nextStatus === 'FINALIZADA' || workflowConfig.nextStatus === 'VERIFICACIÓN') {
                                                    const pAnticipoTemp = (order.formaPagoAnticipo || order.forma_pago_anticipo || '').toLowerCase();
                                                    const pSaldoTemp = (order.formaPagoSaldo || fin.formaPagoSaldo || '').toLowerCase();
-                                                   
-                                                   const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque') || method.includes('tarjeta');
-                                                   
-                                                   if (anticipoVal > 0 && checkTransfer(pAnticipoTemp)) {
-                                                       if (!comprobantesData.verificacion_anticipo || comprobantesData.verificacion_anticipo.length === 0) {
-                                                           toast({title: "Verificación de Banco Requerida", description: "Contabilidad debe adjuntar la captura del banco para el Anticipo antes de finalizar la orden.", variant: "destructive"});
-                                                           setIsAdvancing(false);
-                                                           return;
-                                                       }
-                                                   }
 
-                                                   if (order.abonos && order.abonos.length > 0) {
-                                                       for (let i = 0; i < order.abonos.length; i++) {
-                                                           const a = order.abonos[i];
-                                                           const method = (a.metodoPago || a.metodo_pago || '').toLowerCase();
-                                                           if (a.monto > 0 && checkTransfer(method)) {
-                                                               if (!comprobantesData.verificacion_abonos || !comprobantesData.verificacion_abonos[i] || comprobantesData.verificacion_abonos[i].length === 0) {
-                                                                   toast({title: "Verificación de Banco Requerida", description: `Contabilidad debe adjuntar la captura del banco/tarjeta para el Abono #${i + 1} antes de finalizar.`, variant: "destructive"});
-                                                                   setIsAdvancing(false);
-                                                                   return;
-                                                               }
-                                                           }
-                                                       }
-                                                   }
+                                                   const checkTransfer = (method) => method.includes('transfer') || method.includes('depósito') || method.includes('deposito') || method.includes('cheque') || method.includes('tarjeta');
 
                                                    let isTransfer = checkTransfer(pAnticipoTemp) || checkTransfer(pSaldoTemp);
                                                    if (!isTransfer && order.abonos) {
                                                        isTransfer = order.abonos.some(a => checkTransfer(a.metodoPago || a.metodo_pago));
                                                    }
-                                                                                                     
+
                                                    if (isTransfer && (!comprobantesData.anticipo || comprobantesData.anticipo.length === 0) && (!comprobantesData.saldo || comprobantesData.saldo.length === 0) && Object.keys(comprobantesData.abonos || {}).length === 0) {
                                                        toast({title: "Comprobante del Vendedor Requerido", description: "El vendedor no subió fotos de transferencias, depósitos, cheques o tarjetas. Es necesario adjuntarlos.", variant: "destructive"});
                                                        setIsAdvancing(false);
-                                                       return; 
+                                                       return;
                                                    }
 
                                                    if (retencion > 0 && (!comprobantesData.retencion || comprobantesData.retencion.length === 0)) {
@@ -1195,8 +1244,16 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                                    }
                                                }
 
-                                               onClose(); 
-                                               await onAdvanceWorkflow(order); 
+                                               // 🔧 CAMBIO 10 (Fase 2): de VERIFICACIÓN a FINALIZADA — defensa extra por
+                                               // si el botón se habilitó con datos viejos.
+                                               if (order.status === 'VERIFICACIÓN' && workflowConfig.nextStatus === 'FINALIZADA' && !todosPagosVerificados(order)) {
+                                                   toast({title: "Verificación incompleta", description: "Faltan pagos por verificar en el Centro de Notificaciones.", variant: "destructive"});
+                                                   setIsAdvancing(false);
+                                                   return;
+                                               }
+
+                                               onClose();
+                                               await onAdvanceWorkflow(order);
                                            }}
                                          >
                                            {workflowConfig.text}
@@ -1204,7 +1261,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                          </Button>
                                     )}
                                     <span className="text-xs text-slate-500 font-medium px-2">
-                                        {!canAdvance ? '⚠️ Tu rol no permite avanzar esta etapa' : lockToContabilidad ? '⚠️ Debes registrar el cobro del saldo antes de enviar a Contabilidad' : (order.status === 'PRODUCCION' && !allProductsFinished ? '⚠️ Debes finalizar todos los productos en la tabla superior' : workflowConfig.helper)}
+                                        {!canAdvance ? '⚠️ Tu rol no permite avanzar esta etapa' : lockCobroSaldo ? '⚠️ Debes registrar el cobro del saldo (o dejarlo a crédito) antes de finalizar' : (order.status === 'PRODUCCION' && !allProductsFinished ? '⚠️ Debes finalizar todos los productos en la tabla superior' : (order.status === 'VERIFICACIÓN' && pagosPendientesDeVerificar ? '⚠️ Esperando que el Admin verifique los pagos (Centro de Notificaciones)' : workflowConfig.helper))}
                                     </span>
                                 </>
                             )}

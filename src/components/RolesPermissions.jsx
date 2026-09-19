@@ -21,9 +21,9 @@ const ALL_MENU_ITEMS = [
   { id: 'vales', label: 'Vales de Caja', category: 'Producción' }, // <-- DEVUELTO AQUÍ
   { id: 'ordenes-archivadas', label: 'Ver Archivo Muerto (Papelera)', category: 'Producción' },
   { id: 'facturacion-panel', label: 'Módulo de Facturación', category: 'Facturación' },
-  { id: 'contabilidad', label: 'Contabilidad (Menú Lateral)', category: 'Contabilidad y Finanzas' },
-  { id: 'contabilidad-cierre', label: 'Cierre Contable (Órdenes)', category: 'Contabilidad y Finanzas' },
-  { id: 'libro-diario-general', label: 'Libro Diario General de la Empresa', category: 'Contabilidad y Finanzas' },
+  // 🔧 CAMBIO 10: rol Contabilidad eliminado. Se quita 'contabilidad-cierre'.
+  { id: 'contabilidad', label: 'Finanzas (Menú Lateral)', category: 'Finanzas' },
+  { id: 'libro-diario-general', label: 'Libro Diario General de la Empresa', category: 'Finanzas' },
   { id: 'inventario', label: 'Inventario (Menú Lateral)', category: 'Inventario' },
   { id: 'inventario-ver', label: 'Ver Existencias de Inventario', category: 'Inventario' },
   { id: 'inventario-gestionar', label: 'Registrar Ingresos/Egresos Inventario', category: 'Inventario' },
@@ -41,7 +41,8 @@ const ALL_MENU_ITEMS = [
   { id: 'mi-perfil', label: 'Mi Perfil', category: 'General' },
 ];
 
-const ROLES = ['Administrador', 'Vendedor', 'Producción', 'Contabilidad'];
+// 🔧 CAMBIO 10: 'Contabilidad' eliminado.
+const ROLES = ['Administrador', 'Vendedor', 'Producción'];
 
 const ITEMS_BY_CATEGORY = ALL_MENU_ITEMS.reduce((acc, item) => {
   if (!acc[item.category]) acc[item.category] = [];
