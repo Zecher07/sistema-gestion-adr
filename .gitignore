@@ -6,3 +6,4 @@ node_modules/
 CLAUDE.md
 BACKLOG.md
 SNAPSHOT.md
+-e ".envarr\nschema.sql\nstorage_backup/\nbackup_storage.js\nrestore_storage.js" 
