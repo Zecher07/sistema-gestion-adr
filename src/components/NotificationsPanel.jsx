@@ -4,6 +4,21 @@ import { Button } from '@/components/ui/button';
 import { supabase } from '../supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
 import { cn } from '@/lib/utils';
+import { createPortal } from 'react-dom';
+
+// 🔧 Devuelve las fotos de comprobante de UN pago de una orden, para verlas directo desde
+// "Pagos por Verificar" sin abrir la orden. Clave: 'anticipo' | 'saldo' | 'abono_<i>'.
+// Cada foto: { url, name }. Misma estructura que ordenes.comprobantes.
+const comprobantesDePago = (cData, key) => {
+    if (!cData) return [];
+    let lista = [];
+    if (key === 'anticipo') lista = cData.anticipo;
+    else if (key === 'saldo') lista = cData.saldo;
+    else if (String(key).startsWith('abono_')) lista = (cData.abonos || {})[String(key).slice(6)];
+    return (Array.isArray(lista) ? lista : [])
+        .map(p => (typeof p === 'string' ? { url: p, name: '' } : p))
+        .filter(p => p && p.url);
+};
 
 // 🔧 CAMBIO 9: el aviso de "jornadas sin auditar" y toda la maquinaria de
 // "jornada pendiente de archivar" SOLO aplican desde esta fecha en adelante.
@@ -175,6 +190,9 @@ const NotificationsPanel = ({
   const [guardandoPago, setGuardandoPago] = useState(null); // `${orderId}:${key}` que se está guardando
   const [finalizandoOrden, setFinalizandoOrden] = useState(null); // id de la orden que se está finalizando
   const [ordenesFinalizadasLocal, setOrdenesFinalizadasLocal] = useState([]); // ids ya finalizados desde aquí
+  const [comprobantesVerif, setComprobantesVerif] = useState({}); // { [orderId]: comprobantes | null | 'error' }
+  const [comprobantePreview, setComprobantePreview] = useState(null); // url de la foto abierta en grande
+  const comprobantesPedidos = React.useRef(new Set()); // ids ya pedidos (evita repetir la consulta cada 5s)
 
   // 🔧 FIX: esta función se había perdido en una edición anterior — es la que
   // hace que las flechitas de navegar día a día realmente funcionen.
@@ -662,6 +680,32 @@ const NotificationsPanel = ({
           .sort((a, b) => new Date(b.updated_at || b.updatedAt || b.created_at || 0) - new Date(a.updated_at || a.updatedAt || a.created_at || 0));
   }, [orders, pagosVerifOverride, ordenesFinalizadasLocal]);
 
+  // Trae las fotos de comprobante SOLO de las órdenes en VERIFICACIÓN (son pocas), una vez por orden.
+  // 'orders' no trae la columna comprobantes (es pesada), por eso se pide aparte.
+  useEffect(() => {
+      if (!isAdmin || bandejaTab !== 'verificacion') return;
+      const faltantes = ordenesEnVerificacion.map(o => o.id).filter(id => !comprobantesPedidos.current.has(id));
+      if (faltantes.length === 0) return;
+      faltantes.forEach(id => comprobantesPedidos.current.add(id));
+      (async () => {
+          const nuevo = {};
+          try {
+              const { data, error } = await supabase.from('ordenes').select('id, comprobantes').in('id', faltantes);
+              if (error) throw error;
+              faltantes.forEach(id => { nuevo[id] = null; });
+              (data || []).forEach(r => {
+                  let cData = r.comprobantes;
+                  if (typeof cData === 'string') { try { cData = JSON.parse(cData); } catch (e) { cData = null; } }
+                  if (Array.isArray(cData)) cData = { anticipo: cData };
+                  nuevo[r.id] = cData || null;
+              });
+          } catch (e) {
+              faltantes.forEach(id => { nuevo[id] = 'error'; });
+          }
+          setComprobantesVerif(prev => ({ ...prev, ...nuevo }));
+      })();
+  }, [isAdmin, bandejaTab, ordenesEnVerificacion]);
+
   // Marca/desmarca un pago puntual de una orden y lo guarda al instante.
   const toggleVerificacionPago = async (order, key) => {
       const claveGuardando = `${order.id}:${key}`;
@@ -1038,6 +1082,7 @@ const NotificationsPanel = ({
                     </div>
 
                     {isAdmin && bandejaTab === 'verificacion' ? (
+                        <>
                         <div className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
                             {ordenesEnVerificacion.length === 0 ? (
                                 <div className="p-12 text-center text-slate-400">
@@ -1066,26 +1111,38 @@ const NotificationsPanel = ({
                                             {pagos.map(pago => {
                                                 const clave = `${order.id}:${pago.key}`;
                                                 const marcado = !!verificados[pago.key];
+                                                const cData = comprobantesVerif[order.id];
+                                                const fotos = comprobantesDePago(cData && cData !== 'error' ? cData : null, pago.key);
                                                 return (
-                                                    <button
-                                                        key={pago.key}
-                                                        type="button"
-                                                        onClick={() => toggleVerificacionPago(order, pago.key)}
-                                                        disabled={guardandoPago === clave}
-                                                        className={cn(
-                                                            "w-full flex items-center justify-between gap-2 px-3 py-2 border-t border-fuchsia-100 first:border-t-0 text-left transition-colors",
-                                                            marcado ? "bg-green-50" : "hover:bg-slate-50",
-                                                            guardandoPago === clave && "opacity-60 cursor-not-allowed"
-                                                        )}
-                                                    >
-                                                        <span className={cn("text-xs font-medium", marcado ? "text-green-700" : "text-slate-600")}>{pago.label}</span>
-                                                        <span className="flex items-center gap-2 shrink-0">
-                                                            <span className="text-xs font-bold text-slate-700">{formatCurrency(pago.monto)}</span>
-                                                            <span className={cn("h-4 w-4 rounded border flex items-center justify-center", marcado ? "bg-green-600 border-green-600" : "border-slate-300")}>
-                                                                {guardandoPago === clave ? <Loader2 className="h-3 w-3 animate-spin text-slate-400"/> : marcado && <CheckCircle2 className="h-3 w-3 text-white"/>}
+                                                    <div key={pago.key} className={cn("flex items-stretch border-t border-fuchsia-100 first:border-t-0 transition-colors", marcado ? "bg-green-50" : "hover:bg-slate-50")}>
+                                                        <button
+                                                            type="button"
+                                                            onClick={() => toggleVerificacionPago(order, pago.key)}
+                                                            disabled={guardandoPago === clave}
+                                                            className={cn("flex-1 flex items-center justify-between gap-2 px-3 py-2 text-left", guardandoPago === clave && "opacity-60 cursor-not-allowed")}
+                                                        >
+                                                            <span className={cn("text-xs font-medium", marcado ? "text-green-700" : "text-slate-600")}>{pago.label}</span>
+                                                            <span className="flex items-center gap-2 shrink-0">
+                                                                <span className="text-xs font-bold text-slate-700">{formatCurrency(pago.monto)}</span>
+                                                                <span className={cn("h-4 w-4 rounded border flex items-center justify-center", marcado ? "bg-green-600 border-green-600" : "border-slate-300")}>
+                                                                    {guardandoPago === clave ? <Loader2 className="h-3 w-3 animate-spin text-slate-400"/> : marcado && <CheckCircle2 className="h-3 w-3 text-white"/>}
+                                                                </span>
                                                             </span>
-                                                        </span>
-                                                    </button>
+                                                        </button>
+                                                        <div className="flex items-center gap-1.5 pl-2 pr-2 shrink-0 border-l border-fuchsia-100">
+                                                            {cData === undefined ? (
+                                                                <Loader2 className="h-3.5 w-3.5 animate-spin text-slate-300"/>
+                                                            ) : fotos.length > 0 ? (
+                                                                fotos.map((f, idx) => (
+                                                                    <button key={idx} type="button" onClick={() => setComprobantePreview(f.url)} title={`Ver comprobante${f.name ? ' — ' + f.name : ''}`} className="h-10 w-10 rounded border border-fuchsia-200 overflow-hidden bg-white hover:ring-2 hover:ring-fuchsia-400 transition">
+                                                                        <img src={f.url} alt="Comprobante" className="h-full w-full object-cover" loading="lazy" />
+                                                                    </button>
+                                                                ))
+                                                            ) : (
+                                                                <span className="text-[10px] font-bold text-red-500 whitespace-nowrap" title={cData === 'error' ? 'No se pudo cargar el comprobante' : 'El vendedor no adjuntó comprobante de este pago'}>{cData === 'error' ? 'No cargó' : 'Sin comprobante'}</span>
+                                                            )}
+                                                        </div>
+                                                    </div>
                                                 );
                                             })}
                                         </div>
@@ -1105,6 +1162,14 @@ const NotificationsPanel = ({
                                 );
                             })}
                         </div>
+                        {comprobantePreview && createPortal(
+                            <div className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center p-4" onClick={() => setComprobantePreview(null)}>
+                                <button type="button" className="absolute top-4 right-4 text-white p-2 bg-white/10 hover:bg-white/20 rounded-full" onClick={() => setComprobantePreview(null)} title="Cerrar"><X className="h-7 w-7" /></button>
+                                <img src={comprobantePreview} alt="Comprobante de pago" className="max-w-full max-h-[92vh] rounded shadow-2xl" onClick={(e) => e.stopPropagation()} />
+                            </div>,
+                            document.body
+                        )}
+                        </>
                     ) : isAdmin && bandejaTab === 'inventario' ? (
                         <div className="divide-y divide-slate-100 max-h-[75vh] overflow-y-auto">
                             {tareasInventario.length === 0 ? (

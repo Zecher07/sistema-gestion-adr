@@ -106,6 +106,7 @@ const WorkAreaList = ({
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR'; 
           if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
+              if (listFilter === 'por_finalizar' && order.status === 'VERIFICACIÓN') return true;
               if (order.status !== 'POR COBRAR') return false;
               const { status } = getOrderAccountingStatus(order);
               return status === listFilter;
@@ -114,13 +115,14 @@ const WorkAreaList = ({
       }
 
       if (user.role === 'Administrador') {
-          if (listFilter === 'todas') return ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR'].includes(order.status);
+          if (listFilter === 'todas') return ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR', 'VERIFICACIÓN'].includes(order.status);
           
           if (listFilter === 'ventas') return order.status === 'VENTAS';
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR';
 
           if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
+              if (listFilter === 'por_finalizar' && order.status === 'VERIFICACIÓN') return true;
               if (order.status !== 'POR COBRAR') return false;
               const { status } = getOrderAccountingStatus(order);
               return status === listFilter;
@@ -221,10 +223,11 @@ const WorkAreaList = ({
           if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return;
           
           if (user.role === 'Administrador') {
-              if (['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR'].includes(o.status)) counts.todas++;
+              if (['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR', 'VERIFICACIÓN'].includes(o.status)) counts.todas++;
               if (o.status === 'VENTAS') counts.ventas++;
               if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
+              if (o.status === 'VERIFICACIÓN') counts.por_finalizar++;
               if (o.status === 'POR COBRAR') {
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
@@ -238,6 +241,7 @@ const WorkAreaList = ({
               if (o.status === 'VENTAS') counts.ventas++;
               if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
+              if (o.status === 'VERIFICACIÓN') counts.por_finalizar++;
               if (o.status === 'POR COBRAR') {
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
@@ -417,7 +421,7 @@ const WorkAreaList = ({
                                </td>
                                <td className="px-6 py-3 text-xs font-bold">
                                    <div className="flex flex-col gap-1 items-start">
-                                       <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : order.status === 'POR COBRAR' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
+                                       <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : order.status === 'POR COBRAR' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VERIFICACIÓN' ? 'bg-fuchsia-50 text-fuchsia-700 border-fuchsia-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
                                            {order.status}
                                        </span>
                                        {order.status === 'POR COBRAR' && accData.saldoFinalReal > 0.01 && (

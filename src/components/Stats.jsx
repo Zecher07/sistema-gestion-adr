@@ -115,7 +115,9 @@ const Stats = ({ orders, user }) => {
   const ventasOrders = visibleOrders.filter(o => o.status === 'VENTAS');
   const produccionOrders = visibleOrders.filter(o => o.status === 'PRODUCCION');
   const retirarOrders = visibleOrders.filter(o => o.status === 'VENTAS POR RETIRAR');
-  const porCobrarOrders = visibleOrders.filter(o => o.status === 'POR COBRAR');
+  // "Por Cerrar" (antes "Contabilidad"): órdenes esperando el cierre — pagos en VERIFICACIÓN
+  // (los mismos de "Pagos por Verificar") y las de POR COBRAR que ya quedaron saldadas.
+  const porCerrarOrders = visibleOrders.filter(o => o.status === 'VERIFICACIÓN' || (o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isPorFinalizar));
 
   // 🔥 CRÉDITOS, RETENCIONES E IMPAGAS — ahora independientes entre sí 🔥
   const creditOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isCreditoActivo);
@@ -154,9 +156,9 @@ const Stats = ({ orders, user }) => {
       borderColor: 'border-green-100'
     },
     {
-      title: 'Por Cobrar',
-      value: porCobrarOrders.length,
-      breakdown: getBreakdown(porCobrarOrders),
+      title: 'Por Cerrar',
+      value: porCerrarOrders.length,
+      breakdown: getBreakdown(porCerrarOrders),
       icon: Calculator,
       color: 'bg-indigo-500',
       textColor: 'text-indigo-500',
