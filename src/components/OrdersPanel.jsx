@@ -22,7 +22,7 @@ import {
   AlertDialogTitle,
 } from "@/components/ui/alert-dialog";
 
-const FILTER_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'FINALIZADA', 'ANULADA', 'ARCHIVADA'];
+const FILTER_STATUSES = ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR', 'VERIFICACIÓN', 'FINALIZADA', 'ANULADA', 'ARCHIVADA'];
 
 const OrdersPanel = ({ 
   orders = [], 

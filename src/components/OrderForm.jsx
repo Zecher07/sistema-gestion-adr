@@ -200,7 +200,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
   const isOrdenCerrada = ['ANULADA', 'ARCHIVADA', 'FINALIZADA'].includes(initialData?.status);
   const isNroFacturaReadOnly = isOrdenCerrada;
 
-  const canEditRetention = !isBottomReadOnly || (isVendedor && initialData?.status === 'VENTAS POR RETIRAR');
+  const canEditRetention = !isBottomReadOnly || (isVendedor && (initialData?.status === 'VENTAS POR RETIRAR' || initialData?.status === 'POR COBRAR'));
 
   const [loading, setLoading] = useState(false);
   const [isProcessingImages, setIsProcessingImages] = useState(false);

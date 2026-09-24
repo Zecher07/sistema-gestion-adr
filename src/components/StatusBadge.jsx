@@ -4,7 +4,8 @@ const STATUS_STYLES = {
   'VENTAS': 'bg-blue-100 text-blue-700 border-blue-200',
   'PRODUCCION': 'bg-orange-100 text-orange-700 border-orange-200',
   'VENTAS POR RETIRAR': 'bg-purple-100 text-purple-700 border-purple-200',
-  'CONTABILIDAD': 'bg-indigo-100 text-indigo-700 border-indigo-200',
+  'POR COBRAR': 'bg-amber-100 text-amber-700 border-amber-200',
+  'VERIFICACIÓN': 'bg-fuchsia-100 text-fuchsia-700 border-fuchsia-200',
   'FINALIZADA': 'bg-green-100 text-green-700 border-green-200',
   'ANULADA': 'bg-red-100 text-red-700 border-red-200',
   'ARCHIVADA': 'bg-slate-200 text-slate-600 border-slate-300 italic'

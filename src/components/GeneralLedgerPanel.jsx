@@ -64,7 +64,7 @@ const GeneralLedgerPanel = ({ orders = [], staffUsers = [], user }) => {
           // creación (pensado para evitar "redundancia"), pero eso hacía que
           // desapareciera por completo cuando la orden se creaba y se retiraba el
           // mismo día. Ahora siempre aparece cuando corresponde, sin importar la fecha.
-          if (['FINALIZADA', 'VENTAS POR RETIRAR', 'CONTABILIDAD', 'ENTREGADO'].includes(o.status)) {
+          if (['FINALIZADA', 'VENTAS POR RETIRAR', 'POR COBRAR', 'VERIFICACIÓN', 'ENTREGADO'].includes(o.status)) {
               const fechaSaldo = toLocalDateStr(o.fecha_pago_saldo || o.updated_at || o.updatedAt);
               const saldoCobrado = (Number(o.financials?.total) || 0) - (Number(o.anticipo) || 0) - (Number(o.retencion) || 0);
               const totalAbonado = (o.abonos || []).reduce((acc, a) => acc + Number(a.monto), 0);

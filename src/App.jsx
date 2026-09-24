@@ -85,11 +85,28 @@ const todosPagosVerificados = (order) => {
     return true;
 };
 
+// 🔧 CAMBIO 10.1: estado 'POR COBRAR'. Una orden con saldo pendiente (crédito vigente,
+// crédito vencido = impaga, o sin cobrar) NO se puede finalizar: al cerrarla queda en
+// 'POR COBRAR' hasta que el saldo llegue a 0. MISMA lógica en App.jsx y OrderDetailsModal.jsx.
+const saldoPendienteOrden = (order) => {
+    if (!order) return 0;
+    let fin = order.financials || {};
+    if (typeof fin === 'string') { try { fin = JSON.parse(fin); } catch (e) { fin = {}; } }
+    const abonos = Array.isArray(order.abonos) ? order.abonos : [];
+    const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+    const retencion = Number(order.retencion || fin.retencion || 0);
+    return (Number(fin.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+};
+const ordenPorCobrar = (order) => saldoPendienteOrden(order) > 0.01;
+
 const getWorkflowForOrder = (order) => {
     const tipo = String(order?.tipoOrden || order?.tipo_trabajo || order?.tipoLetrero || '').toUpperCase();
     const isVC = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
-    const base = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
-    return ordenNecesitaVerificacion(order) ? [...base, 'VERIFICACIÓN', 'FINALIZADA'] : [...base, 'FINALIZADA'];
+    const pasos = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
+    if (order?.status === 'POR COBRAR' || ordenPorCobrar(order)) pasos.push('POR COBRAR');
+    if (ordenNecesitaVerificacion(order)) pasos.push('VERIFICACIÓN');
+    pasos.push('FINALIZADA');
+    return pasos;
 };
 
 // 🔧 FIX (bug reportado): Supabase/PostgREST corta cada `select()` en 1000 filas
@@ -575,6 +592,11 @@ function App() {
         // 🔧 CAMBIO 10 (Fase 2): de 'VERIFICACIÓN' a 'FINALIZADA' solo Admin, y
         // solo si ya están marcados los checks de CADA pago no-efectivo (se
         // marcan desde el Centro de Notificaciones).
+        // 🔧 CAMBIO 10.1: de 'POR COBRAR' solo se sale con el saldo en 0.
+        if (currentStatus === 'POR COBRAR' && ordenPorCobrar(order)) {
+            toast({ title: "Saldo pendiente", description: "Esta orden aún tiene saldo por cobrar. Registra el cobro antes de finalizarla.", variant: "destructive" });
+            return;
+        }
         if (currentStatus === 'VERIFICACIÓN') {
             if (user.role !== 'Administrador') {
                 toast({ title: "Acceso Denegado", description: "Solo un Administrador puede aprobar la Verificación de Pago.", variant: "destructive" });

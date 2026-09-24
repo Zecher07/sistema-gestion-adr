@@ -56,11 +56,28 @@ const todosPagosVerificados = (order) => {
     return true;
 };
 
+// 🔧 CAMBIO 10.1: estado 'POR COBRAR'. Una orden con saldo pendiente (crédito vigente,
+// crédito vencido = impaga, o sin cobrar) NO se puede finalizar: al cerrarla queda en
+// 'POR COBRAR' hasta que el saldo llegue a 0. MISMA lógica en App.jsx y OrderDetailsModal.jsx.
+const saldoPendienteOrden = (order) => {
+    if (!order) return 0;
+    let fin = order.financials || {};
+    if (typeof fin === 'string') { try { fin = JSON.parse(fin); } catch (e) { fin = {}; } }
+    const abonos = Array.isArray(order.abonos) ? order.abonos : [];
+    const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+    const retencion = Number(order.retencion || fin.retencion || 0);
+    return (Number(fin.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+};
+const ordenPorCobrar = (order) => saldoPendienteOrden(order) > 0.01;
+
 const getWorkflowForOrder = (order) => {
     const tipo = String(order?.tipoOrden || order?.tipo_trabajo || order?.tipoLetrero || '').toUpperCase();
     const isVC = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
-    const base = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
-    return ordenNecesitaVerificacion(order) ? [...base, 'VERIFICACIÓN', 'FINALIZADA'] : [...base, 'FINALIZADA'];
+    const pasos = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
+    if (order?.status === 'POR COBRAR' || ordenPorCobrar(order)) pasos.push('POR COBRAR');
+    if (ordenNecesitaVerificacion(order)) pasos.push('VERIFICACIÓN');
+    pasos.push('FINALIZADA');
+    return pasos;
 };
 
 const getPrintDesc = (prod) => {
@@ -535,6 +552,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
 
   const lockCobroSaldo = isGoingToCierre && !isCredito && saldoCalculado > 0 && !isAdmin;
 
+  // 🔧 CAMBIO 10.1: en 'POR COBRAR' no se puede finalizar (ni el Admin) mientras quede saldo.
+  const lockPorCobrar = order?.status === 'POR COBRAR' && saldoCalculado > 0.01;
+
   const historialCredito = parsedFinancials.historialFechasCredito || [];
 
   // 🔧 CAMBIO 10 (Fase 2): en 'VERIFICACIÓN' solo Admin puede avanzar (a
@@ -547,6 +567,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
           case 'VENTAS': return user?.role === 'Vendedor';
           case 'PRODUCCION': return user?.role === 'Producción';
           case 'VENTAS POR RETIRAR': return user?.role === 'Vendedor';
+          case 'POR COBRAR': return user?.role === 'Vendedor';
           default: return false;
       }
   }, [order, user, isAdmin]);
@@ -666,7 +687,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
       });
 
       // 4. Saldo / Retiro / Crédito
-      const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'VERIFICACIÓN', 'ENTREGADO'].includes(order.status);
+      const isRelevantStatus = ['FINALIZADA', 'VENTAS POR RETIRAR', 'POR COBRAR', 'VERIFICACIÓN', 'ENTREGADO'].includes(order.status);
       if (isRelevantStatus) {
           const total = Number(order.financials?.total) || 0;
           const anticipo = Number(order.anticipo) || 0;
@@ -747,10 +768,13 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
      // si hubo algún pago no-efectivo.
      switch (order.status) {
          case 'VENTAS':
-             text = nextStatus === 'PRODUCCION' ? "Pasar a Producción" : nextStatus === 'VERIFICACIÓN' ? "Enviar a Verificación de Pago" : "Finalizar orden";
+             text = nextStatus === 'PRODUCCION' ? "Pasar a Producción" : nextStatus === 'POR COBRAR' ? "Entregar y dejar Por Cobrar" : nextStatus === 'VERIFICACIÓN' ? "Enviar a Verificación de Pago" : "Finalizar orden";
              break;
          case 'PRODUCCION': text = `Pasar a Por Retirar – ${localVendedor || 'Sin asignar'}`; break;
          case 'VENTAS POR RETIRAR':
+             text = nextStatus === 'POR COBRAR' ? "Entregar y dejar Por Cobrar" : nextStatus === 'VERIFICACIÓN' ? "Enviar a Verificación de Pago" : "Finalizar orden";
+             break;
+         case 'POR COBRAR':
              text = nextStatus === 'VERIFICACIÓN' ? "Enviar a Verificación de Pago" : "Finalizar orden";
              break;
          case 'VERIFICACIÓN':
@@ -770,6 +794,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
       case 'PRODUCCION': return 'bg-blue-100 text-blue-800 border-blue-300';
       case 'VENTAS POR RETIRAR': return 'bg-purple-100 text-purple-800 border-purple-300';
       case 'VERIFICACIÓN': return 'bg-fuchsia-100 text-fuchsia-800 border-fuchsia-300';
+      case 'POR COBRAR': return 'bg-amber-100 text-amber-800 border-amber-300';
       case 'CONTABILIDAD': return 'bg-indigo-100 text-indigo-800 border-indigo-300'; // legado (órdenes viejas)
       case 'FINALIZADA': return 'bg-green-100 text-green-800 border-green-300';
       case 'ENTREGADO': return 'bg-emerald-100 text-emerald-800 border-emerald-300';
@@ -1206,6 +1231,8 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                          <Button size="lg" className="bg-slate-300 cursor-not-allowed text-slate-500 font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Tu rol no tiene permisos para avanzar esta orden">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
                                     ) : lockCobroSaldo ? (
                                          <Button size="lg" className="bg-amber-500 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Debes cobrar el saldo pendiente (o dejarlo a crédito) antes de finalizar la orden">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
+                                    ) : lockPorCobrar ? (
+                                         <Button size="lg" className="bg-amber-500 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Esta orden aún tiene saldo por cobrar. Registra el cobro (Abono) para poder finalizarla.">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
                                     ) : order.status === 'PRODUCCION' && !allProductsFinished ? (
                                          <Button size="lg" className="bg-slate-400 cursor-not-allowed text-white font-bold text-lg px-8 py-6 shadow-sm flex items-center gap-3" title="Debes finalizar todos los productos primero">{workflowConfig.text}<Ban className="h-6 w-6 opacity-50" /></Button>
                                     ) : order.status === 'VERIFICACIÓN' && pagosPendientesDeVerificar ? (
@@ -1261,7 +1288,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                          </Button>
                                     )}
                                     <span className="text-xs text-slate-500 font-medium px-2">
-                                        {!canAdvance ? '⚠️ Tu rol no permite avanzar esta etapa' : lockCobroSaldo ? '⚠️ Debes registrar el cobro del saldo (o dejarlo a crédito) antes de finalizar' : (order.status === 'PRODUCCION' && !allProductsFinished ? '⚠️ Debes finalizar todos los productos en la tabla superior' : (order.status === 'VERIFICACIÓN' && pagosPendientesDeVerificar ? '⚠️ Esperando que el Admin verifique los pagos (Centro de Notificaciones)' : workflowConfig.helper))}
+                                        {!canAdvance ? '⚠️ Tu rol no permite avanzar esta etapa' : lockCobroSaldo ? '⚠️ Debes registrar el cobro del saldo (o dejarlo a crédito) antes de finalizar' : lockPorCobrar ? `⚠️ Saldo por cobrar: ${formatCurrency(saldoCalculado)} — registra el cobro para poder finalizar` : (order.status === 'PRODUCCION' && !allProductsFinished ? '⚠️ Debes finalizar todos los productos en la tabla superior' : (order.status === 'VERIFICACIÓN' && pagosPendientesDeVerificar ? '⚠️ Esperando que el Admin verifique los pagos (Centro de Notificaciones)' : workflowConfig.helper))}
                                     </span>
                                 </>
                             )}

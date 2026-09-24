@@ -115,12 +115,12 @@ const Stats = ({ orders, user }) => {
   const ventasOrders = visibleOrders.filter(o => o.status === 'VENTAS');
   const produccionOrders = visibleOrders.filter(o => o.status === 'PRODUCCION');
   const retirarOrders = visibleOrders.filter(o => o.status === 'VENTAS POR RETIRAR');
-  const contabilidadOrders = visibleOrders.filter(o => o.status === 'CONTABILIDAD');
+  const porCobrarOrders = visibleOrders.filter(o => o.status === 'POR COBRAR');
 
   // 🔥 CRÉDITOS, RETENCIONES E IMPAGAS — ahora independientes entre sí 🔥
-  const creditOrders = visibleOrders.filter(o => o.status === 'CONTABILIDAD' && getOrderAccountingStatus(o).isCreditoActivo);
-  const retencionesOrders = visibleOrders.filter(o => o.status === 'CONTABILIDAD' && getOrderAccountingStatus(o).isRetencionPendiente);
-  const impagasOrders = visibleOrders.filter(o => o.status === 'CONTABILIDAD' && getOrderAccountingStatus(o).isImpaga);
+  const creditOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isCreditoActivo);
+  const retencionesOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isRetencionPendiente);
+  const impagasOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isImpaga);
 
   const cards = [
     {
@@ -154,9 +154,9 @@ const Stats = ({ orders, user }) => {
       borderColor: 'border-green-100'
     },
     {
-      title: 'Contabilidad',
-      value: contabilidadOrders.length,
-      breakdown: getBreakdown(contabilidadOrders),
+      title: 'Por Cobrar',
+      value: porCobrarOrders.length,
+      breakdown: getBreakdown(porCobrarOrders),
       icon: Calculator,
       color: 'bg-indigo-500',
       textColor: 'text-indigo-500',
