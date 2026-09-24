@@ -74,6 +74,10 @@ const getWorkflowForOrder = (order) => {
     const tipo = String(order?.tipoOrden || order?.tipo_trabajo || order?.tipoLetrero || '').toUpperCase();
     const isVC = tipo.includes('(VC)') || tipo === 'VC' || tipo === 'VENTA CORTA';
     const pasos = isVC ? ['VENTAS'] : ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR'];
+    // 🔧 RED DE SEGURIDAD: si la orden está en un estado de trabajo que su tipo NO incluye
+    // (ej. una venta corta en 'VENTAS POR RETIRAR', o un 'CONTABILIDAD' viejo), se agrega
+    // ese estado al flujo para que SIEMPRE tenga un siguiente paso y nunca quede trabada.
+    if (order?.status && !pasos.includes(order.status) && ['PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD'].includes(order.status)) pasos.push(order.status);
     if (order?.status === 'POR COBRAR' || ordenPorCobrar(order)) pasos.push('POR COBRAR');
     if (ordenNecesitaVerificacion(order)) pasos.push('VERIFICACIÓN');
     pasos.push('FINALIZADA');
@@ -568,6 +572,7 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
           case 'PRODUCCION': return user?.role === 'Producción';
           case 'VENTAS POR RETIRAR': return user?.role === 'Vendedor';
           case 'POR COBRAR': return user?.role === 'Vendedor';
+          case 'CONTABILIDAD': return user?.role === 'Vendedor';
           default: return false;
       }
   }, [order, user, isAdmin]);
