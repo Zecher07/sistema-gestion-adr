@@ -85,7 +85,7 @@ const WorkAreaList = ({
       }
       
       if (user.role === 'Contabilidad') {
-          if (order.status !== 'CONTABILIDAD') return false;
+          if (order.status !== 'POR COBRAR') return false;
           const { status } = getOrderAccountingStatus(order);
           if (listFilter === 'creditos') return status === 'creditos';
           if (listFilter === 'impagas') return status === 'impagas';
@@ -106,7 +106,7 @@ const WorkAreaList = ({
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR'; 
           if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
-              if (order.status !== 'CONTABILIDAD') return false;
+              if (order.status !== 'POR COBRAR') return false;
               const { status } = getOrderAccountingStatus(order);
               return status === listFilter;
           }
@@ -114,14 +114,14 @@ const WorkAreaList = ({
       }
 
       if (user.role === 'Administrador') {
-          if (listFilter === 'todas') return ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD'].includes(order.status);
+          if (listFilter === 'todas') return ['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR'].includes(order.status);
           
           if (listFilter === 'ventas') return order.status === 'VENTAS';
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR';
 
           if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
-              if (order.status !== 'CONTABILIDAD') return false;
+              if (order.status !== 'POR COBRAR') return false;
               const { status } = getOrderAccountingStatus(order);
               return status === listFilter;
           }
@@ -221,11 +221,11 @@ const WorkAreaList = ({
           if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return;
           
           if (user.role === 'Administrador') {
-              if (['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'CONTABILIDAD'].includes(o.status)) counts.todas++;
+              if (['VENTAS', 'PRODUCCION', 'VENTAS POR RETIRAR', 'POR COBRAR'].includes(o.status)) counts.todas++;
               if (o.status === 'VENTAS') counts.ventas++;
               if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
-              if (o.status === 'CONTABILIDAD') {
+              if (o.status === 'POR COBRAR') {
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
                   else if (status === 'impagas') counts.impagas++;
@@ -238,7 +238,7 @@ const WorkAreaList = ({
               if (o.status === 'VENTAS') counts.ventas++;
               if (o.status === 'PRODUCCION') counts.produccion++;
               if (o.status === 'VENTAS POR RETIRAR') counts.por_retirar++;
-              if (o.status === 'CONTABILIDAD') {
+              if (o.status === 'POR COBRAR') {
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
                   else if (status === 'impagas') counts.impagas++;
@@ -247,7 +247,7 @@ const WorkAreaList = ({
               }
           }
           
-          if (user.role === 'Contabilidad' && o.status === 'CONTABILIDAD') {
+          if (user.role === 'Contabilidad' && o.status === 'POR COBRAR') {
               const { status } = getOrderAccountingStatus(o);
               if (status === 'creditos') counts.creditos++;
               else if (status === 'impagas') counts.impagas++;
@@ -396,7 +396,7 @@ const WorkAreaList = ({
                         <th className="px-6 py-3 whitespace-nowrap">Fecha ENTREGA</th>
                         <th className="px-6 py-3 whitespace-nowrap">Cliente</th>
                         <th className="px-6 py-3 whitespace-nowrap">Titulo</th>
-                        {(user.role === 'Contabilidad' || user.role === 'Administrador') && <th className="px-6 py-3 whitespace-nowrap text-center">Acciones</th>}
+                        {(user.role === 'Vendedor' || user.role === 'Administrador') && <th className="px-6 py-3 whitespace-nowrap text-center">Acciones</th>}
                      </tr>
                   </thead>
                   <tbody className="divide-y divide-slate-100">
@@ -408,7 +408,7 @@ const WorkAreaList = ({
                           
                           const accData = getOrderAccountingStatus(order);
                           
-                          const showCobrarButton = order.status === 'CONTABILIDAD' && onAbonoOrder && (accData.saldoFinalReal > 0.01 || accData.isCredito || accData.isRetencionPendiente);
+                          const showCobrarButton = order.status === 'POR COBRAR' && onAbonoOrder && (accData.saldoFinalReal > 0.01 || accData.isCredito || accData.isRetencionPendiente);
 
                           return (
                             <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer bg-white" onClick={() => onViewOrder(order)}>
@@ -417,13 +417,16 @@ const WorkAreaList = ({
                                </td>
                                <td className="px-6 py-3 text-xs font-bold">
                                    <div className="flex flex-col gap-1 items-start">
-                                       <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
+                                       <span className={cn("px-2 py-1 rounded shadow-sm border", order.status === 'VENTAS' ? 'bg-blue-50 text-blue-700 border-blue-200' : order.status === 'PRODUCCION' ? 'bg-amber-50 text-amber-700 border-amber-200' : order.status === 'VENTAS POR RETIRAR' ? 'bg-green-50 text-green-700 border-green-200' : order.status === 'POR COBRAR' ? 'bg-amber-50 text-amber-700 border-amber-200' : 'bg-slate-50 text-slate-700 border-slate-200')}>
                                            {order.status}
                                        </span>
-                                       {order.status === 'CONTABILIDAD' && accData.isVencido && (
+                                       {order.status === 'POR COBRAR' && accData.saldoFinalReal > 0.01 && (
+                                           <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded shadow-sm">Saldo: ${accData.saldoFinalReal.toFixed(2)}</span>
+                                       )}
+                                       {order.status === 'POR COBRAR' && accData.isVencido && (
                                            <span className="text-[9px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded shadow-sm">Crédito Vencido</span>
                                        )}
-                                       {order.status === 'CONTABILIDAD' && accData.isRetencionPendiente && (
+                                       {order.status === 'POR COBRAR' && accData.isRetencionPendiente && (
                                            <span className="text-[9px] bg-orange-100 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded shadow-sm">Falta Retención</span>
                                        )}
                                    </div>
@@ -441,7 +444,7 @@ const WorkAreaList = ({
                                <td className="px-6 py-3 text-slate-800 uppercase text-xs font-semibold">{order.cliente || order.cliente_nombre}</td>
                                <td className="px-6 py-3 text-slate-600 uppercase text-xs">{order.tipoLetrero || order.tipo_trabajo}</td>
                                
-                               {(user.role === 'Contabilidad' || user.role === 'Administrador') && (
+                               {(user.role === 'Vendedor' || user.role === 'Administrador') && (
                                   <td className="px-6 py-3 text-center" onClick={(e) => e.stopPropagation()}>
                                       {showCobrarButton ? (
                                           <Button size="sm" onClick={() => onAbonoOrder(order)} className="bg-green-600 hover:bg-green-700 text-white flex items-center gap-1 shadow-sm mx-auto">
@@ -457,7 +460,7 @@ const WorkAreaList = ({
                         })
                      ) : (
                         <tr>
-                           <td colSpan={(user.role === 'Contabilidad' || user.role === 'Administrador') ? "7" : "6"} className="px-6 py-16 text-center text-slate-500 bg-white">
+                           <td colSpan={(user.role === 'Vendedor' || user.role === 'Administrador') ? "7" : "6"} className="px-6 py-16 text-center text-slate-500 bg-white">
                               <div className="flex flex-col items-center gap-2">
                                  <Search className="h-8 w-8 text-slate-300" />
                                  <span className="text-lg font-medium text-slate-600">Lista Limpia</span>
