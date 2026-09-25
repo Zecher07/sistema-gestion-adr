@@ -78,6 +78,9 @@ const getDescPartsForm = (textoCompleto) => {
 };
 
 const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user, initialData = null, nextProformaNumber, onCreateClient, onReloadClients }) => {
+  // 🔧 CLONAR: una copia llega como initialData SIN id — se prellena igual, pero al guardar debe
+  // CREAR una cotización nueva (no actualizar la original). Solo con id se considera "editar".
+  const isEditMode = !!(initialData && initialData.id);
   const { toast } = useToast();
   const [loading, setLoading] = useState(false);
   const [isLoadingImages, setIsLoadingImages] = useState(false);
@@ -597,16 +600,16 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
             anticipoPorc: financials.anticipoPorc, anticipoValor: financials.anticipoValor, saldoPorc: financials.saldoPorc, saldoValor: financials.saldoValor
         },
         aplicarIva: applyIva, preciosIncluyenIva: preciosIncluyenIva, // 🔧 SINCRONIZADO CON ORDERFORM
-        notas: notes, responsable_nombre: responsable, status: initialData ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
+        notas: notes, responsable_nombre: responsable, status: isEditMode ? initialData.status : 'BORRADOR', updated_at: new Date().toISOString(),
         imagenes: imagenesFinal
       };
 
-      if (!initialData) { payload.created_at = new Date().toISOString(); payload.creado_por = user.id; }
+      if (!isEditMode) { payload.created_at = new Date().toISOString(); payload.creado_por = user.id; }
 
       // 🔧 FIX: antes no se revisaba el error de Supabase, así que aunque el guardado
       // fallara, siempre mostraba "✅ Guardado" — por eso la proforma "desaparecía".
       let saveError;
-      if (initialData) {
+      if (isEditMode) {
           ({ error: saveError } = await supabase.from('proformas').update(payload).eq('id', initialData.id));
       } else {
           ({ error: saveError } = await supabase.from('proformas').insert([payload]));
@@ -623,7 +626,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
   return (
     <div className="flex flex-col h-full bg-slate-50 relative">
       <div className="bg-white px-6 py-4 border-b border-slate-200 flex justify-between items-center sticky top-0 z-10 shadow-sm">
-        <div><h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" />{initialData ? 'Editar Proforma' : 'Nueva Cotización'}</h2><p className="text-sm text-slate-500">{initialData ? `Editando #${getDisplayedProformaNumber()}` : `Consecutivo #${getDisplayedProformaNumber()}`}</p></div>
+        <div><h2 className="text-xl font-bold text-slate-800 flex items-center gap-2"><FileText className="h-6 w-6 text-blue-600" />{isEditMode ? 'Editar Proforma' : initialData ? 'Nueva Cotización (copia)' : 'Nueva Cotización'}</h2><p className="text-sm text-slate-500">{isEditMode ? `Editando #${getDisplayedProformaNumber()}` : initialData?.clonadaDe ? `Copia de la cotización #${initialData.clonadaDe} — se guardará como una nueva` : `Consecutivo #${getDisplayedProformaNumber()}`}</p></div>
         <Button variant="ghost" onClick={onCancel} className="hover:bg-slate-100 rounded-full h-10 w-10 p-0"><X className="h-6 w-6 text-slate-500" /></Button>
       </div>
 
@@ -739,7 +742,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                                           className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[60px]" 
                                           placeholder={idx === products.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
                                           value={cleanDescription} 
-                                          onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
+                                          onChange={(e) => { setEditingProductRow(idx); handleProductSearchRequest(idx, e.target.value); }}
                                           onFocus={() => { if(cleanDescription && cleanDescription.length >= 2) handleProductSearchRequest(idx, cleanDescription); }}
                                           onBlur={() => setTimeout(() => { setActiveProductSearchRow(null); setEditingProductRow(null); }, 350)}
                                       />
@@ -970,7 +973,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
 
       <div className="bg-white border-t border-slate-200 p-4 flex justify-end gap-3 sticky bottom-0 z-20">
         <Button variant="outline" onClick={onCancel} disabled={loading}>Cancelar</Button>
-        <Button onClick={handleSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[160px]">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} {initialData ? 'Actualizar' : 'Guardar Cotización'}</Button>
+        <Button onClick={handleSubmit} disabled={loading} className="bg-blue-600 hover:bg-blue-700 text-white min-w-[160px]">{loading ? <Loader2 className="h-4 w-4 animate-spin mr-2" /> : <Save className="h-4 w-4 mr-2" />} {isEditMode ? 'Actualizar' : 'Guardar Cotización'}</Button>
       </div>
 
       {/* 🔥 MODAL LATERAL DE CATÁLOGO 🔥 */}

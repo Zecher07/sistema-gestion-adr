@@ -665,7 +665,7 @@ function App() {
     if (currentView === 'admin-usuarios') return <UserManagement />;
     if (currentView === 'roles-permisos') return <RolesPermissions />;
     if (currentView === 'facturacion-panel') return <InvoicesPanel invoices={invoices} onViewInvoice={setViewInvoice} onAnulateInvoice={handleAnulateInvoice}/>;
-    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
+    if (currentView === 'proformas') return <ProformasPanel proformas={proformas} clients={clients} user={user} onCreateNew={() => setShowProformaForm(true)} onViewProforma={setViewProforma} onEditProforma={setEditingProforma} onCloneProforma={setEditingProforma} onDeleteProforma={handleDeleteProforma} />;
     if (currentView === 'estadisticas-reporte') return <DailyReport orders={orders} user={user} onViewOrder={(o) => handleViewOrder(o, 'report')} onDataChanged={() => fetchAllData(user)} />;
     if (currentView === 'libro-diario-general') return <GeneralLedgerPanel orders={orders} user={user} />;
     if (currentView === 'mi-perfil') return <MyProfile user={user} />;

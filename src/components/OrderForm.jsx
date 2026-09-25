@@ -1363,7 +1363,7 @@ const OrderForm = ({ currentUser, clients = [], staffUsers = [], orders = [], on
                                             className="w-full border border-slate-200 rounded p-2 text-sm outline-none focus:border-blue-500 resize-y min-h-[40px]" 
                                             placeholder={idx === formData.productos.length - 1 ? "Buscar catálogo o añadir manual..." : ""} 
                                             value={cleanDescription} 
-                                            onChange={(e) => handleProductSearchRequest(idx, e.target.value)}
+                                            onChange={(e) => { setEditingProductRow(idx); handleProductSearchRequest(idx, e.target.value); }}
                                             onFocus={() => { if(cleanDescription && cleanDescription.length >= 2) handleProductSearchRequest(idx, cleanDescription); }}
                                             onBlur={() => setTimeout(() => { setActiveProductSearchRow(null); setEditingProductRow(null); }, 350)}
                                             readOnly={isEffectivelyReadOnly}

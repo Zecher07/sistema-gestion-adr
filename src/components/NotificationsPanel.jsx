@@ -777,48 +777,6 @@ const NotificationsPanel = ({
                     Tienes <strong className="text-blue-600">{totalCount}</strong> asuntos pendientes que requieren tu atención.
                 </p>
             </div>
-            {/* 🔧 NUEVO: navegación de la jornada (flechas + calendario), estado del
-                día, y el botón de finalizar/archivar — todo sobre UNA sola fecha. */}
-            {isAdmin && (
-                <div className="flex items-center gap-2 flex-wrap justify-end">
-                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1 py-1">
-                        <button onClick={() => cambiarDia(-1)} className="p-1.5 hover:bg-slate-200 rounded"><ChevronLeft className="h-4 w-4 text-slate-500"/></button>
-                        <MiniCalendario fecha={fechaMaestra} onChange={setFechaMaestra} tieneDatos={(d) => diasConAlgunDato.has(d)} colorPunto="bg-purple-500" colorBoton="indigo" />
-                        <button onClick={() => cambiarDia(1)} disabled={fechaMaestra >= hoyStr} className="p-1.5 hover:bg-slate-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"><ChevronRight className="h-4 w-4 text-slate-500"/></button>
-                    </div>
-                    <span className={cn("text-xs font-bold px-3 py-2 rounded-lg uppercase", diaEstaArchivado ? "bg-green-100 text-green-700" : fechaMaestra === hoyStr ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700")}>
-                        {diaEstaArchivado ? 'Jornada Archivada' : fechaMaestra === hoyStr ? 'Hoy - En Curso' : 'Pendiente'}
-                    </span>
-                    {diaEstaArchivado ? (
-                        <Button
-                            onClick={handleReabrirJornada}
-                            disabled={cerrandoDia}
-                            variant="outline"
-                            className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50"
-                        >
-                            {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <ChevronLeft className="h-4 w-4"/>}
-                            Reabrir Jornada
-                        </Button>
-                    ) : (
-                        <div className="flex flex-col items-end gap-1">
-                            <Button
-                                onClick={handleFinalizarJornada}
-                                disabled={cerrandoDia || !estadoArchivo.listo}
-                                title={estadoArchivo.listo ? 'Archivar esta jornada' : 'Faltan pasos para archivar:\n• ' + estadoArchivo.faltantes.join('\n• ')}
-                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
-                            >
-                                {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle2 className="h-4 w-4"/>}
-                                Archivar Jornada
-                            </Button>
-                            {!estadoArchivo.listo && estadoArchivo.faltantes.length > 0 && (
-                                <span className="text-[10px] text-slate-400 max-w-[260px] text-right leading-tight">
-                                    Faltan {estadoArchivo.faltantes.length} paso(s): {estadoArchivo.faltantes[0]}
-                                </span>
-                            )}
-                        </div>
-                    )}
-                </div>
-            )}
         </div>
 
         {/* 🔧 NUEVO: aviso si hay jornadas anteriores sin auditar — hay que revisar
@@ -842,6 +800,48 @@ const NotificationsPanel = ({
             {/* COLUMNA IZQUIERDA: ALERTAS Y VALES */}
             <div className="xl:col-span-1 space-y-6">
                 
+            {/* 🔧 NUEVO: navegación de la jornada (flechas + calendario), estado del
+                día, y el botón de finalizar/archivar — todo sobre UNA sola fecha. */}
+            {isAdmin && (
+                <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-3 flex items-center gap-2 flex-wrap">
+                    <div className="flex items-center gap-1 bg-slate-50 border border-slate-200 rounded-lg px-1 py-1">
+                        <button onClick={() => cambiarDia(-1)} className="p-1.5 hover:bg-slate-200 rounded"><ChevronLeft className="h-4 w-4 text-slate-500"/></button>
+                        <MiniCalendario fecha={fechaMaestra} onChange={setFechaMaestra} tieneDatos={(d) => diasConAlgunDato.has(d)} colorPunto="bg-purple-500" colorBoton="indigo" />
+                        <button onClick={() => cambiarDia(1)} disabled={fechaMaestra >= hoyStr} className="p-1.5 hover:bg-slate-200 rounded disabled:opacity-30 disabled:hover:bg-transparent"><ChevronRight className="h-4 w-4 text-slate-500"/></button>
+                    </div>
+                    <span className={cn("text-xs font-bold px-3 py-2 rounded-lg uppercase", diaEstaArchivado ? "bg-green-100 text-green-700" : fechaMaestra === hoyStr ? "bg-blue-100 text-blue-700" : "bg-yellow-100 text-yellow-700")}>
+                        {diaEstaArchivado ? 'Jornada Archivada' : fechaMaestra === hoyStr ? 'Hoy - En Curso' : 'Pendiente'}
+                    </span>
+                    {diaEstaArchivado ? (
+                        <Button
+                            onClick={handleReabrirJornada}
+                            disabled={cerrandoDia}
+                            variant="outline"
+                            className="gap-2 border-amber-300 text-amber-700 hover:bg-amber-50"
+                        >
+                            {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <ChevronLeft className="h-4 w-4"/>}
+                            Reabrir Jornada
+                        </Button>
+                    ) : (
+                        <div className="flex flex-col items-start gap-1">
+                            <Button
+                                onClick={handleFinalizarJornada}
+                                disabled={cerrandoDia || !estadoArchivo.listo}
+                                title={estadoArchivo.listo ? 'Archivar esta jornada' : 'Faltan pasos para archivar:\n• ' + estadoArchivo.faltantes.join('\n• ')}
+                                className="bg-indigo-600 hover:bg-indigo-700 text-white gap-2 disabled:opacity-40 disabled:cursor-not-allowed"
+                            >
+                                {cerrandoDia ? <Loader2 className="h-4 w-4 animate-spin"/> : <CheckCircle2 className="h-4 w-4"/>}
+                                Archivar Jornada
+                            </Button>
+                            {!estadoArchivo.listo && estadoArchivo.faltantes.length > 0 && (
+                                <span className="text-[10px] text-slate-400 max-w-[260px] text-left leading-tight">
+                                    Faltan {estadoArchivo.faltantes.length} paso(s): {estadoArchivo.faltantes[0]}
+                                </span>
+                            )}
+                        </div>
+                    )}
+                </div>
+            )}
                 {/* CONTROL Y CIERRE CONTABLE (solo Admin) — antes era "Alertas Recientes" */}
                 {isAdmin ? (
                     <div className="bg-white rounded-xl shadow-sm border border-slate-200 overflow-hidden">
@@ -864,7 +864,7 @@ const NotificationsPanel = ({
                                 const comprobanteActual = comprobanteGeneral || reporteDelDiaActual?.comprobante_general;
                                 return (
                                     <div className="text-xs space-y-3">
-                                        <div className="grid grid-cols-3 gap-2">
+                                        <div className="grid grid-cols-2 gap-2">
                                             <div className="bg-green-50 border border-green-200 rounded p-2">
                                                 <div className="flex items-center gap-1 text-green-700 text-[9px] font-bold uppercase"><DollarSign className="h-3 w-3"/> Efectivo</div>
                                                 <p className="text-sm font-black text-green-700">${resumen.totals.cash.toFixed(2)}</p>
@@ -872,10 +872,6 @@ const NotificationsPanel = ({
                                             <div className="bg-blue-50 border border-blue-200 rounded p-2">
                                                 <div className="flex items-center gap-1 text-blue-700 text-[9px] font-bold uppercase"><Landmark className="h-3 w-3"/> Transf.</div>
                                                 <p className="text-sm font-black text-blue-700">${resumen.totals.transfers.toFixed(2)}</p>
-                                            </div>
-                                            <div className={cn("border rounded p-2", resumen.totals.verifiedCount === resumen.totals.totalSellers && resumen.totals.totalSellers > 0 ? "bg-emerald-50 border-emerald-200" : "bg-slate-100 border-slate-200")}>
-                                                <div className="flex items-center gap-1 text-slate-700 text-[9px] font-bold uppercase"><CheckCircle2 className="h-3 w-3"/> Cajas</div>
-                                                <p className="text-sm font-black text-slate-700">{resumen.totals.verifiedCount}/{resumen.totals.totalSellers}</p>
                                             </div>
                                         </div>
 
@@ -917,15 +913,14 @@ const NotificationsPanel = ({
 
                                         {resumen.sellersData.length > 0 ? (
                                             <div className="bg-white border border-slate-200 rounded overflow-hidden">
-                                                <div className="grid grid-cols-[1fr_auto_auto_auto] gap-2 px-2 py-1 bg-slate-50 text-[9px] font-bold text-slate-400 uppercase">
-                                                    <span>Usuario</span><span>Efectivo</span><span>Transf.</span><span>Estado</span>
+                                                <div className="grid grid-cols-[1fr_auto_auto] gap-2 px-2 py-1 bg-slate-50 text-[9px] font-bold text-slate-400 uppercase">
+                                                    <span>Usuario</span><span>Efectivo</span><span>Transf.</span>
                                                 </div>
                                                 {resumen.sellersData.map((s, i) => (
-                                                    <div key={i} className="grid grid-cols-[1fr_auto_auto_auto] gap-2 items-center px-2 py-1.5 border-t border-slate-100">
+                                                    <div key={i} className="grid grid-cols-[1fr_auto_auto] gap-2 items-center px-2 py-1.5 border-t border-slate-100">
                                                         <span className="font-medium text-slate-700 truncate">{s.name}</span>
                                                         <span className="text-slate-500 text-right">${s.expectedCash.toFixed(2)}</span>
                                                         <span className="text-slate-500 text-right">${s.expectedTransfers.toFixed(2)}</span>
-                                                        <span className={cn("px-1.5 py-0.5 rounded text-[9px] font-bold text-center", s.verification.status === 'VERIFICADO' ? "bg-green-100 text-green-700" : "bg-yellow-100 text-yellow-700")}>{s.verification.status}</span>
                                                     </div>
                                                 ))}
                                             </div>

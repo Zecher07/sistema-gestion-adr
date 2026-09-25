@@ -2,7 +2,7 @@ import React, { useState, useMemo, useEffect } from 'react';
 import { 
   Eye, Edit, Trash2, Plus, Printer, FileSpreadsheet,
   ChevronLeft, ChevronRight, RotateCcw, Calendar as CalendarIcon,
-  ArrowUpDown, FileCheck
+  ArrowUpDown, FileCheck, Copy
 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { useToast } from '@/components/ui/use-toast';
@@ -26,6 +26,7 @@ const ProformasPanel = ({
   onCreateNew,
   onViewProforma,
   onEditProforma,
+  onCloneProforma,
   onDeleteProforma,
   onChangeStatus,
   onConvertToOrder,
@@ -189,6 +190,23 @@ const ProformasPanel = ({
   const canDelete = (proforma) => proforma.status === 'BORRADOR' && (user.role === 'Administrador' || user.role === 'Vendedor');
   const canConvert = (proforma) => proforma.status === 'BORRADOR';
 
+  // 🔧 NUEVO: clonar una cotización. Se abre el formulario con los mismos datos pero como
+  // cotización NUEVA (sin id ni consecutivo, en BORRADOR, con el usuario actual como responsable).
+  const handleCloneClick = (proforma) => {
+    onCloneProforma({
+      ...proforma,
+      id: null,
+      numero: null,
+      proformaNumber: null,
+      created_at: null,
+      createdAt: null,
+      updated_at: null,
+      status: 'BORRADOR',
+      responsable_nombre: user?.name || proforma.responsable_nombre,
+      clonadaDe: formatProformaId(proforma),
+    });
+  };
+
   return (
     <div className="space-y-4 animate-in fade-in print:hidden">
       {/* Toolbar */}
@@ -328,6 +346,11 @@ const ProformasPanel = ({
                         >
                           <Eye className="h-4 w-4" />
                         </a>
+                        {onCloneProforma && (
+                          <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-purple-600" onClick={() => handleCloneClick(proforma)} title="Clonar cotización">
+                            <Copy className="h-4 w-4" />
+                          </Button>
+                        )}
                         {canEdit(proforma) && (
                           <Button variant="ghost" size="icon" className="h-8 w-8 text-slate-500 hover:text-orange-600" onClick={() => onEditProforma(proforma)}>
                             <Edit className="h-4 w-4" />

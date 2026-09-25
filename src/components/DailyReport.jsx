@@ -749,7 +749,7 @@ const DailyReport = ({ orders = [], user, onViewOrder, onDataChanged }) => {
                                 <div className="text-3xl font-black text-slate-800">${totals.cashInHand.toFixed(2)}</div>
                             </div>
                             <div className="flex-1 border-r-2 border-slate-900 bg-yellow-50 p-4 flex flex-col justify-center items-center print:bg-yellow-50 print:print-color-adjust-exact">
-                                <span className="font-bold text-xs uppercase text-slate-700 mb-2">ENTREGAR A CONTABILIDAD</span>
+                                <span className="font-bold text-xs uppercase text-slate-700 mb-2">ENTREGAR (DEPÓSITO)</span>
                                 <div className="flex items-center justify-center gap-2 w-full max-w-[200px] border-b-2 border-slate-800 pb-1">
                                     <span className="font-bold text-2xl text-slate-700">$</span>
                                     <input type="number" step="0.01" className="w-full font-bold text-3xl text-center outline-none bg-transparent text-slate-900 placeholder:text-slate-300" placeholder="0" value={ledgerData.amountToAccounting} onChange={(e) => updateField('amountToAccounting', e.target.value)} disabled={!isEditable} />

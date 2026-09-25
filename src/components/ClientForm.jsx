@@ -14,6 +14,10 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
   // 🔥 VALIDACIÓN DE ROL PARA CRÉDITO Y TARIFA MAYORISTA 🔥
   const canEditCredit = user?.role === 'Administrador' || user?.role === 'Contabilidad';
   const isAdmin = user?.role === 'Administrador';
+  // Las opciones "Sin RUC/Cédula" y "Sin Teléfono" ya NO existen para clientes NUEVOS (RUC/cédula y
+  // teléfono son obligatorios). Solo se conservan al EDITAR un cliente viejo que no los tenía, para
+  // no obligar a inventar un dato cada vez que se le cambia otra cosa (ej. el cupo de crédito).
+  const esEdicion = !!(clienteAEditar && clienteAEditar.id);
 
   const [formData, setFormData] = useState({
     razonSocial: '',
@@ -41,10 +45,10 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
         email: EMAIL_DE_RELLENO === emailViejo.toLowerCase() ? '' : emailViejo,
         sinEmail: !emailViejo || EMAIL_DE_RELLENO === emailViejo.toLowerCase(),
         cedulaRuc: RUCS_DE_RELLENO.includes(rucViejo) ? '' : rucViejo,
-        sinRuc: !rucViejo || RUCS_DE_RELLENO.includes(rucViejo),
+        sinRuc: esEdicion && (!rucViejo || RUCS_DE_RELLENO.includes(rucViejo)),
         direccion: clienteAEditar.direccion || '',
         celular: clienteAEditar.telefono || '',
-        sinCelular: !clienteAEditar.telefono,
+        sinCelular: esEdicion && !clienteAEditar.telefono,
         permiteCredito: clienteAEditar.permiteCredito || false,
         limiteCredito: clienteAEditar.limiteCredito || 0,
         esMayorista: clienteAEditar.es_mayorista || false // Rescatar estado de la BD
@@ -197,10 +201,12 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
                     <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                       <FileText className="h-4 w-4 text-slate-400" /> Cédula o RUC
                     </label>
+                    {esEdicion && (
                     <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
                         <input type="checkbox" name="sinRuc" checked={formData.sinRuc} onChange={(e) => setFormData(prev => ({ ...prev, sinRuc: e.target.checked, cedulaRuc: e.target.checked ? '' : prev.cedulaRuc }))} className="h-3.5 w-3.5" />
                         Sin RUC/Cédula
                     </label>
+                    )}
                 </div>
                 <input required={!formData.sinRuc} disabled={formData.sinRuc} name="cedulaRuc" value={formData.cedulaRuc} onChange={handleChange} maxLength={13} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400" placeholder="Ej: 0991234567001" />
               </div>
@@ -210,10 +216,12 @@ const ClientForm = ({ onCancel, clienteAEditar = null, onSuccess, user }) => {
                     <label className="text-sm font-semibold text-slate-700 flex items-center gap-2">
                       <Phone className="h-4 w-4 text-slate-400" /> Celular / Teléfono
                     </label>
+                    {esEdicion && (
                     <label className="flex items-center gap-1.5 text-xs text-slate-500 cursor-pointer select-none">
                         <input type="checkbox" name="sinCelular" checked={formData.sinCelular} onChange={(e) => setFormData(prev => ({ ...prev, sinCelular: e.target.checked, celular: e.target.checked ? '' : prev.celular }))} className="h-3.5 w-3.5" />
                         Sin Teléfono
                     </label>
+                    )}
                 </div>
                 <input required={!formData.sinCelular} disabled={formData.sinCelular} name="celular" value={formData.celular} onChange={handleChange} maxLength={10} className="w-full px-3 py-2 border border-slate-300 rounded-md focus:ring-2 focus:ring-blue-500 outline-none disabled:bg-slate-100 disabled:text-slate-400" placeholder="Ej: 0991234567" />
               </div>

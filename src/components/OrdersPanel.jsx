@@ -152,8 +152,28 @@ const OrdersPanel = ({
           creditoVenceSaldo: '',
           notaSaldo: '',
           descuentoMonto: 0,
+          // 🔧 FIX: la copia debe nacer SIN producción hecha. Antes arrastraba estado_prod
+          // ('FINALIZADO'), materiales y sin_materiales de cada producto, y al pasar a Producción
+          // ya salía "2/2 producidos" y no dejaba descontar nada del inventario.
+          productos: Array.isArray(order.productos)
+              ? order.productos.map(({ estado_prod, materiales, sin_materiales, ...resto }) => resto)
+              : order.productos,
+          materiales_usados: [],
+          estado_produccion: 'Pendiente',
+          // La copia no hereda quién cobró ni las verificaciones de pago de la original.
+          recibido_por_anticipo: null,
+          recibido_por_anticipo_id: null,
+          recibido_por_saldo: null,
+          recibido_por_saldo_id: null,
+          fecha_pago_saldo: null,
+          pagos_verificados: {},
           financials: {
               ...(order.financials || {}),
+              // ...ni el Nº de factura, ni el crédito de la original.
+              nroFactura: '',
+              formaPagoSaldo: 'No aplica',
+              creditoVenceSaldo: '',
+              historialFechasCredito: [],
               saldo: order.financials?.total || 0, 
               anticipo: 0,
               retencion: 0,
