@@ -40,24 +40,17 @@ const getOrderAccountingStatus = (o) => {
     
     const isVencido = isCredito && fechaVence && fechaVence < today;
 
-    let retDocs = [];
-    if (o.comprobantes && !Array.isArray(o.comprobantes) && o.comprobantes.retencion) {
-        retDocs = o.comprobantes.retencion;
-    }
-    const isRetencionPendiente = retencion > 0 && retDocs.length === 0;
-
     const isImpaga = saldoFinalReal > 0.01 && (!isCredito || isVencido);
     const isCreditoActivo = saldoFinalReal > 0.01 && isCredito && !isVencido;
-    const isPorFinalizar = !isImpaga && !isRetencionPendiente && !isCreditoActivo;
+    const isPorFinalizar = !isImpaga && !isCreditoActivo;
 
     return {
         isImpaga,
-        isRetencionPendiente,
         isCreditoActivo,
         isPorFinalizar,
         // se mantiene 'status' (un solo valor) por compatibilidad con otras pantallas
         // que ya lo usan así (ej. WorkAreaList) — prioridad: impaga > retención > crédito
-        status: isImpaga ? 'impagas' : isRetencionPendiente ? 'retenciones' : isCreditoActivo ? 'creditos' : 'por_finalizar'
+        status: isImpaga ? 'impagas' : isCreditoActivo ? 'creditos' : 'por_finalizar'
     };
 };
 
@@ -121,7 +114,6 @@ const Stats = ({ orders, user }) => {
 
   // 🔥 CRÉDITOS, RETENCIONES E IMPAGAS — ahora independientes entre sí 🔥
   const creditOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isCreditoActivo);
-  const retencionesOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isRetencionPendiente);
   const impagasOrders = visibleOrders.filter(o => o.status === 'POR COBRAR' && getOrderAccountingStatus(o).isImpaga);
 
   const cards = [
@@ -176,16 +168,6 @@ const Stats = ({ orders, user }) => {
       borderColor: 'border-pink-100'
     },
     {
-      title: 'Retenciones',
-      value: retencionesOrders.length,
-      breakdown: getBreakdown(retencionesOrders),
-      icon: FileText,
-      color: 'bg-orange-500',
-      textColor: 'text-orange-500',
-      bgColor: 'bg-orange-50',
-      borderColor: 'border-orange-100'
-    },
-    {
       title: 'Impagas',
       value: impagasOrders.length,
       breakdown: getBreakdown(impagasOrders),
@@ -222,7 +204,7 @@ const Stats = ({ orders, user }) => {
         </div>
       )}
 
-      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-7 gap-4">
+      <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 lg:grid-cols-4 xl:grid-cols-6 gap-4">
       {cards.map((card, index) => {
         const Icon = card.icon;
         return (

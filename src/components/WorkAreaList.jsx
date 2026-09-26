@@ -28,21 +28,11 @@ const getOrderAccountingStatus = (o) => {
     
     const isVencido = isCredito && fechaVence && fechaVence < today;
 
-    let retDocs = [];
-    if (o.comprobantes && !Array.isArray(o.comprobantes) && o.comprobantes.retencion) {
-        retDocs = o.comprobantes.retencion;
-    }
-    const isRetencionPendiente = retencion > 0 && retDocs.length === 0;
-
     let status = '';
     
     // 1. Prioridad: Si debe dinero y NO es un crédito vigente -> Impagas
     if (saldoFinalReal > 0.01 && (!isCredito || isVencido)) {
         status = 'impagas';
-    } 
-    // 2. Prioridad: Si no debe dinero, pero falta la foto de retención -> Retenciones
-    else if (isRetencionPendiente) {
-        status = 'retenciones';
     } 
     // 3. Prioridad: Si debe dinero, pero es un crédito a tiempo -> Créditos
     else if (saldoFinalReal > 0.01 && isCredito && !isVencido) {
@@ -53,7 +43,7 @@ const getOrderAccountingStatus = (o) => {
         status = 'por_finalizar';
     }
 
-    return { status, isRetencionPendiente, isVencido, saldoFinalReal, isCredito };
+    return { status, isVencido, saldoFinalReal, isCredito };
 };
 
 const WorkAreaList = ({ 
@@ -89,7 +79,6 @@ const WorkAreaList = ({
           const { status } = getOrderAccountingStatus(order);
           if (listFilter === 'creditos') return status === 'creditos';
           if (listFilter === 'impagas') return status === 'impagas';
-          if (listFilter === 'retenciones') return status === 'retenciones';
           if (listFilter === 'por_finalizar') return status === 'por_finalizar'; 
           return false;
       }
@@ -105,7 +94,7 @@ const WorkAreaList = ({
           if (listFilter === 'ventas') return order.status === 'VENTAS'; 
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR'; 
-          if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
+          if (['creditos', 'impagas', 'por_finalizar'].includes(listFilter)) {
               if (listFilter === 'por_finalizar' && order.status === 'VERIFICACIÓN') return true;
               if (order.status !== 'POR COBRAR') return false;
               const { status } = getOrderAccountingStatus(order);
@@ -121,7 +110,7 @@ const WorkAreaList = ({
           if (listFilter === 'produccion') return order.status === 'PRODUCCION';
           if (listFilter === 'por_retirar') return order.status === 'VENTAS POR RETIRAR';
 
-          if (['creditos', 'impagas', 'retenciones', 'por_finalizar'].includes(listFilter)) {
+          if (['creditos', 'impagas', 'por_finalizar'].includes(listFilter)) {
               if (listFilter === 'por_finalizar' && order.status === 'VERIFICACIÓN') return true;
               if (order.status !== 'POR COBRAR') return false;
               const { status } = getOrderAccountingStatus(order);
@@ -217,7 +206,7 @@ const WorkAreaList = ({
 
   // 🔥 APLICADO FIX EN CONTEOS GENERALES DE VENDEDOR 🔥
   const getOrderCounts = () => {
-      let counts = { todas: 0, ventas: 0, produccion: 0, por_retirar: 0, por_finalizar: 0, creditos: 0, impagas: 0, retenciones: 0 };
+      let counts = { todas: 0, ventas: 0, produccion: 0, por_retirar: 0, por_finalizar: 0, creditos: 0, impagas: 0 };
       
       orders.forEach(o => {
           if (o.status === 'ANULADA' || o.status === 'ARCHIVADA' || o.status === 'FINALIZADA') return;
@@ -232,7 +221,6 @@ const WorkAreaList = ({
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
                   else if (status === 'impagas') counts.impagas++;
-                  else if (status === 'retenciones') counts.retenciones++;
                   else counts.por_finalizar++;
               }
           }
@@ -246,7 +234,6 @@ const WorkAreaList = ({
                   const { status } = getOrderAccountingStatus(o);
                   if (status === 'creditos') counts.creditos++;
                   else if (status === 'impagas') counts.impagas++;
-                  else if (status === 'retenciones') counts.retenciones++;
                   else counts.por_finalizar++;
               }
           }
@@ -255,7 +242,6 @@ const WorkAreaList = ({
               const { status } = getOrderAccountingStatus(o);
               if (status === 'creditos') counts.creditos++;
               else if (status === 'impagas') counts.impagas++;
-              else if (status === 'retenciones') counts.retenciones++;
               else counts.por_finalizar++;
           }
       });
@@ -299,9 +285,6 @@ const WorkAreaList = ({
                         <button onClick={() => setListFilter('creditos')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'creditos' ? "bg-amber-500 text-white border-amber-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                             <Wallet className="h-4 w-4" /> CRÉDITOS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.creditos}</span>
                         </button>
-                        <button onClick={() => setListFilter('retenciones')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'retenciones' ? "bg-orange-500 text-white border-orange-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
-                            <FileText className="h-4 w-4" /> RETENCIONES <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.retenciones}</span>
-                        </button>
                         <button onClick={() => setListFilter('impagas')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'impagas' ? "bg-red-600 text-white border-red-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                             <AlertOctagon className="h-4 w-4" /> IMPAGAS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.impagas}</span>
                         </button>
@@ -332,9 +315,6 @@ const WorkAreaList = ({
                         <button onClick={() => setListFilter('creditos')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'creditos' ? "bg-amber-500 text-white border-amber-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                             <Wallet className="h-4 w-4" /> CRÉDITOS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.creditos}</span>
                         </button>
-                        <button onClick={() => setListFilter('retenciones')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'retenciones' ? "bg-orange-500 text-white border-orange-600" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
-                            <FileText className="h-4 w-4" /> RETENCIONES <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.retenciones}</span>
-                        </button>
                         <button onClick={() => setListFilter('impagas')} className={cn("px-4 py-2 text-xs font-bold rounded-md transition-all flex items-center gap-1 shadow-sm border", listFilter === 'impagas' ? "bg-red-600 text-white border-red-700" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                             <AlertOctagon className="h-4 w-4" /> IMPAGAS <span className="ml-1 px-1.5 py-0.5 rounded bg-black/20 text-[10px]">{counts.impagas}</span>
                         </button>
@@ -351,10 +331,6 @@ const WorkAreaList = ({
                     <button onClick={() => setListFilter('creditos')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'creditos' ? "bg-amber-500 text-white border-amber-600 shadow-amber-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                         <Wallet className="h-5 w-5" /> CRÉDITOS
                         <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'creditos' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.creditos}</span>
-                    </button>
-                    <button onClick={() => setListFilter('retenciones')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'retenciones' ? "bg-orange-500 text-white border-orange-600 shadow-orange-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
-                        <FileText className="h-5 w-5" /> RETENCIONES
-                        <span className={cn("px-2 py-0.5 rounded-full text-xs ml-1", listFilter === 'retenciones' ? "bg-white/20 text-white" : "bg-slate-200 text-slate-600")}>{counts.retenciones}</span>
                     </button>
                     <button onClick={() => setListFilter('impagas')} className={cn("px-6 py-2.5 text-sm font-bold rounded-lg transition-all flex items-center gap-2 shadow-sm border", listFilter === 'impagas' ? "bg-red-600 text-white border-red-700 shadow-red-200" : "bg-white text-slate-600 border-slate-300 hover:bg-slate-100")}>
                         <AlertOctagon className="h-5 w-5" /> IMPAGAS
@@ -412,7 +388,7 @@ const WorkAreaList = ({
                           
                           const accData = getOrderAccountingStatus(order);
                           
-                          const showCobrarButton = order.status === 'POR COBRAR' && onAbonoOrder && (accData.saldoFinalReal > 0.01 || accData.isCredito || accData.isRetencionPendiente);
+                          const showCobrarButton = order.status === 'POR COBRAR' && onAbonoOrder && (accData.saldoFinalReal > 0.01 || accData.isCredito);
 
                           return (
                             <tr key={order.id} className="hover:bg-blue-50/50 transition-colors group cursor-pointer bg-white" onClick={() => onViewOrder(order)}>
@@ -429,9 +405,6 @@ const WorkAreaList = ({
                                        )}
                                        {order.status === 'POR COBRAR' && accData.isVencido && (
                                            <span className="text-[9px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded shadow-sm">Crédito Vencido</span>
-                                       )}
-                                       {order.status === 'POR COBRAR' && accData.isRetencionPendiente && (
-                                           <span className="text-[9px] bg-orange-100 text-orange-700 border border-orange-200 px-1.5 py-0.5 rounded shadow-sm">Falta Retención</span>
                                        )}
                                    </div>
                                </td>
