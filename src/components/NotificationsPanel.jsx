@@ -550,11 +550,13 @@ const NotificationsPanel = ({
       setMarcandoRevisado(grupo.id);
       try {
           const ids = grupo.filas.map(f => f.id);
-          await supabase.from('historial_inventario').update({ revisado: true }).in('id', ids);
+          const { error: errRev } = await supabase.from('historial_inventario').update({ revisado: true }).in('id', ids);
+          if (errRev) throw errRev;
           if (tipo === 'auditoria') setCuadresRecientes(prev => prev.map(c => ids.includes(c.id) ? { ...c, revisado: true } : c));
           else setComprasRecientes(prev => prev.map(c => ids.includes(c.id) ? { ...c, revisado: true } : c));
       } catch (error) {
           console.error('Error al marcar como revisado:', error);
+          alert('No se pudo marcar como revisado: ' + (error?.message || 'error desconocido'));
       } finally {
           setMarcandoRevisado(null);
       }
@@ -1250,7 +1252,17 @@ const NotificationsPanel = ({
                                     );
                                 }
                                 // RECEPCIÓN
-                                const materiales = grupo.filas.map(f => f.material_nombre).join(', ');
+                                // Materiales de la sesión (sin repetir). "Costear" abre la EDICIÓN del material para
+                                // registrar proveedores y costos; ya NO marca la tarea como revisada por sí solo.
+                                const materialesRecepcion = [];
+                                grupo.filas.forEach(f => {
+                                    const clave = f.material_id != null ? String(f.material_id) : String(f.material_nombre);
+                                    if (!materialesRecepcion.some(m => m.clave === clave)) materialesRecepcion.push({ clave, id: f.material_id, nombre: f.material_nombre });
+                                });
+                                const irACostear = (m) => {
+                                    try { sessionStorage.setItem('materialAEditar', JSON.stringify({ id: m.id, nombre: m.nombre })); } catch (e) { /* sessionStorage no disponible: seguimos igual */ }
+                                    onViewChange('inventario-gestionar');
+                                };
                                 return (
                                     <div key={grupo.id} className="p-4 bg-emerald-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
                                         <div className="flex items-start gap-3">
@@ -1258,12 +1270,23 @@ const NotificationsPanel = ({
                                             <div>
                                                 <p className="text-sm font-bold text-emerald-800">RECEPCIÓN: MATERIALES PENDIENTES DE COSTEO</p>
                                                 {sello}
-                                                <p className="text-xs text-slate-600 mt-0.5">Nuevos materiales ingresados por {grupo.usuario || 'Producción'} ({materiales})</p>
+                                                <p className="text-xs text-slate-600 mt-0.5">Nuevos materiales ingresados por {grupo.usuario || 'Producción'}:</p>
+                                                <div className="flex flex-wrap gap-1.5 mt-1.5">
+                                                    {materialesRecepcion.map(m => (
+                                                        <button key={m.clave} type="button" onClick={() => irACostear(m)} title="Abrir este material para costearlo y asignar proveedor"
+                                                            className="text-[11px] font-semibold px-2.5 py-1 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100 transition-colors">
+                                                            {m.nombre} ✎
+                                                        </button>
+                                                    ))}
+                                                </div>
                                             </div>
                                         </div>
                                         <div className="flex gap-2 shrink-0 self-end md:self-center">
-                                            <Button size="sm" className="text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => { onViewChange('inventario-gestionar'); marcarSesionRevisada(grupo, 'recepcion'); }}>
-                                                {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : null} Costear y Asignar Proveedor
+                                            <Button size="sm" variant="outline" className="text-xs h-8 border-emerald-300 text-emerald-700 hover:bg-emerald-100" onClick={() => irACostear(materialesRecepcion[0])}>
+                                                Costear y Asignar Proveedor
+                                            </Button>
+                                            <Button size="sm" className="text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => marcarSesionRevisada(grupo, 'recepcion')}>
+                                                {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : <CheckCircle2 className="h-3 w-3 mr-1"/>} Marcar como revisado
                                             </Button>
                                         </div>
                                     </div>

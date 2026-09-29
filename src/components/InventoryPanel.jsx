@@ -1,11 +1,56 @@
 import React, { useState, useEffect, useMemo } from 'react';
 import { supabase } from '../supabaseClient';
-import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale, ClipboardList, PenTool } from 'lucide-react';
+import { Package, Search, Plus, Save, Edit2, Trash2, Loader2, RefreshCw, X, Filter, ChevronLeft, ChevronRight, Warehouse, ArrowUpDown, Settings, Check, Printer, History, CalendarIcon, DollarSign, ShoppingCart, Scale, ClipboardList, PenTool, Truck } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/Text'; 
 import { useToast } from '@/components/ui/use-toast';
 import { motion, AnimatePresence } from 'framer-motion';
 import { cn } from '@/lib/utils';
+
+// ---------------------------------------------------------------------------
+// Proveedores por material: cada material puede tener N proveedores, cada uno con su costo,
+// y uno "predeterminado" cuyo costo es el Costo Real Base (inventario.valor_compra).
+// La lista se guarda en inventario.proveedores_lista (jsonb) como [{ nombre, costo, predeterminado }].
+// ---------------------------------------------------------------------------
+const nombreProveedor = (n) => String(n || '').trim().replace(/\s+/g, ' ').toUpperCase();
+
+// Deja la lista limpia: sin vacíos ni repetidos, costos numéricos y EXACTAMENTE un predeterminado.
+const normalizarProveedores = (lista) => {
+    const vistos = new Set();
+    const limpia = [];
+    (Array.isArray(lista) ? lista : []).forEach(p => {
+        const nombre = nombreProveedor(p?.nombre);
+        if (!nombre || vistos.has(nombre)) return;
+        vistos.add(nombre);
+        limpia.push({ nombre, costo: Math.max(0, Number(p?.costo) || 0), predeterminado: !!p?.predeterminado });
+    });
+    if (limpia.length === 0) return limpia;
+    const iPred = limpia.findIndex(p => p.predeterminado);
+    return limpia.map((p, i) => ({ ...p, predeterminado: i === (iPred === -1 ? 0 : iPred) }));
+};
+
+// Materiales viejos: solo tenían un texto en "proveedores" y un "valor_compra". Se arma la lista desde ahí.
+const semillaProveedores = (item) => {
+    if (Array.isArray(item?.proveedores_lista) && item.proveedores_lista.length > 0) return normalizarProveedores(item.proveedores_lista);
+    const nombres = String(item?.proveedores || '').split(/[,;]+/).map(nombreProveedor).filter(Boolean);
+    return normalizarProveedores(nombres.map((nombre, i) => ({ nombre, costo: i === 0 ? (Number(item?.valor_compra) || 0) : 0, predeterminado: i === 0 })));
+};
+
+// Todos los proveedores ya registrados en cualquier material, para elegirlos sin volver a escribirlos.
+const proveedoresConocidosDe = (items) => {
+    const set = new Set();
+    (items || []).forEach(it => semillaProveedores(it).forEach(p => set.add(p.nombre)));
+    return [...set].sort((a, b) => a.localeCompare(b, 'es'));
+};
+
+// Lo que se guarda en la base: costo real = el del predeterminado; texto "proveedores" = nombres (predeterminado primero).
+const armarPayloadProveedores = (formData) => {
+    const lista = normalizarProveedores(formData.proveedores_lista);
+    if (lista.length === 0) return { proveedores_lista: [], proveedores: '', valor_compra: parseFloat(formData.valor_compra) || 0 };
+    const pred = lista.find(p => p.predeterminado);
+    const orden = [pred, ...lista.filter(p => p !== pred)];
+    return { proveedores_lista: lista, proveedores: orden.map(p => p.nombre).join(', '), valor_compra: pred.costo };
+};
 
 const InventoryPanel = ({ user, mode = 'manage' }) => {
   const { toast } = useToast();
@@ -59,9 +104,28 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
   
   const [formData, setFormData] = useState({ 
       codigo: '', nombre: '', categoria: '', cantidad: 0, unidad: 'Unidades', ubicacion: '', bodega: 'PRINCIPAL',
-      valor_perdida: 0, valor_compra: 0, proveedores: ''
+      valor_perdida: 0, valor_compra: 0, proveedores: '', proveedores_lista: []
   });
   const [saving, setSaving] = useState(false);
+
+  // Panel "Agregar proveedor" y edición de una fila dentro del modal de material
+  const [provPanelAbierto, setProvPanelAbierto] = useState(false);
+  const [provNuevo, setProvNuevo] = useState({ nombre: '', costo: '' });
+  const [provEditIdx, setProvEditIdx] = useState(null);
+  const [provEdit, setProvEdit] = useState({ nombre: '', costo: '' });
+
+  // Si se llega desde "Costear y Asignar Proveedor" (Centro de Notificaciones), ahí se dejó el material
+  // a editar. Se lee una sola vez y se abre su edición apenas cargue el inventario.
+  const [materialPendienteAbrir, setMaterialPendienteAbrir] = useState(null);
+  useEffect(() => {
+      try {
+          const raw = sessionStorage.getItem('materialAEditar');
+          if (raw) {
+              setMaterialPendienteAbrir(JSON.parse(raw));
+              sessionStorage.removeItem('materialAEditar');
+          }
+      } catch (e) { /* nada */ }
+  }, []);
 
   // Historial Item
   const [isHistoryModalOpen, setIsHistoryModalOpen] = useState(false);
@@ -230,17 +294,59 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
             bodega: item.bodega || (bodegasList.length > 0 ? bodegasList[0].nombre : 'PRINCIPAL'),
             valor_perdida: item.valor_perdida || 0,
             valor_compra: item.valor_compra || 0,
-            proveedores: item.proveedores || ''
+            proveedores: item.proveedores || '',
+            proveedores_lista: semillaProveedores(item)
         });
     } else {
         setEditingItem(null);
         setFormData({ 
             codigo: '', nombre: '', categoria: '', cantidad: 0, unidad: 'Unidades', ubicacion: '', 
             bodega: bodegasList.length > 0 ? bodegasList[0].nombre : 'PRINCIPAL',
-            valor_perdida: 0, valor_compra: 0, proveedores: ''
+            valor_perdida: 0, valor_compra: 0, proveedores: '', proveedores_lista: []
         });
     }
+    setProvPanelAbierto(false);
+    setProvEditIdx(null);
     setIsModalOpen(true);
+  };
+
+  // Abre la edición del material que dejó pendiente el Centro de Notificaciones
+  useEffect(() => {
+      if (!materialPendienteAbrir || loading) return;
+      const buscado = materialPendienteAbrir;
+      setMaterialPendienteAbrir(null);
+      const item = items.find(i => buscado.id != null && String(i.id) === String(buscado.id))
+          || items.find(i => buscado.nombre && String(i.nombre).trim().toLowerCase() === String(buscado.nombre).trim().toLowerCase());
+      if (item && isAdmin) handleOpenModal(item);
+      else if (!item) toast({ title: "Material no encontrado", description: "Ese material ya no existe en el inventario (¿se eliminó o cambió de nombre?).", variant: "destructive" });
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [materialPendienteAbrir, loading, items]);
+
+  // ----- Proveedores del material que se está editando
+  const proveedoresConocidos = useMemo(() => proveedoresConocidosDe(items), [items]);
+  const listaProv = Array.isArray(formData.proveedores_lista) ? formData.proveedores_lista : [];
+  const proveedoresDisponibles = proveedoresConocidos.filter(n => !listaProv.some(p => p.nombre === n));
+  const costoBase = armarPayloadProveedores(formData).valor_compra;
+  const setListaProv = (nueva) => setFormData(prev => ({ ...prev, proveedores_lista: normalizarProveedores(nueva) }));
+
+  const agregarProv = () => {
+      const nombre = nombreProveedor(provNuevo.nombre);
+      if (!nombre) return toast({ title: "Falta el proveedor", description: "Elige uno de la lista o escribe uno nuevo.", variant: "destructive" });
+      if (listaProv.some(p => p.nombre === nombre)) return toast({ title: "Ya está agregado", description: `"${nombre}" ya está en este material.`, variant: "destructive" });
+      const costo = Math.max(0, parseFloat(provNuevo.costo) || 0);
+      setListaProv([...listaProv, { nombre, costo, predeterminado: listaProv.length === 0 }]);
+      setProvNuevo({ nombre: '', costo: '' });
+      setProvPanelAbierto(false);
+  };
+  const marcarPredeterminado = (idx) => setListaProv(listaProv.map((p, i) => ({ ...p, predeterminado: i === idx })));
+  const quitarProv = (idx) => { setProvEditIdx(null); setListaProv(listaProv.filter((_, i) => i !== idx)); };
+  const guardarEdicionProv = () => {
+      const nombre = nombreProveedor(provEdit.nombre);
+      if (!nombre) return toast({ title: "Falta el nombre", description: "El proveedor no puede quedar sin nombre.", variant: "destructive" });
+      if (listaProv.some((p, i) => i !== provEditIdx && p.nombre === nombre)) return toast({ title: "Nombre repetido", description: `"${nombre}" ya está en este material.`, variant: "destructive" });
+      const costo = Math.max(0, parseFloat(provEdit.costo) || 0);
+      setListaProv(listaProv.map((p, i) => i === provEditIdx ? { ...p, nombre, costo } : p));
+      setProvEditIdx(null);
   };
 
   const handleSave = async () => {
@@ -259,8 +365,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
               categoria: formData.categoria ? formData.categoria.trim().toUpperCase() : '',
               bodega: formData.bodega,
               valor_perdida: parseFloat(formData.valor_perdida) || 0,
-              valor_compra: parseFloat(formData.valor_compra) || 0,
-              proveedores: formData.proveedores
+              ...armarPayloadProveedores(formData)
           };
 
           if (editingItem) {
@@ -1187,12 +1292,12 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           <AnimatePresence>
           {isModalOpen && isAdmin && !isReadOnly && (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-lg overflow-hidden border border-slate-200">
-                      <div className="bg-slate-800 p-4 text-white flex justify-between items-center">
+                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+                      <div className="bg-slate-800 p-4 text-white flex justify-between items-center shrink-0">
                           <h3 className="font-bold text-lg flex items-center gap-2"><Package className="h-5 w-5 text-orange-400"/> {editingItem ? 'Editar Material' : 'Nuevo Material'}</h3>
                           <button onClick={() => setIsModalOpen(false)} className="hover:bg-slate-700 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
                       </div>
-                      <div className="p-6 space-y-5">
+                      <div className="p-6 space-y-5 overflow-y-auto flex-1 min-h-0">
                           <div className="grid grid-cols-2 gap-5">
                               <div className="col-span-2">
                                   <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block">Nombre del Material *</label>
@@ -1249,23 +1354,116 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                               </div>
 
                               {isAdmin && (
-                                  <div className="col-span-2 border-t border-slate-200 mt-2 pt-4 grid grid-cols-2 gap-5">
-                                      <div>
-                                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block flex items-center gap-1"><DollarSign className="h-3 w-3 text-green-600"/> Costo Real (Admin)</label>
-                                          <div className="relative">
-                                              <span className="absolute left-3 top-2 text-green-600 font-bold">$</span>
-                                              <Input type="number" step="0.01" min="0" className="pl-7 text-sm font-bold border-green-300 bg-green-50 text-green-800" value={formData.valor_compra} onChange={e => setFormData({...formData, valor_compra: e.target.value})} />
-                                          </div>
+                                  <div className="col-span-2 border border-blue-200 rounded-xl overflow-hidden bg-white">
+                                      <div className="bg-blue-50 px-4 py-3 flex items-center gap-2 text-blue-900 font-bold text-xs uppercase tracking-wider border-b border-blue-200">
+                                          <Truck className="h-4 w-4 text-blue-600"/> Proveedores y costos registrados
                                       </div>
-                                      <div>
-                                          <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 block text-green-700">Proveedores (Admin)</label>
-                                          <Input className="text-sm border-green-300 bg-green-50" placeholder="Ej: Importadora XY..." value={formData.proveedores} onChange={e => setFormData({...formData, proveedores: e.target.value})} />
+
+                                      {listaProv.length > 0 ? (
+                                          <table className="w-full text-sm">
+                                              <thead className="bg-slate-50 text-[10px] font-bold text-slate-500 uppercase tracking-wider">
+                                                  <tr>
+                                                      <th className="px-3 py-2 text-left">Proveedor</th>
+                                                      <th className="px-3 py-2 text-center">Costo referencial</th>
+                                                      <th className="px-3 py-2 text-center">Predeterminado</th>
+                                                      <th className="px-3 py-2 text-center">Acciones</th>
+                                                  </tr>
+                                              </thead>
+                                              <tbody>
+                                                  {listaProv.map((p, idx) => (
+                                                      <tr key={p.nombre} className="border-t border-slate-100">
+                                                          <td className="px-3 py-2 font-semibold text-slate-800 text-xs">
+                                                              {provEditIdx === idx
+                                                                  ? <Input className="h-8 text-xs uppercase" value={provEdit.nombre} onChange={e => setProvEdit({ ...provEdit, nombre: e.target.value })} />
+                                                                  : p.nombre}
+                                                          </td>
+                                                          <td className="px-3 py-2 text-center">
+                                                              {provEditIdx === idx ? (
+                                                                  <div className="relative inline-block w-24">
+                                                                      <span className="absolute left-2 top-1.5 text-slate-400 text-xs font-bold">$</span>
+                                                                      <Input type="number" step="0.01" min="0" className="h-8 pl-5 text-xs font-bold" value={provEdit.costo} onChange={e => setProvEdit({ ...provEdit, costo: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); guardarEdicionProv(); } }} />
+                                                                  </div>
+                                                              ) : (
+                                                                  <span className="font-bold text-slate-700 text-xs">${p.costo.toFixed(2)}</span>
+                                                              )}
+                                                          </td>
+                                                          <td className="px-3 py-2 text-center">
+                                                              <input type="radio" name="proveedor-predeterminado" checked={p.predeterminado} onChange={() => marcarPredeterminado(idx)} className="h-4 w-4 accent-green-600 cursor-pointer" title="Usar este proveedor para el Costo Real Base" />
+                                                          </td>
+                                                          <td className="px-3 py-2">
+                                                              <div className="flex items-center justify-center gap-1">
+                                                                  {provEditIdx === idx ? (
+                                                                      <>
+                                                                          <button type="button" onClick={guardarEdicionProv} className="p-1.5 rounded text-green-600 hover:bg-green-50" title="Guardar cambio"><Check className="h-4 w-4"/></button>
+                                                                          <button type="button" onClick={() => setProvEditIdx(null)} className="p-1.5 rounded text-slate-500 hover:bg-slate-100" title="Cancelar"><X className="h-4 w-4"/></button>
+                                                                      </>
+                                                                  ) : (
+                                                                      <>
+                                                                          <button type="button" onClick={() => { setProvEditIdx(idx); setProvEdit({ nombre: p.nombre, costo: String(p.costo) }); }} className="p-1.5 rounded text-blue-600 hover:bg-blue-50" title="Editar proveedor / costo"><Edit2 className="h-4 w-4"/></button>
+                                                                          <button type="button" onClick={() => quitarProv(idx)} className="p-1.5 rounded text-red-500 hover:bg-red-50" title="Quitar de este material"><Trash2 className="h-4 w-4"/></button>
+                                                                      </>
+                                                                  )}
+                                                              </div>
+                                                          </td>
+                                                      </tr>
+                                                  ))}
+                                              </tbody>
+                                          </table>
+                                      ) : (
+                                          <p className="text-xs text-slate-400 italic px-4 py-4 text-center">Este material todavía no tiene proveedores registrados.</p>
+                                      )}
+
+                                      <div className="p-4 border-t border-slate-100 space-y-3">
+                                          {!provPanelAbierto ? (
+                                              <Button type="button" variant="outline" onClick={() => { setProvNuevo({ nombre: '', costo: '' }); setProvPanelAbierto(true); }} className="border-blue-300 text-blue-700 hover:bg-blue-50 font-bold text-sm gap-2">
+                                                  <Plus className="h-4 w-4"/> Agregar Proveedor a este Material
+                                              </Button>
+                                          ) : (
+                                              <div className="border border-blue-200 bg-blue-50/40 rounded-lg p-3 space-y-3">
+                                                  <p className="text-[11px] font-bold text-slate-600 uppercase tracking-wider">Elige un proveedor de tu lista o escribe uno nuevo</p>
+                                                  {proveedoresDisponibles.length > 0 && (
+                                                      <div className="flex flex-wrap gap-1.5 max-h-28 overflow-y-auto">
+                                                          {proveedoresDisponibles.map(n => (
+                                                              <button key={n} type="button" onClick={() => setProvNuevo({ ...provNuevo, nombre: n })}
+                                                                  className={cn("text-[11px] font-bold px-2.5 py-1 rounded-full border transition-colors",
+                                                                      nombreProveedor(provNuevo.nombre) === n ? "bg-blue-600 text-white border-blue-600" : "bg-white text-blue-800 border-blue-300 hover:bg-blue-100")}>
+                                                                  {n}
+                                                              </button>
+                                                          ))}
+                                                      </div>
+                                                  )}
+                                                  <div className="grid grid-cols-[1fr_120px] gap-2">
+                                                      <Input className="text-sm uppercase" placeholder="Proveedor (elegido o nuevo)" value={provNuevo.nombre} onChange={e => setProvNuevo({ ...provNuevo, nombre: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarProv(); } }} />
+                                                      <div className="relative">
+                                                          <span className="absolute left-3 top-2 text-slate-400 font-bold">$</span>
+                                                          <Input type="number" step="0.01" min="0" className="pl-7 text-sm font-bold" placeholder="Costo" value={provNuevo.costo} onChange={e => setProvNuevo({ ...provNuevo, costo: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarProv(); } }} />
+                                                      </div>
+                                                  </div>
+                                                  <div className="flex justify-end gap-2">
+                                                      <Button type="button" variant="outline" size="sm" onClick={() => setProvPanelAbierto(false)}>Cancelar</Button>
+                                                      <Button type="button" size="sm" onClick={agregarProv} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">Agregar</Button>
+                                                  </div>
+                                              </div>
+                                          )}
+
+                                          {listaProv.length > 0 ? (
+                                              <p className="text-[11px] text-slate-500">Costo Real Base: <span className="font-bold text-slate-700">${costoBase.toFixed(2)}</span> (Calculado del proveedor predeterminado)</p>
+                                          ) : (
+                                              <div>
+                                                  <label className="text-[11px] font-bold text-slate-500 uppercase tracking-wider mb-1.5 flex items-center gap-1"><DollarSign className="h-3 w-3 text-green-600"/> Costo Real Base (sin proveedor registrado)</label>
+                                                  <div className="relative w-40">
+                                                      <span className="absolute left-3 top-2 text-green-600 font-bold">$</span>
+                                                      <Input type="number" step="0.01" min="0" className="pl-7 text-sm font-bold border-green-300 bg-green-50 text-green-800" value={formData.valor_compra} onChange={e => setFormData({...formData, valor_compra: e.target.value})} />
+                                                  </div>
+                                                  <p className="text-[10px] text-slate-400 mt-1">Agrega un proveedor y este costo se calculará solo, del proveedor predeterminado.</p>
+                                              </div>
+                                          )}
                                       </div>
                                   </div>
                               )}
                           </div>
                       </div>
-                      <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-3">
+                      <div className="bg-slate-50 p-4 border-t border-slate-200 flex justify-end gap-3 shrink-0">
                           <Button variant="outline" onClick={() => setIsModalOpen(false)} className="font-semibold">Cancelar</Button>
                           <Button onClick={handleSave} disabled={saving} className="bg-orange-600 hover:bg-orange-700 text-white font-bold shadow-md">{saving ? <Loader2 className="h-4 w-4 animate-spin mr-2"/> : <Save className="h-4 w-4 mr-2"/>} {editingItem ? 'Actualizar' : 'Guardar Material'}</Button>
                       </div>
