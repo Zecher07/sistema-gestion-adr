@@ -168,6 +168,7 @@ const NotificationsPanel = ({
   // se entere apenas alguien ejecuta un cuadre, en vez de que quede "en el aire".
   const [cuadresRecientes, setCuadresRecientes] = useState([]);
   const [preciosInventario, setPreciosInventario] = useState({}); // { material_id: precio }
+  const [fichaInventario, setFichaInventario] = useState({}); // { material_id: { unidad, tieneCosto } } (para la tarjeta de recepción)
   const [marcandoRevisado, setMarcandoRevisado] = useState(null); // id del grupo que se está guardando
   const [cerrandoDia, setCerrandoDia] = useState(false);
   const [comprobanteGeneral, setComprobanteGeneral] = useState(null);
@@ -403,10 +404,16 @@ const NotificationsPanel = ({
         const { data: cuadresData } = await supabase.from('historial_inventario').select('*').like('motivo', 'Cuadre de Inventario:%').order('created_at', { ascending: false }).limit(50);
         setCuadresRecientes(cuadresData || []);
 
-        const { data: inventarioData } = await supabase.from('inventario').select('id, valor_perdida, valor_compra');
+        const { data: inventarioData } = await supabase.from('inventario').select('id, valor_perdida, valor_compra, unidad, proveedores_lista');
         const mapaPrecios = {};
-        (inventarioData || []).forEach(m => { mapaPrecios[m.id] = Number(m.valor_perdida || m.valor_compra) || 0; });
+        const mapaFicha = {};
+        (inventarioData || []).forEach(m => {
+            mapaPrecios[m.id] = Number(m.valor_perdida || m.valor_compra) || 0;
+            const tieneProveedores = Array.isArray(m.proveedores_lista) && m.proveedores_lista.length > 0;
+            mapaFicha[m.id] = { unidad: m.unidad || '', tieneCosto: tieneProveedores || Number(m.valor_compra) > 0 };
+        });
         setPreciosInventario(mapaPrecios);
+        setFichaInventario(mapaFicha);
       } catch (error) {
         console.error("Error cargando resumen diario:", error);
       } finally {
@@ -1252,38 +1259,59 @@ const NotificationsPanel = ({
                                     );
                                 }
                                 // RECEPCIÓN
-                                // Materiales de la sesión (sin repetir). "Costear" abre la EDICIÓN del material para
-                                // registrar proveedores y costos; ya NO marca la tarea como revisada por sí solo.
+                                // Esta tarjeta nace al registrar un INGRESO de stock: informa qué entró y cuánto. El costeo es una
+                                // acción secundaria (solo importa para materiales nuevos o sin costo base). "Costear" abre la
+                                // EDICIÓN del material y NO marca la tarea como revisada; eso lo hace "Marcar como revisado".
                                 const materialesRecepcion = [];
                                 grupo.filas.forEach(f => {
                                     const clave = f.material_id != null ? String(f.material_id) : String(f.material_nombre);
-                                    if (!materialesRecepcion.some(m => m.clave === clave)) materialesRecepcion.push({ clave, id: f.material_id, nombre: f.material_nombre });
+                                    const cant = Number(f.cantidad_cambio) || 0;
+                                    const existente = materialesRecepcion.find(m => m.clave === clave);
+                                    if (existente) { existente.cantidad += cant; return; }
+                                    materialesRecepcion.push({ clave, id: f.material_id, nombre: f.material_nombre, cantidad: cant, resultante: f.cantidad_resultante });
                                 });
+                                const nombreUnidad = (u) => {
+                                    const mapa = { unidades: 'uds', metros: 'm', litros: 'L' };
+                                    const k = String(u || '').trim().toLowerCase();
+                                    return mapa[k] || k;
+                                };
+                                const materialesConFicha = materialesRecepcion.map(m => {
+                                    const ficha = (m.id != null && fichaInventario[m.id]) || null;
+                                    return { ...m, unidad: nombreUnidad(ficha?.unidad), sinCosto: ficha ? !ficha.tieneCosto : false };
+                                });
+                                const sinCosto = materialesConFicha.filter(m => m.sinCosto);
                                 const irACostear = (m) => {
                                     try { sessionStorage.setItem('materialAEditar', JSON.stringify({ id: m.id, nombre: m.nombre })); } catch (e) { /* sessionStorage no disponible: seguimos igual */ }
                                     onViewChange('inventario-gestionar');
                                 };
                                 return (
                                     <div key={grupo.id} className="p-4 bg-emerald-50/50 flex flex-col md:flex-row justify-between items-start md:items-center gap-3">
-                                        <div className="flex items-start gap-3">
+                                        <div className="flex items-start gap-3 min-w-0">
                                             <Info className="h-5 w-5 text-emerald-500 shrink-0 mt-0.5"/>
-                                            <div>
-                                                <p className="text-sm font-bold text-emerald-800">RECEPCIÓN: MATERIALES PENDIENTES DE COSTEO</p>
+                                            <div className="min-w-0">
+                                                <p className="text-sm font-bold text-emerald-800">RECEPCIÓN DE MATERIALES: INGRESO DE STOCK</p>
                                                 {sello}
-                                                <p className="text-xs text-slate-600 mt-0.5">Nuevos materiales ingresados por {grupo.usuario || 'Producción'}:</p>
+                                                <p className="text-xs text-slate-600 mt-0.5">Ingresado por {grupo.usuario || 'Producción'} — {materialesConFicha.length} material{materialesConFicha.length === 1 ? '' : 'es'}:</p>
                                                 <div className="flex flex-wrap gap-1.5 mt-1.5">
-                                                    {materialesRecepcion.map(m => (
-                                                        <button key={m.clave} type="button" onClick={() => irACostear(m)} title="Abrir este material para costearlo y asignar proveedor"
-                                                            className="text-[11px] font-semibold px-2.5 py-1 rounded-full border border-emerald-300 bg-white text-emerald-800 hover:bg-emerald-100 transition-colors">
-                                                            {m.nombre} ✎
+                                                    {materialesConFicha.map(m => (
+                                                        <button key={m.clave} type="button" onClick={() => irACostear(m)}
+                                                            title={`Abrir este material para editarlo${m.resultante != null ? ' — stock actual: ' + m.resultante : ''}${m.sinCosto ? ' — SIN COSTO BASE' : ''}`}
+                                                            className={cn("text-[11px] font-semibold pl-1 pr-2.5 py-1 rounded-full border bg-white transition-colors flex items-center gap-1.5 hover:bg-emerald-100",
+                                                                m.sinCosto ? "border-amber-400 text-amber-900" : "border-emerald-300 text-emerald-800")}>
+                                                            <span className="bg-emerald-600 text-white font-black text-[10px] px-1.5 py-0.5 rounded-full whitespace-nowrap">{m.cantidad > 0 ? '+' : ''}{m.cantidad}{m.unidad ? ' ' + m.unidad : ''}</span>
+                                                            <span>{m.nombre}</span>
+                                                            {m.sinCosto && <span className="text-[9px] font-bold text-amber-700 bg-amber-100 px-1 rounded">sin costo</span>}
                                                         </button>
                                                     ))}
                                                 </div>
                                             </div>
                                         </div>
                                         <div className="flex gap-2 shrink-0 self-end md:self-center">
-                                            <Button size="sm" variant="outline" className="text-xs h-8 border-emerald-300 text-emerald-700 hover:bg-emerald-100" onClick={() => irACostear(materialesRecepcion[0])}>
-                                                Costear y Asignar Proveedor
+                                            <Button size="sm" variant="outline"
+                                                title="Opcional: para materiales nuevos o que aún no tienen costo base"
+                                                className={cn("text-xs h-8", sinCosto.length > 0 ? "border-amber-400 text-amber-800 hover:bg-amber-50" : "border-slate-300 text-slate-500 hover:bg-slate-50")}
+                                                onClick={() => irACostear(sinCosto[0] || materialesConFicha[0])}>
+                                                {sinCosto.length > 0 ? `Costear ${sinCosto.length} sin costo` : 'Costear y Asignar Proveedor'}
                                             </Button>
                                             <Button size="sm" className="text-xs h-8 bg-emerald-600 hover:bg-emerald-700 text-white" disabled={marcandoRevisado === grupo.id} onClick={() => marcarSesionRevisada(grupo, 'recepcion')}>
                                                 {marcandoRevisado === grupo.id ? <Loader2 className="h-3 w-3 animate-spin mr-1"/> : <CheckCircle2 className="h-3 w-3 mr-1"/>} Marcar como revisado

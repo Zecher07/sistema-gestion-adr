@@ -122,6 +122,10 @@ const InlineComprobante = ({ items = [], onClickImage }) => {
 const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) => {
     const { toast } = useToast();
     const isProduction = user?.role === 'Producción' || user?.role === 'Administrador';
+    // 🔧 NUEVO: Producción puede revertir sus propios productos finalizados mientras la orden siga
+    // en 'PRODUCCION' — antes necesitaban esperar a que el Admin lo hiciera, y Producción reportó
+    // que esto pasaba muy seguido (faltaba un material que se agotó a último momento).
+    const canRevert = user?.role === 'Administrador' || (user?.role === 'Producción' && order?.status === 'PRODUCCION');
     const showFinancials = user?.role !== 'Producción'; 
     const status = product.estado_prod || 'PENDIENTE';
     const [loading, setLoading] = useState(false);
@@ -130,8 +134,31 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
     const [searchTerm, setSearchTerm] = useState('');
     const [suggestions, setSuggestions] = useState([]);
     
-    const [usedMaterials, setUsedMaterials] = useState(product.materiales || []);
-    const [noMaterials, setNoMaterials] = useState(product.sin_materiales || false);
+    // 🔧 NUEVO: mientras el producto está "En Proceso", lo que Producción va marcando se guarda SOLO
+    // (borrador, sin descontar inventario todavía) — así nunca se pierde y pueden seguir agregando
+    // materiales sin presión de finalizar antes de tiempo por miedo a olvidarlo. El descuento real del
+    // inventario sigue pasando solo al pulsar "Finalizar Producto", igual que antes.
+    const [usedMaterials, setUsedMaterials] = useState(product.materiales_borrador || product.materiales || []);
+    const [noMaterials, setNoMaterials] = useState(product.sin_materiales_borrador ?? product.sin_materiales ?? false);
+    const [guardandoBorrador, setGuardandoBorrador] = useState(false);
+    const borradorTimeout = useRef(null);
+
+    // Guarda el borrador en la orden (productos jsonb) sin tocar el inventario ni el estado del producto.
+    // Los cambios de cantidad se agrupan un poco (debounce) para no escribir en cada tecla.
+    const guardarBorrador = (materiales, sinMateriales, inmediato = false) => {
+        if (borradorTimeout.current) clearTimeout(borradorTimeout.current);
+        const ejecutar = async () => {
+            setGuardandoBorrador(true);
+            try {
+                await onProductUpdate(index, { ...product, materiales_borrador: materiales, sin_materiales_borrador: sinMateriales });
+            } finally {
+                setGuardandoBorrador(false);
+            }
+        };
+        if (inmediato) { ejecutar(); return; }
+        borradorTimeout.current = setTimeout(ejecutar, 600);
+    };
+    useEffect(() => () => { if (borradorTimeout.current) clearTimeout(borradorTimeout.current); }, []);
 
     const handleSearch = async (val) => {
        setSearchTerm(val);
@@ -143,19 +170,25 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
 
     const addMaterial = (mat) => {
        if (usedMaterials.find(m => m.id === mat.id)) return;
-       setUsedMaterials([...usedMaterials, { ...mat, cant_usada: 1 }]);
+       const nuevos = [...usedMaterials, { ...mat, cant_usada: 1 }];
+       setUsedMaterials(nuevos);
        setSearchTerm('');
        setSuggestions([]);
        setIsSearching(false);
        setNoMaterials(false);
+       guardarBorrador(nuevos, false, true);
     };
 
     const updateMaterialQty = (id, qty) => {
-       setUsedMaterials(usedMaterials.map(m => m.id === id ? { ...m, cant_usada: qty } : m));
+       const nuevos = usedMaterials.map(m => m.id === id ? { ...m, cant_usada: qty } : m);
+       setUsedMaterials(nuevos);
+       guardarBorrador(nuevos, noMaterials);
     };
 
     const removeMaterial = (id) => {
-       setUsedMaterials(usedMaterials.filter(m => m.id !== id));
+       const nuevos = usedMaterials.filter(m => m.id !== id);
+       setUsedMaterials(nuevos);
+       guardarBorrador(nuevos, noMaterials, true);
     };
 
     const handleStart = async () => {
@@ -166,6 +199,7 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
     };
 
     const handleRevert = async () => {
+        if (!canRevert) return;
         if (!window.confirm("¿Revertir este producto a 'En Proceso'? Si se había descontado material del inventario, este se devolverá automáticamente al stock para corregir el error.")) return;
 
         setLoading(true);
@@ -275,7 +309,7 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                 }
             }
 
-            const updated = { ...product, estado_prod: 'FINALIZADO', materiales: usedMaterials, sin_materiales: noMaterials };
+            const updated = { ...product, estado_prod: 'FINALIZADO', materiales: usedMaterials, sin_materiales: noMaterials, materiales_borrador: undefined, sin_materiales_borrador: undefined };
             await onProductUpdate(index, updated);
             toast({ title: "Producto Finalizado", description: "Se ha registrado la producción y descontado el inventario." });
         } catch (error) {
@@ -368,6 +402,11 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                    </div>
 
                                    {usedMaterials.length > 0 && (
+                                       <div className="text-[10px] text-slate-400 flex items-center gap-1 -mb-1">
+                                           {guardandoBorrador ? <><Loader2 className="w-3 h-3 animate-spin"/> Guardando...</> : <><CheckCircle2 className="w-3 h-3 text-green-500"/> Guardado — puedes seguir agregando más adelante</>}
+                                       </div>
+                                   )}
+                                   {usedMaterials.length > 0 && (
                                        <div className="space-y-2 bg-white p-2 rounded border border-blue-100 shadow-inner max-h-[250px] overflow-y-auto">
                                            {usedMaterials.map(m => (
                                                <div key={m.id} className="flex items-center gap-2 text-xs">
@@ -381,7 +420,7 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                                    )}
 
                                    <label className="flex items-center gap-2 text-xs cursor-pointer select-none bg-white border border-slate-200 p-2 rounded hover:bg-slate-50 transition-colors">
-                                       <input type="checkbox" checked={noMaterials} onChange={e => { setNoMaterials(e.target.checked); if(e.target.checked) setUsedMaterials([]); }} className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"/>
+                                       <input type="checkbox" checked={noMaterials} onChange={e => { const marcado = e.target.checked; setNoMaterials(marcado); const nuevos = marcado ? [] : usedMaterials; if (marcado) setUsedMaterials([]); guardarBorrador(nuevos, marcado, true); }} className="w-4 h-4 text-blue-600 rounded focus:ring-blue-500"/>
                                        <span className="text-slate-700 font-medium">No utiliza inventario</span>
                                    </label>
 
@@ -398,7 +437,7 @@ const ProductProductionRow = ({ product, index, order, user, onProductUpdate }) 
                            <div className="flex justify-between items-start mb-2">
                                <div className="text-xs font-black text-green-700 uppercase tracking-wider flex items-center gap-1"><CheckCircle2 className="w-4 h-4"/> Finalizado</div>
                                
-                               {user?.role === 'Administrador' && (
+                               {canRevert && (
                                    <Button 
                                        size="sm" 
                                        variant="outline" 

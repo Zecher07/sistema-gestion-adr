@@ -10,7 +10,8 @@ import { cn } from '@/lib/utils';
 // ---------------------------------------------------------------------------
 // Proveedores por material: cada material puede tener N proveedores, cada uno con su costo,
 // y uno "predeterminado" cuyo costo es el Costo Real Base (inventario.valor_compra).
-// La lista se guarda en inventario.proveedores_lista (jsonb) como [{ nombre, costo, predeterminado }].
+// La lista se guarda en inventario.proveedores_lista (jsonb) como [{ nombre, costo, predeterminado, nota }].
+// "nota" = observaciones libres de ese proveedor para ese material (ej. descuento por cantidad, viene en otra medida).
 // ---------------------------------------------------------------------------
 const nombreProveedor = (n) => String(n || '').trim().replace(/\s+/g, ' ').toUpperCase();
 
@@ -22,7 +23,7 @@ const normalizarProveedores = (lista) => {
         const nombre = nombreProveedor(p?.nombre);
         if (!nombre || vistos.has(nombre)) return;
         vistos.add(nombre);
-        limpia.push({ nombre, costo: Math.max(0, Number(p?.costo) || 0), predeterminado: !!p?.predeterminado });
+        limpia.push({ nombre, costo: Math.max(0, Number(p?.costo) || 0), predeterminado: !!p?.predeterminado, nota: String(p?.nota || '').trim().slice(0, 200) });
     });
     if (limpia.length === 0) return limpia;
     const iPred = limpia.findIndex(p => p.predeterminado);
@@ -110,9 +111,9 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
   // Panel "Agregar proveedor" y edición de una fila dentro del modal de material
   const [provPanelAbierto, setProvPanelAbierto] = useState(false);
-  const [provNuevo, setProvNuevo] = useState({ nombre: '', costo: '' });
+  const [provNuevo, setProvNuevo] = useState({ nombre: '', costo: '', nota: '' });
   const [provEditIdx, setProvEditIdx] = useState(null);
-  const [provEdit, setProvEdit] = useState({ nombre: '', costo: '' });
+  const [provEdit, setProvEdit] = useState({ nombre: '', costo: '', nota: '' });
 
   // Si se llega desde "Costear y Asignar Proveedor" (Centro de Notificaciones), ahí se dejó el material
   // a editar. Se lee una sola vez y se abre su edición apenas cargue el inventario.
@@ -334,8 +335,8 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       if (!nombre) return toast({ title: "Falta el proveedor", description: "Elige uno de la lista o escribe uno nuevo.", variant: "destructive" });
       if (listaProv.some(p => p.nombre === nombre)) return toast({ title: "Ya está agregado", description: `"${nombre}" ya está en este material.`, variant: "destructive" });
       const costo = Math.max(0, parseFloat(provNuevo.costo) || 0);
-      setListaProv([...listaProv, { nombre, costo, predeterminado: listaProv.length === 0 }]);
-      setProvNuevo({ nombre: '', costo: '' });
+      setListaProv([...listaProv, { nombre, costo, predeterminado: listaProv.length === 0, nota: provNuevo.nota }]);
+      setProvNuevo({ nombre: '', costo: '', nota: '' });
       setProvPanelAbierto(false);
   };
   const marcarPredeterminado = (idx) => setListaProv(listaProv.map((p, i) => ({ ...p, predeterminado: i === idx })));
@@ -345,7 +346,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
       if (!nombre) return toast({ title: "Falta el nombre", description: "El proveedor no puede quedar sin nombre.", variant: "destructive" });
       if (listaProv.some((p, i) => i !== provEditIdx && p.nombre === nombre)) return toast({ title: "Nombre repetido", description: `"${nombre}" ya está en este material.`, variant: "destructive" });
       const costo = Math.max(0, parseFloat(provEdit.costo) || 0);
-      setListaProv(listaProv.map((p, i) => i === provEditIdx ? { ...p, nombre, costo } : p));
+      setListaProv(listaProv.map((p, i) => i === provEditIdx ? { ...p, nombre, costo, nota: provEdit.nota } : p));
       setProvEditIdx(null);
   };
 
@@ -1292,7 +1293,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
           <AnimatePresence>
           {isModalOpen && isAdmin && !isReadOnly && (
               <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
+                  <motion.div initial={{ scale: 0.95, opacity: 0, y: 10 }} animate={{ scale: 1, opacity: 1, y: 0 }} exit={{ scale: 0.95, opacity: 0, y: 10 }} className="bg-white rounded-2xl shadow-2xl w-full max-w-3xl overflow-hidden border border-slate-200 flex flex-col max-h-[92vh]">
                       <div className="bg-slate-800 p-4 text-white flex justify-between items-center shrink-0">
                           <h3 className="font-bold text-lg flex items-center gap-2"><Package className="h-5 w-5 text-orange-400"/> {editingItem ? 'Editar Material' : 'Nuevo Material'}</h3>
                           <button onClick={() => setIsModalOpen(false)} className="hover:bg-slate-700 p-1.5 rounded-full transition-colors"><X className="h-5 w-5" /></button>
@@ -1365,6 +1366,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                                                   <tr>
                                                       <th className="px-3 py-2 text-left">Proveedor</th>
                                                       <th className="px-3 py-2 text-center">Costo referencial</th>
+                                                      <th className="px-3 py-2 text-left">Observaciones / Notas</th>
                                                       <th className="px-3 py-2 text-center">Predeterminado</th>
                                                       <th className="px-3 py-2 text-center">Acciones</th>
                                                   </tr>
@@ -1387,6 +1389,15 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                                                                   <span className="font-bold text-slate-700 text-xs">${p.costo.toFixed(2)}</span>
                                                               )}
                                                           </td>
+                                                          <td className="px-3 py-2 align-middle min-w-[180px]">
+                                                              {provEditIdx === idx ? (
+                                                                  <Input className="h-8 text-xs" maxLength={200} placeholder="Ej: dto. desde 10 uds" value={provEdit.nota} onChange={e => setProvEdit({ ...provEdit, nota: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); guardarEdicionProv(); } }} />
+                                                              ) : p.nota ? (
+                                                                  <span className="text-[11px] leading-snug text-slate-600 whitespace-pre-wrap break-words">{p.nota}</span>
+                                                              ) : (
+                                                                  <span className="text-[11px] text-slate-300">—</span>
+                                                              )}
+                                                          </td>
                                                           <td className="px-3 py-2 text-center">
                                                               <input type="radio" name="proveedor-predeterminado" checked={p.predeterminado} onChange={() => marcarPredeterminado(idx)} className="h-4 w-4 accent-green-600 cursor-pointer" title="Usar este proveedor para el Costo Real Base" />
                                                           </td>
@@ -1399,7 +1410,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                                                                       </>
                                                                   ) : (
                                                                       <>
-                                                                          <button type="button" onClick={() => { setProvEditIdx(idx); setProvEdit({ nombre: p.nombre, costo: String(p.costo) }); }} className="p-1.5 rounded text-blue-600 hover:bg-blue-50" title="Editar proveedor / costo"><Edit2 className="h-4 w-4"/></button>
+                                                                          <button type="button" onClick={() => { setProvEditIdx(idx); setProvEdit({ nombre: p.nombre, costo: String(p.costo), nota: p.nota || '' }); }} className="p-1.5 rounded text-blue-600 hover:bg-blue-50" title="Editar proveedor / costo"><Edit2 className="h-4 w-4"/></button>
                                                                           <button type="button" onClick={() => quitarProv(idx)} className="p-1.5 rounded text-red-500 hover:bg-red-50" title="Quitar de este material"><Trash2 className="h-4 w-4"/></button>
                                                                       </>
                                                                   )}
@@ -1415,7 +1426,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
 
                                       <div className="p-4 border-t border-slate-100 space-y-3">
                                           {!provPanelAbierto ? (
-                                              <Button type="button" variant="outline" onClick={() => { setProvNuevo({ nombre: '', costo: '' }); setProvPanelAbierto(true); }} className="border-blue-300 text-blue-700 hover:bg-blue-50 font-bold text-sm gap-2">
+                                              <Button type="button" variant="outline" onClick={() => { setProvNuevo({ nombre: '', costo: '', nota: '' }); setProvPanelAbierto(true); }} className="border-blue-300 text-blue-700 hover:bg-blue-50 font-bold text-sm gap-2">
                                                   <Plus className="h-4 w-4"/> Agregar Proveedor a este Material
                                               </Button>
                                           ) : (
@@ -1439,6 +1450,7 @@ const InventoryPanel = ({ user, mode = 'manage' }) => {
                                                           <Input type="number" step="0.01" min="0" className="pl-7 text-sm font-bold" placeholder="Costo" value={provNuevo.costo} onChange={e => setProvNuevo({ ...provNuevo, costo: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarProv(); } }} />
                                                       </div>
                                                   </div>
+                                                  <Input className="text-sm" maxLength={200} placeholder="Observaciones / notas (opcional): ej. descuento por 10+ uds, se compra en otra medida y entra cortado al stock..." value={provNuevo.nota} onChange={e => setProvNuevo({ ...provNuevo, nota: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); agregarProv(); } }} />
                                                   <div className="flex justify-end gap-2">
                                                       <Button type="button" variant="outline" size="sm" onClick={() => setProvPanelAbierto(false)}>Cancelar</Button>
                                                       <Button type="button" size="sm" onClick={agregarProv} className="bg-blue-600 hover:bg-blue-700 text-white font-bold">Agregar</Button>
