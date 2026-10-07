@@ -10,6 +10,75 @@ const getLocalDate = () => {
     return new Date(d.getTime() - (d.getTimezoneOffset() * 60000)).toISOString().split('T')[0];
 };
 
+const esPagoNoEfectivo = (metodo) => {
+    const m = String(metodo || '').toLowerCase();
+    return m.includes('transfer') || m.includes('depósito') || m.includes('deposito') || m.includes('cheque') || m.includes('tarjeta');
+};
+
+// 🔧 PAGOS NO-EFECTIVO YA REGISTRADOS — la verificación del Admin es INDEPENDIENTE de la producción:
+// el anticipo y cada abono cuentan desde que Ventas los registra; el saldo recién cuando la orden se
+// cierra (VERIFICACIÓN/FINALIZADA), porque antes todavía no se ha cobrado. Claves: 'anticipo' |
+// 'abono_<i>' | 'saldo'. MISMA lógica en NotificationsPanel.jsx, OrderDetailsModal.jsx y WorkAreaList.jsx.
+const pagosNoEfectivoRegistrados = (order) => {
+    const pagos = [];
+    if (!order) return pagos;
+    const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
+    if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) {
+        pagos.push({ key: 'anticipo', label: `Anticipo — ${pAnticipo}`, monto: Number(order.anticipo) });
+    }
+    const abonos = Array.isArray(order.abonos) ? order.abonos : [];
+    abonos.forEach((a, i) => {
+        const metodo = a.metodoPago || a.metodo_pago || '';
+        if (Number(a.monto) > 0 && esPagoNoEfectivo(metodo)) {
+            pagos.push({ key: `abono_${i}`, label: `Abono #${i + 1} — ${metodo}`, monto: Number(a.monto) });
+        }
+    });
+    if (order.status === 'VERIFICACIÓN' || order.status === 'FINALIZADA') {
+        const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
+        const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+        const retencion = Number(order.retencion || order.financials?.retencion || 0);
+        const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+        if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) {
+            pagos.push({ key: 'saldo', label: `Saldo — ${pSaldo}`, monto: saldoFinal });
+        }
+    }
+    return pagos;
+};
+
+// Resumen para el sello de la lista: cuántos pagos no-efectivo hay y cuántos ya verificó el Admin.
+const resumenVerificacionPagos = (order) => {
+    const pagos = pagosNoEfectivoRegistrados(order);
+    const verificados = order?.pagos_verificados || {};
+    return { total: pagos.length, ok: pagos.filter(p => verificados[p.key]).length };
+};
+
+// 🔧 Semáforo de la Fecha de Entrega. Ahora cuenta la HORA: rojo en cuanto pasó la fecha Y la hora
+// de entrega (antes solo se ponía rojo al día siguiente), naranja si vence hoy pero todavía falta,
+// verde si es otro día. Criterio de hora igual al que se muestra en pantalla: una fecha sin hora
+// vence al terminar ese día, y 00:00 (sin hora real registrada) se toma como las 08:00.
+const GRIS_SIN_FECHA = 'bg-slate-100 text-slate-500 border-slate-200';
+const ROJO_ATRASADO = 'bg-red-100 text-red-700 border-red-300 font-bold';
+const NARANJA_HOY = 'bg-orange-100 text-orange-700 border-orange-300 font-bold';
+const VERDE_A_TIEMPO = 'bg-green-100 text-green-700 border-green-200';
+
+const momentoDeEntrega = (fecha) => {
+    if (!fecha) return null;
+    const str = String(fecha);
+    if (/^\d{4}-\d{2}-\d{2}$/.test(str)) return new Date(`${str}T23:59:59`);
+    const d = new Date(str);
+    if (isNaN(d.getTime())) return null;
+    if (d.getHours() === 0 && d.getMinutes() === 0) d.setHours(8, 0, 0, 0);
+    return d;
+};
+
+const colorFechaEntrega = (fecha, ahora = new Date()) => {
+    const entrega = momentoDeEntrega(fecha);
+    if (!entrega) return GRIS_SIN_FECHA;
+    if (entrega < ahora) return ROJO_ATRASADO;
+    const mismoDia = entrega.getFullYear() === ahora.getFullYear() && entrega.getMonth() === ahora.getMonth() && entrega.getDate() === ahora.getDate();
+    return mismoDia ? NARANJA_HOY : VERDE_A_TIEMPO;
+};
+
 // 🔥 Calculador Inteligente de Estados Contables Actualizado 🔥
 const getOrderAccountingStatus = (o) => {
     const total = Number(o.financials?.total) || 0;
@@ -60,6 +129,11 @@ const WorkAreaList = ({
   
   const [searchTerm, setSearchTerm] = useState('');
   const [itemsPerPage, setItemsPerPage] = useState(50);
+  const [ahora, setAhora] = useState(() => new Date());
+  useEffect(() => {
+    const t = setInterval(() => setAhora(new Date()), 30000);
+    return () => clearInterval(t);
+  }, []);
   const [currentPage, setCurrentPage] = useState(1);
 
   useEffect(() => {
@@ -180,20 +254,9 @@ const WorkAreaList = ({
     return (order.id || '').toString().slice(-7).padStart(7, '0');
   };
 
-  // 🔧 NUEVO: semáforo de colores para la Fecha de Entrega — rojo (atrasado),
-  // naranja (vence hoy), verde (a tiempo). Ayuda al equipo de producción a
-  // ver de un vistazo qué sacar primero.
-  const getFechaEntregaSemaforo = (order) => {
-      const fecha = order.fechaEntrega || order.fecha_entrega;
-      if (!fecha) return 'bg-slate-100 text-slate-500 border-slate-200';
-      const fechaEntrega = new Date(fecha);
-      const hoy = new Date();
-      const finDeHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 23, 59, 59, 999);
-      const inicioDeHoy = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 0, 0, 0, 0);
-      if (fechaEntrega < inicioDeHoy) return 'bg-red-100 text-red-700 border-red-300 font-bold'; // atrasado
-      if (fechaEntrega <= finDeHoy) return 'bg-orange-100 text-orange-700 border-orange-300 font-bold'; // vence hoy
-      return 'bg-green-100 text-green-700 border-green-200'; // a tiempo
-  };
+  // 🔧 Semáforo de la Fecha de Entrega (ver colorFechaEntrega, arriba): rojo = ya pasó la hora de
+  // entrega, naranja = vence hoy, verde = otro día. Ayuda a ver de un vistazo qué sacar primero.
+  const getFechaEntregaSemaforo = (order) => colorFechaEntrega(order.fechaEntrega || order.fecha_entrega, ahora);
 
   const calculateProductStats = (order) => {
     const products = order.productos || order.products || [];
@@ -403,6 +466,15 @@ const WorkAreaList = ({
                                        {order.status === 'POR COBRAR' && accData.saldoFinalReal > 0.01 && (
                                            <span className="text-[9px] bg-amber-100 text-amber-800 border border-amber-200 px-1.5 py-0.5 rounded shadow-sm">Saldo: ${accData.saldoFinalReal.toFixed(2)}</span>
                                        )}
+                                       {user.role !== 'Producción' && (() => {
+                                           const rv = resumenVerificacionPagos(order);
+                                           if (rv.total === 0) return null;
+                                           return rv.ok === rv.total ? (
+                                               <span className="text-[9px] bg-green-100 text-green-700 border border-green-300 px-1.5 py-0.5 rounded shadow-sm" title="El Administrador ya verificó en el banco todos los pagos no efectivo de esta orden">✓ Pago verificado</span>
+                                           ) : (
+                                               <span className="text-[9px] bg-amber-100 text-amber-700 border border-amber-300 px-1.5 py-0.5 rounded shadow-sm" title="El Administrador todavía está verificando los pagos no efectivo de esta orden">⏳ Verificando pago ({rv.ok}/{rv.total})</span>
+                                           );
+                                       })()}
                                        {order.status === 'POR COBRAR' && accData.isVencido && (
                                            <span className="text-[9px] bg-red-100 text-red-700 border border-red-200 px-1.5 py-0.5 rounded shadow-sm">Crédito Vencido</span>
                                        )}

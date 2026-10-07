@@ -56,6 +56,55 @@ const todosPagosVerificados = (order) => {
     return true;
 };
 
+// 🔧 PAGOS NO-EFECTIVO YA REGISTRADOS — la verificación del Admin es INDEPENDIENTE de la producción:
+// el anticipo y cada abono cuentan desde que Ventas los registra; el saldo recién cuando la orden se
+// cierra (VERIFICACIÓN/FINALIZADA), porque antes todavía no se ha cobrado. Claves: 'anticipo' |
+// 'abono_<i>' | 'saldo'. MISMA lógica en NotificationsPanel.jsx, OrderDetailsModal.jsx y WorkAreaList.jsx.
+const pagosNoEfectivoRegistrados = (order) => {
+    const pagos = [];
+    if (!order) return pagos;
+    const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
+    if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) {
+        pagos.push({ key: 'anticipo', label: `Anticipo — ${pAnticipo}`, monto: Number(order.anticipo) });
+    }
+    const abonos = Array.isArray(order.abonos) ? order.abonos : [];
+    abonos.forEach((a, i) => {
+        const metodo = a.metodoPago || a.metodo_pago || '';
+        if (Number(a.monto) > 0 && esPagoNoEfectivo(metodo)) {
+            pagos.push({ key: `abono_${i}`, label: `Abono #${i + 1} — ${metodo}`, monto: Number(a.monto) });
+        }
+    });
+    if (order.status === 'VERIFICACIÓN' || order.status === 'FINALIZADA') {
+        const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
+        const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+        const retencion = Number(order.retencion || order.financials?.retencion || 0);
+        const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+        if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) {
+            pagos.push({ key: 'saldo', label: `Saldo — ${pSaldo}`, monto: saldoFinal });
+        }
+    }
+    return pagos;
+};
+
+// Sello chico "Verificado / Pendiente" de un pago no-efectivo: lo ven Ventas y Admin para saber, en tiempo real,
+// si el Admin ya revisó ese pago en el banco. 'verificado' viene de ordenes.pagos_verificados[<clave>].
+const ChipVerificacionPago = ({ order, pagoKey }) => {
+    const verificado = !!(order?.pagos_verificados || {})[pagoKey];
+    if (verificado) {
+        return (
+            <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-green-100 text-green-700 border border-green-300 px-2 py-0.5 rounded-full" title="El Administrador ya verificó este pago en el banco">
+                <CheckCircle2 className="h-3 w-3" /> Pago verificado
+            </span>
+        );
+    }
+    if (['FINALIZADA', 'ARCHIVADA', 'ANULADA'].includes(order?.status)) return null;
+    return (
+        <span className="inline-flex items-center gap-1 text-[10px] font-bold bg-amber-100 text-amber-700 border border-amber-300 px-2 py-0.5 rounded-full" title="El Administrador todavía no revisa este pago en el banco">
+            <Clock className="h-3 w-3" /> Verificación pendiente
+        </span>
+    );
+};
+
 // 🔧 CAMBIO 10.1: estado 'POR COBRAR'. Una orden con saldo pendiente (crédito vigente,
 // crédito vencido = impaga, o sin cobrar) NO se puede finalizar: al cerrarla queda en
 // 'POR COBRAR' hasta que el saldo llegue a 0. MISMA lógica en App.jsx y OrderDetailsModal.jsx.
@@ -1092,6 +1141,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                         </div>
                                         <div className="space-y-1 text-xs text-slate-600">
                                              <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-medium text-slate-900">{order.formaPagoAnticipo || order.forma_pago_anticipo || '-'}</span></div>
+                                             {user?.role !== 'Producción' && pagosNoEfectivoRegistrados(order).some(p => p.key === 'anticipo') && (
+                                                <div className="flex justify-end pt-1"><ChipVerificacionPago order={order} pagoKey="anticipo" /></div>
+                                             )}
                                              {(pAnticipo.includes('crédit') || pAnticipo.includes('credit')) && (
                                                 <div className="flex justify-between items-center border-t border-slate-100 pt-1 mt-1">
                                                     <span>Vence el:</span> 
@@ -1133,6 +1185,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                     </div>
                                     <div className="space-y-1 text-xs text-slate-600 mb-2">
                                          <div className="flex justify-between"><span>Forma Pago:</span> <span className="font-bold text-slate-900 uppercase">{order.formaPagoSaldo || parsedFinancials.formaPagoSaldo || '-'}</span></div>
+                                         {user?.role !== 'Producción' && pagosNoEfectivoRegistrados(order).some(p => p.key === 'saldo') && (
+                                            <div className="flex justify-end pt-1"><ChipVerificacionPago order={order} pagoKey="saldo" /></div>
+                                         )}
                                          {(pSaldo.includes('crédit') || pSaldo.includes('credit')) && (
                                             <div className="flex justify-between items-center border-t border-slate-100 pt-1 mt-1">
                                                 <span>Vence el:</span> 
@@ -1186,6 +1241,9 @@ const OrderDetailsModal = ({ order, user, staffUsers = [], clients = [], orders 
                                                             </div>
                                                         </div>
                                                         {a.nota && <div className="text-[10px] text-slate-600 italic bg-white/50 p-1 rounded inline-block">{a.nota}</div>}
+                                                        {user?.role !== 'Producción' && !isDevolucion && pagosNoEfectivoRegistrados(order).some(p => p.key === `abono_${i}`) && (
+                                                            <div className="mt-1"><ChipVerificacionPago order={order} pagoKey={`abono_${i}`} /></div>
+                                                        )}
                                                     </div>
                                                     <InlineComprobante items={(comprobantesData.abonos || {})[i] || []} onClickImage={setPreviewImage} />
                                                 </div>

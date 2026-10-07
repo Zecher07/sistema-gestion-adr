@@ -5,6 +5,7 @@ import { supabase } from '../supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
 import { cn } from '@/lib/utils';
 import { createPortal } from 'react-dom';
+import StatusBadge from './StatusBadge';
 
 // 🔧 Devuelve las fotos de comprobante de UN pago de una orden, para verlas directo desde
 // "Pagos por Verificar" sin abrir la orden. Clave: 'anticipo' | 'saldo' | 'abono_<i>'.
@@ -18,6 +19,51 @@ const comprobantesDePago = (cData, key) => {
     return (Array.isArray(lista) ? lista : [])
         .map(p => (typeof p === 'string' ? { url: p, name: '' } : p))
         .filter(p => p && p.url);
+};
+
+// 🔧 CAMBIO 10: método de pago no-efectivo. MISMA lógica en App.jsx y OrderDetailsModal.jsx.
+const esPagoNoEfectivo = (metodo) => {
+    const m = String(metodo || '').toLowerCase();
+    return m.includes('transfer') || m.includes('depósito') || m.includes('deposito') || m.includes('cheque') || m.includes('tarjeta');
+};
+
+// 🔧 PAGOS NO-EFECTIVO YA REGISTRADOS — la verificación del Admin es INDEPENDIENTE de la producción:
+// el anticipo y cada abono cuentan desde que Ventas los registra; el saldo recién cuando la orden se
+// cierra (VERIFICACIÓN/FINALIZADA), porque antes todavía no se ha cobrado. Claves: 'anticipo' |
+// 'abono_<i>' | 'saldo'. MISMA lógica en NotificationsPanel.jsx, OrderDetailsModal.jsx y WorkAreaList.jsx.
+const pagosNoEfectivoRegistrados = (order) => {
+    const pagos = [];
+    if (!order) return pagos;
+    const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
+    if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) {
+        pagos.push({ key: 'anticipo', label: `Anticipo — ${pAnticipo}`, monto: Number(order.anticipo) });
+    }
+    const abonos = Array.isArray(order.abonos) ? order.abonos : [];
+    abonos.forEach((a, i) => {
+        const metodo = a.metodoPago || a.metodo_pago || '';
+        if (Number(a.monto) > 0 && esPagoNoEfectivo(metodo)) {
+            pagos.push({ key: `abono_${i}`, label: `Abono #${i + 1} — ${metodo}`, monto: Number(a.monto) });
+        }
+    });
+    if (order.status === 'VERIFICACIÓN' || order.status === 'FINALIZADA') {
+        const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
+        const totalAbonos = abonos.reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
+        const retencion = Number(order.retencion || order.financials?.retencion || 0);
+        const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
+        if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) {
+            pagos.push({ key: 'saldo', label: `Saldo — ${pSaldo}`, monto: saldoFinal });
+        }
+    }
+    return pagos;
+};
+
+// Estados en los que ya no hay nada que verificar desde la bandeja.
+const ESTADOS_SIN_VERIFICAR = ['FINALIZADA', 'ARCHIVADA', 'ANULADA'];
+const construirPagosAVerificar = pagosNoEfectivoRegistrados;
+const ordenTienePagoPorVerificar = (order) => {
+    if (!order || ESTADOS_SIN_VERIFICAR.includes(order.status)) return false;
+    const verificados = order.pagos_verificados || {};
+    return pagosNoEfectivoRegistrados(order).some(p => !verificados[p.key]);
 };
 
 // 🔧 CAMBIO 9: el aviso de "jornadas sin auditar" y toda la maquinaria de
@@ -191,6 +237,7 @@ const NotificationsPanel = ({
   const [guardandoPago, setGuardandoPago] = useState(null); // `${orderId}:${key}` que se está guardando
   const [finalizandoOrden, setFinalizandoOrden] = useState(null); // id de la orden que se está finalizando
   const [ordenesFinalizadasLocal, setOrdenesFinalizadasLocal] = useState([]); // ids ya finalizados desde aquí
+  const [ordenesTocadas, setOrdenesTocadas] = useState([]); // ids con algún check marcado/desmarcado en esta sesión (siguen visibles aunque queden todos verificados)
   const [comprobantesVerif, setComprobantesVerif] = useState({}); // { [orderId]: comprobantes | null | 'error' }
   const [comprobantePreview, setComprobantePreview] = useState(null); // url de la foto abierta en grande
   const comprobantesPedidos = React.useRef(new Set()); // ids ya pedidos (evita repetir la consulta cada 5s)
@@ -474,7 +521,7 @@ const NotificationsPanel = ({
 
   const workItems = getWorkItems();
   // 🔧 CAMBIO 10 (Fase 2): + órdenes en VERIFICACIÓN esperando checks del Admin.
-  const totalCount = realtimeEvents.length + workItems.length + pendingVales.length + (isAdmin ? (orders || []).filter(o => o.status === 'VERIFICACIÓN').length : 0);
+  const totalCount = realtimeEvents.length + workItems.length + pendingVales.length + (isAdmin ? (orders || []).filter(o => !ordenesFinalizadasLocal.includes(o.id) && (o.status === 'VERIFICACIÓN' || ordenTienePagoPorVerificar(o))).length : 0);
 
   // Vales agrupados por fecha (para buscar rápido los del día elegido)
   const valesPorDia = useMemo(() => {
@@ -648,48 +695,22 @@ const NotificationsPanel = ({
 
   const formatCurrency = (amount) => new Intl.NumberFormat('en-US', { style: 'currency', currency: 'USD' }).format(amount || 0);
 
-  // 🔧 CAMBIO 10 (Fase 2): tarjeta "PAGO POR VERIFICAR" — órdenes en estado
-  // VERIFICACIÓN esperando que Admin marque un check por CADA pago no-efectivo
-  // (anticipo / cada abono / saldo) antes de poder finalizarlas. MISMA lógica y
-  // MISMAS claves ('anticipo', 'abono_<i>', 'saldo') que en App.jsx y
-  // OrderDetailsModal.jsx — si se toca aquí, tocar también allá.
-  const esPagoNoEfectivo = (metodo) => {
-      const m = String(metodo || '').toLowerCase();
-      return m.includes('transfer') || m.includes('depósito') || m.includes('deposito') || m.includes('cheque') || m.includes('tarjeta');
-  };
+  // 🔧 "Pagos por Verificar": aparecen apenas Ventas registra un pago no-efectivo (anticipo/abono), sin esperar
+  // a que la orden termine de producirse. Helpers a nivel de módulo (construirPagosAVerificar). El Admin marca un
+  // check por CADA pago; el saldo se agrega cuando la orden se cierra (pasa a VERIFICACIÓN).
 
-  const construirPagosAVerificar = (order) => {
-      const pagos = [];
-      const pAnticipo = order.formaPagoAnticipo || order.forma_pago_anticipo || '';
-      if (Number(order.anticipo) > 0 && esPagoNoEfectivo(pAnticipo)) {
-          pagos.push({ key: 'anticipo', label: `Anticipo — ${pAnticipo}`, monto: Number(order.anticipo) });
-      }
-      (order.abonos || []).forEach((a, i) => {
-          const metodo = a.metodoPago || a.metodo_pago || '';
-          if (Number(a.monto) > 0 && esPagoNoEfectivo(metodo)) {
-              pagos.push({ key: `abono_${i}`, label: `Abono #${i + 1} — ${metodo}`, monto: Number(a.monto) });
-          }
-      });
-      const pSaldo = order.formaPagoSaldo || order.financials?.formaPagoSaldo || '';
-      const totalAbonos = (order.abonos || []).reduce((acc, a) => acc + (Number(a.monto) || 0), 0);
-      const retencion = Number(order.retencion || order.financials?.retencion || 0);
-      const saldoFinal = (Number(order.financials?.total) || 0) - (Number(order.anticipo) || 0) - retencion - totalAbonos;
-      if (saldoFinal > 0.01 && esPagoNoEfectivo(pSaldo)) {
-          pagos.push({ key: 'saldo', label: `Saldo — ${pSaldo}`, monto: saldoFinal });
-      }
-      return pagos;
-  };
-
-  // Órdenes en VERIFICACIÓN, con el override local de checks ya aplicado y las
-  // que ya se finalizaron desde aquí ocultas. Más reciente primero.
+  // Órdenes con pagos no-efectivo por verificar (en CUALQUIER paso: Ingresadas, Producción, Por Retirar...) más las
+  // que ya están en VERIFICACIÓN, con el override local de checks aplicado y las finalizadas desde aquí ocultas.
+  // Más reciente primero.
   const ordenesEnVerificacion = useMemo(() => {
       return (orders || [])
-          .filter(o => o.status === 'VERIFICACIÓN' && !ordenesFinalizadasLocal.includes(o.id))
+          .filter(o => !ordenesFinalizadasLocal.includes(o.id))
           .map(o => ({ ...o, pagos_verificados: pagosVerifOverride[o.id] ?? o.pagos_verificados ?? {} }))
+          .filter(o => o.status === 'VERIFICACIÓN' || ordenTienePagoPorVerificar(o) || (ordenesTocadas.includes(o.id) && !ESTADOS_SIN_VERIFICAR.includes(o.status) && construirPagosAVerificar(o).length > 0))
           .sort((a, b) => new Date(b.updated_at || b.updatedAt || b.created_at || 0) - new Date(a.updated_at || a.updatedAt || a.created_at || 0));
-  }, [orders, pagosVerifOverride, ordenesFinalizadasLocal]);
+  }, [orders, pagosVerifOverride, ordenesFinalizadasLocal, ordenesTocadas]);
 
-  // Trae las fotos de comprobante SOLO de las órdenes en VERIFICACIÓN (son pocas), una vez por orden.
+  // Trae las fotos de comprobante SOLO de las órdenes de esta bandeja (son pocas), una vez por orden.
   // 'orders' no trae la columna comprobantes (es pesada), por eso se pide aparte.
   useEffect(() => {
       if (!isAdmin || bandejaTab !== 'verificacion') return;
@@ -724,6 +745,7 @@ const NotificationsPanel = ({
       const actualizado = { ...actuales, [key]: nuevoValor };
       setGuardandoPago(claveGuardando);
       setPagosVerifOverride(prev => ({ ...prev, [order.id]: actualizado })); // feedback inmediato
+      setOrdenesTocadas(prev => (prev.includes(order.id) ? prev : [...prev, order.id]));
       try {
           const { error } = await supabase.from('ordenes').update({ pagos_verificados: actualizado }).eq('id', order.id);
           if (error) throw error;
@@ -1106,6 +1128,13 @@ const NotificationsPanel = ({
                                                     Orden #{String(order.orderNumber || order.order_number || order.id).padStart(7, '0')} — {order.cliente || order.cliente_nombre}
                                                 </p>
                                                 <p className="text-[10px] text-slate-400 mt-0.5">{order.tipoLetrero || order.tipo_trabajo}</p>
+                                                <div className="flex items-center gap-2 flex-wrap mt-1.5">
+                                                    <span className="text-[10px] font-bold uppercase text-slate-400">Paso actual:</span>
+                                                    <StatusBadge status={order.status} />
+                                                    <span className={cn("text-[10px] font-bold px-2 py-0.5 rounded-full border", todoListo ? "bg-green-100 text-green-700 border-green-200" : "bg-amber-100 text-amber-700 border-amber-200")}>
+                                                        {pagos.length - faltan}/{pagos.length} verificado{pagos.length - faltan === 1 ? '' : 's'}
+                                                    </span>
+                                                </div>
                                             </div>
                                             <Button size="sm" variant="outline" className="text-xs h-8 border-fuchsia-300 text-fuchsia-700 hover:bg-fuchsia-100 shrink-0" onClick={() => onViewOrder(order)}>
                                                 Ver Orden <ExternalLink className="h-3 w-3 ml-1"/>
@@ -1150,6 +1179,11 @@ const NotificationsPanel = ({
                                                 );
                                             })}
                                         </div>
+                                        {order.status !== 'VERIFICACIÓN' ? (
+                                            <p className="text-[10px] text-slate-500 mt-2 text-right">
+                                                La orden sigue en <strong>{order.status}</strong>: revisa y marca los pagos ya. {order.status !== 'FINALIZADA' && 'El saldo (si es no efectivo) aparecerá aquí cuando Ventas cierre la orden.'}
+                                            </p>
+                                        ) : (
                                         <div className="flex justify-end mt-2">
                                             <Button
                                                 size="sm"
@@ -1162,6 +1196,7 @@ const NotificationsPanel = ({
                                                 Aprobar y Finalizar
                                             </Button>
                                         </div>
+                                        )}
                                     </div>
                                 );
                             })}

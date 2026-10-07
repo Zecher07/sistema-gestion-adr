@@ -238,7 +238,9 @@ function App() {
 
       // 🔧 REFACTOR: agregamos vendedor_ids / recibido_por_*_id para que el filtrado
       // de "mis órdenes" funcione por ID en vez de por nombre (ver src/utils/userMatch.js)
-      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion, ruc, cliente_telefono';
+      // 🔧 FIX: 'pagos_verificados' (checks del Admin en "Pagos por Verificar") no estaba en esta lista, así que
+      // se perdían al recargar y cada 5 s con el refresco; además Ventas no podía ver qué pagos ya se verificaron.
+      const colOrdenes = 'id, order_number, cliente_id, cliente_nombre, tipo_trabajo, tipoOrden, fecha_entrega, vendedor, vendedor_ids, notas, prioridad, origenProformaInfo, productos, financials, anticipo, retencion, forma_pago_anticipo, nota_anticipo, credito_vence_anticipo, esDistribuidor, status, created_at, updated_at, recibido_por_anticipo, recibido_por_anticipo_id, recibido_por_saldo, recibido_por_saldo_id, abonos, motivoAnulacion, ruc, cliente_telefono, pagos_verificados';
 
       // 🔧 FIX (mismo bug): `ordenes` también se paginaba de más — con 1000+
       // órdenes, las más viejas (o según cómo cayera el corte) desaparecían solas.
@@ -430,6 +432,17 @@ function App() {
                     setRealtimeEvents(prev => [notif, ...prev]);
                     toast({ title: notif.title, description: notif.message });
                 }
+            }
+        }
+
+        // 🔧 Admin se entera al toque de una orden nueva con pago no-efectivo (anticipo): ya se puede
+        // verificar el comprobante en el banco mientras Producción trabaja (pestaña "Pagos por Verificar").
+        if (eventType === 'INSERT' && user.role === 'Administrador') {
+            const pAnt = newRecord.formaPagoAnticipo || newRecord.forma_pago_anticipo || '';
+            const hayNoEfectivo = (Number(newRecord.anticipo) > 0 && esPagoNoEfectivo(pAnt)) ||
+                (Array.isArray(newRecord.abonos) && newRecord.abonos.some(a => Number(a.monto) > 0 && esPagoNoEfectivo(a.metodoPago || a.metodo_pago)));
+            if (hayNoEfectivo) {
+                toast({ title: 'Nuevo pago por verificar', description: `La orden #${newRecord.order_number || newRecord.id} tiene un pago no efectivo. Revísalo en Notificaciones → Pagos por Verificar.`, className: 'bg-fuchsia-100 border-fuchsia-500 text-fuchsia-900' });
             }
         }
 
