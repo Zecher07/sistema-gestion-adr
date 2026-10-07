@@ -233,7 +233,7 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
     }));
 
     if (document.activeElement?.name !== 'proformaPercentInput') {
-        const perc = subtotalBruto > 0 ? (descuentoBase / subtotalBruto) * 100 : 0;
+        const perc = subtotalBruto > 0 ? (descuentoDirectoTotal / subtotalBruto) * 100 : 0;
         setLocalDiscountPercent(perc > 0 ? perc.toFixed(2) : '');
     }
   }, [products, ivaPercentage, applyIva, preciosIncluyenIva, financials.descuentoMonto, financials.anticipoPorc]);
@@ -871,12 +871,32 @@ const ProformaForm = ({ onSuccess, onCancel, clients = [], staffUsers = [], user
                                <input 
                                  type="number" step="0.01"
                                  className="w-16 text-right px-1 py-0.5 outline-none text-xs"
+                                 name="proformaDiscountInput" min="0" placeholder="0.00"
                                  value={localDiscountVal}
                                  onChange={e => {
                                      setLocalDiscountVal(e.target.value);
                                      setFinancials(prev => ({...prev, descuentoMonto: parseFloat(e.target.value) || 0}));
                                  }}
                                />
+                            </div>
+                            <span className="text-slate-400 text-[10px] font-bold">ó</span>
+                            <div className="flex items-center border border-slate-300 rounded bg-white overflow-hidden">
+                               <input
+                                 name="proformaPercentInput"
+                                 type="number" step="0.01" min="0" max="100"
+                                 className="w-14 text-right px-1 py-0.5 outline-none text-xs"
+                                 placeholder="0"
+                                 value={localDiscountPercent}
+                                 onChange={e => {
+                                     setLocalDiscountPercent(e.target.value);
+                                     const perc = Math.min(100, Math.max(0, parseFloat(e.target.value) || 0));
+                                     // Se redondea a centavos para que lo que se imprime sume exacto
+                                     const desc = Math.round((financials.subtotal || 0) * (perc / 100) * 100) / 100;
+                                     setLocalDiscountVal(desc > 0 ? desc.toFixed(2) : '');
+                                     setFinancials(prev => ({...prev, descuentoMonto: desc}));
+                                 }}
+                               />
+                               <span className="text-xs px-2 py-0.5 border-l border-slate-200 bg-slate-100">%</span>
                             </div>
                          </td>
                          <td className="text-right py-1 px-2 text-red-500">- $ {financials.descuento.toFixed(2)}</td>

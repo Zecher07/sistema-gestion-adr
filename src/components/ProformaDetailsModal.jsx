@@ -302,18 +302,15 @@ const ProformaDetailsModal = ({
                     <table className="w-full border-collapse border border-black">
                         <thead>
                             <tr className="border-b border-black bg-gray-100">
-                                <th className="border-r border-black p-1.5 font-bold text-center w-16">Cod. Principal</th>
                                 <th className="border-r border-black p-1.5 font-bold text-center w-12">Cant.</th>
                                 <th className="border-r border-black p-1.5 font-bold text-left">Descripción</th>
                                 <th className="border-r border-black p-1.5 font-bold text-right w-20">Precio Unitario</th>
-                                <th className="border-r border-black p-1.5 font-bold text-right w-16">Descuento</th>
                                 <th className="p-1.5 font-bold text-right w-20">Precio Total</th>
                             </tr>
                         </thead>
                         <tbody>
                             {data.productos.map((prod, idx) => (
                                 <tr key={idx} className="border-b border-black">
-                                    <td className="border-r border-black p-1.5 text-center">P{String(idx+1).padStart(3,'0')}</td>
                                     <td className="border-r border-black p-1.5 text-center">{prod.cantidad}</td>
                                     <td className="border-r border-black p-1.5 uppercase whitespace-pre-wrap">
                                         {(() => {
@@ -329,7 +326,6 @@ const ProformaDetailsModal = ({
                                     {/* 🔧 FIX: Total ÷ Cantidad, para que cuadre con lo que ve el
                                         cliente (evita mostrar el precio interno por m²). */}
                                     <td className="border-r border-black p-1.5 text-right">{formatCurrency((prod.total || (prod.cantidad * prod.precioUnitario)) / (prod.cantidad || 1))}</td>
-                                    <td className="border-r border-black p-1.5 text-right">$0.00</td>
                                     <td className="p-1.5 text-right">{formatCurrency(prod.total || (prod.cantidad * prod.precioUnitario))}</td>
                                 </tr>
                             ))}
@@ -405,10 +401,13 @@ const ProformaDetailsModal = ({
                                     <td className="p-1.5 border-r border-black">SUBTOTAL SIN IMP.</td>
                                     <td className="p-1.5 text-right">{formatCurrency(data.financials.subtotal)}</td>
                                 </tr>
-                                <tr className="border-b border-black">
-                                    <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
-                                    <td className="p-1.5 text-right text-red-600">-{formatCurrency(data.financials.descuentoVal)}</td>
-                                </tr>
+                                {/* 🔧 Solo se imprime cuando hay descuento: sin él, la fila le da al cliente la idea de que siempre se puede pedir uno. */}
+                                {data.financials.descuentoVal > 0 && (
+                                    <tr className="border-b border-black">
+                                        <td className="p-1.5 border-r border-black">TOTAL Descuento</td>
+                                        <td className="p-1.5 text-right text-red-600">-{formatCurrency(data.financials.descuentoVal)}</td>
+                                    </tr>
+                                )}
                                 <tr className="border-b border-black bg-gray-50">
                                     <td className="p-1.5 border-r border-black font-bold">IVA {data.financials.ivaPercentage}%</td>
                                     <td className="p-1.5 text-right font-bold">{formatCurrency(data.financials.iva)}</td>

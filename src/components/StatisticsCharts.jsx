@@ -3,6 +3,9 @@ import { BarChart3, TrendingUp, Calendar, Filter, Download, FileSpreadsheet, Use
 import { Button } from '@/components/ui/button';
 import { supabase } from '../supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
+// Reglas de comisión (qué cuenta como "finalizada", ciclo extra del crédito): archivo compartido con la tarjeta del Inicio.
+import { finalizadaPropiaEnRango, creditoDelMesAnteriorEnRango } from '@/utils/comisiones';
+
 
 const StatisticsCharts = ({
   orders = [],
@@ -109,33 +112,9 @@ const StatisticsCharts = ({
   // estar finalizada hoy mismo (toma días pasar por producción). Ahora se
   // calcula por separado: cuenta según la fecha en que la orden SE FINALIZÓ
   // (se entregó y se cobró), sin importar cuándo se creó originalmente.
-  const ordenesFinalizadasEnRango = useMemo(() => {
-    // 🔧 NUEVO: margen configurable por el Admin — una orden creada a fin de
-    // mes pero que se finaliza unos días después del cierre no debe quedar
-    // "en el limbo" sin contar en ningún lado.
-    let fechaLimiteFinalizacion = null;
-    if (dateRange.end) {
-        fechaLimiteFinalizacion = new Date(dateRange.end + 'T23:59:59');
-        fechaLimiteFinalizacion.setDate(fechaLimiteFinalizacion.getDate() + margenDias);
-    }
-
+  const ordenesFinalizadasPropias = useMemo(() => {
     return orders.filter(o => {
-      // 🔧 FIX: "Finalizadas" solo cuenta órdenes CREADAS dentro del mes elegido
-      // (no las que vienen de meses anteriores) — el margen de 4 días de abajo
-      // solo da tiempo extra para que ALCANCE a cerrarse, no cambia en qué mes
-      // se le atribuye la venta.
-      const fechaCreacion = o.created_at || o.createdAt;
-      if (dateRange.start && new Date(fechaCreacion) < new Date(dateRange.start + 'T00:00:00')) return false;
-      if (dateRange.end && new Date(fechaCreacion) > new Date(dateRange.end + 'T23:59:59')) return false;
-
-      // 🔧 FIX: una orden ARCHIVADA ya pasó por FINALIZADA antes de archivarse —
-      // sigue siendo una venta cerrada de verdad, no debe desaparecer del conteo
-      // solo porque después se guardó/archivó.
-      if (o.status !== 'FINALIZADA' && o.status !== 'ARCHIVADA') return false;
-      const fechaFinal = o.fecha_pago_saldo || o.updated_at || o.updatedAt;
-      if (!fechaFinal) return false;
-      if (dateRange.start && new Date(fechaFinal) < new Date(dateRange.start + 'T00:00:00')) return false;
-      if (fechaLimiteFinalizacion && new Date(fechaFinal) > fechaLimiteFinalizacion) return false;
+      if (!finalizadaPropiaEnRango(o, dateRange, margenDias)) return false;
       if (vendedorFilterId) {
         const selectedUser = staffList.find(u => u.id === vendedorFilterId);
         if (!isUserInList(o.vendedor_ids, o.vendedor, { id: vendedorFilterId, name: selectedUser?.full_name })) return false;
@@ -143,6 +122,24 @@ const StatisticsCharts = ({
       return true;
     });
   }, [orders, dateRange, vendedorFilterId, staffList, margenDias]);
+
+  // 🔧 CICLO EXTRA PARA VENTAS A CRÉDITO (pedido del cliente): las ventas a crédito del mes anterior que no
+  // alcanzaron a cobrarse antes de SU corte (fin de mes + margen) todavía suman acá si se terminan de cobrar
+  // hasta el corte de ESTE mes. Si tampoco, caducan para siempre (ya no suman en ningún mes). Ej.: reporte de
+  // octubre (corte 4-nov) suma las de crédito de septiembre cobradas entre el 5-oct y el 4-nov.
+  const ordenesCreditoArrastre = useMemo(() => {
+    return orders.filter(o => {
+      if (!creditoDelMesAnteriorEnRango(o, dateRange, margenDias)) return false;
+      if (vendedorFilterId) {
+        const selectedUser = staffList.find(u => u.id === vendedorFilterId);
+        if (!isUserInList(o.vendedor_ids, o.vendedor, { id: vendedorFilterId, name: selectedUser?.full_name })) return false;
+      }
+      return true;
+    });
+  }, [orders, dateRange, vendedorFilterId, staffList, margenDias]);
+
+  const idsArrastre = useMemo(() => new Set(ordenesCreditoArrastre.map(o => o.id)), [ordenesCreditoArrastre]);
+  const ordenesFinalizadasEnRango = useMemo(() => [...ordenesFinalizadasPropias, ...ordenesCreditoArrastre], [ordenesFinalizadasPropias, ordenesCreditoArrastre]);
 
   const metrics = useMemo(() => {
     const total = filteredOrders.length;
@@ -152,22 +149,23 @@ const StatisticsCharts = ({
     // Tiempo promedio: se calcula sobre las órdenes que se FINALIZARON en el
     // rango (no las creadas en el rango), para que coincida con "Finalizadas"
     let avgDays = 0;
-    if (ordenesFinalizadasEnRango.length > 0) {
-      const totalDays = ordenesFinalizadasEnRango.reduce((acc, curr) => {
+    if (ordenesFinalizadasPropias.length > 0) {
+      const totalDays = ordenesFinalizadasPropias.reduce((acc, curr) => {
         const start = new Date(curr.created_at || curr.createdAt);
         const end = new Date(curr.fecha_pago_saldo || curr.updated_at || curr.updatedAt);
         const diff = Math.max(0, (end - start) / (1000 * 60 * 60 * 24));
         return acc + diff;
       }, 0);
-      avgDays = (totalDays / ordenesFinalizadasEnRango.length).toFixed(1);
+      avgDays = (totalDays / ordenesFinalizadasPropias.length).toFixed(1);
     }
     return {
       total,
       finalizedMonth,
+      arrastre: ordenesCreditoArrastre.length,
       archived,
       avgDays
     };
-  }, [filteredOrders, ordenesFinalizadasEnRango]);
+  }, [filteredOrders, ordenesFinalizadasEnRango, ordenesFinalizadasPropias, ordenesCreditoArrastre]);
 
   // --- Commissions Data Logic (Amounts) ---
   // 🔧 FIX: antes agrupaba por 'order.vendedor' (el nombre, tal cual estaba guardado
@@ -177,7 +175,7 @@ const StatisticsCharts = ({
   const commissionsData = useMemo(() => {
     const stats = {};
     staffList.forEach(u => {
-        stats[u.id] = { id: u.id, name: u.full_name, totalSales: 0, finalizedSales: 0, orderCount: 0, finalizedOrderCount: 0 };
+        stats[u.id] = { id: u.id, name: u.full_name, totalSales: 0, finalizedSales: 0, orderCount: 0, finalizedOrderCount: 0, carrySales: 0, carryOrderCount: 0 };
     });
 
     // Ventas Totales y N° de Órdenes: según la fecha de CREACIÓN de la orden
@@ -206,25 +204,33 @@ const StatisticsCharts = ({
           if (!stats[vendedorId]) return;
           stats[vendedorId].finalizedSales += amount;
           stats[vendedorId].finalizedOrderCount += 1;
+          if (idsArrastre.has(order.id)) { // viene del crédito del mes anterior: suma a finalizadas, pero no cambia "ventas totales"
+              stats[vendedorId].carrySales += amount;
+              stats[vendedorId].carryOrderCount += 1;
+          }
       });
     });
 
     return Object.values(stats)
         .filter(s => !vendedorFilterId || s.id === vendedorFilterId) // si hay filtro, solo esa fila
         .sort((a, b) => b.totalSales - a.totalSales);
-  }, [filteredOrders, ordenesFinalizadasEnRango, staffList, vendedorFilterId]);
+  }, [filteredOrders, ordenesFinalizadasEnRango, idsArrastre, staffList, vendedorFilterId]);
 
   // --- Totals Calculation ---
   const totals = useMemo(() => {
     return commissionsData.reduce((acc, curr) => ({
       totalSales: acc.totalSales + curr.totalSales,
-      finalizedSales: acc.finalizedSales + curr.finalizedSales
+      finalizedSales: acc.finalizedSales + curr.finalizedSales,
+      carrySales: acc.carrySales + curr.carrySales,
+      carryOrderCount: acc.carryOrderCount + curr.carryOrderCount
     }), {
       totalSales: 0,
-      finalizedSales: 0
+      finalizedSales: 0,
+      carrySales: 0,
+      carryOrderCount: 0
     });
   }, [commissionsData]);
-  const totalEffectiveness = totals.totalSales > 0 ? (totals.finalizedSales / totals.totalSales * 100).toFixed(1) : '0.0';
+  const totalEffectiveness = totals.totalSales > 0 ? ((totals.finalizedSales - totals.carrySales) / totals.totalSales * 100).toFixed(1) : '0.0';
   const formatCurrency = val => new Intl.NumberFormat('en-US', {
     style: 'currency',
     currency: 'USD'
@@ -232,20 +238,21 @@ const StatisticsCharts = ({
 
   // --- Export CSV ---
   const handleExport = () => {
-    const headers = isAdmin
-        ? ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'N° No Finalizadas', 'Ventas No Finalizadas ($)', 'Efectividad %']
-        : ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'Efectividad %'];
+    const headers = ['Vendedor', 'N° Órdenes', 'Ventas Totales ($)', 'N° Finalizadas', 'Ventas Finalizadas ($)', 'Incluye crédito mes anterior ($)'];
+    if (isAdmin) headers.push('N° No Finalizadas', 'Ventas No Finalizadas ($)');
+    headers.push('Efectividad %');
     const rows = commissionsData.map(d => {
-      const percentage = d.totalSales > 0 ? (d.finalizedSales / d.totalSales * 100).toFixed(1) : '0.0';
-      const fila = [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedOrderCount, d.finalizedSales.toFixed(2)];
-      if (isAdmin) fila.push(d.orderCount - d.finalizedOrderCount, (d.totalSales - d.finalizedSales).toFixed(2));
+      const propias = d.finalizedSales - d.carrySales; // lo finalizado de las ventas creadas en el rango
+      const percentage = d.totalSales > 0 ? (propias / d.totalSales * 100).toFixed(1) : '0.0';
+      const fila = [`"${d.name}"`, d.orderCount, d.totalSales.toFixed(2), d.finalizedOrderCount, d.finalizedSales.toFixed(2), d.carrySales.toFixed(2)];
+      if (isAdmin) fila.push(d.orderCount - (d.finalizedOrderCount - d.carryOrderCount), (d.totalSales - propias).toFixed(2));
       fila.push(percentage);
       return fila;
     });
 
     // Add Totals Row to CSV
-    const filaTotales = ['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), commissionsData.reduce((acc, d) => acc + d.finalizedOrderCount, 0), totals.finalizedSales.toFixed(2)];
-    if (isAdmin) filaTotales.push(commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0), (totals.totalSales - totals.finalizedSales).toFixed(2));
+    const filaTotales = ['"TOTALES"', commissionsData.reduce((acc, d) => acc + d.orderCount, 0), totals.totalSales.toFixed(2), commissionsData.reduce((acc, d) => acc + d.finalizedOrderCount, 0), totals.finalizedSales.toFixed(2), totals.carrySales.toFixed(2)];
+    if (isAdmin) filaTotales.push(commissionsData.reduce((acc, d) => acc + (d.orderCount - (d.finalizedOrderCount - d.carryOrderCount)), 0), (totals.totalSales - (totals.finalizedSales - totals.carrySales)).toFixed(2));
     filaTotales.push(totalEffectiveness);
     rows.push(filaTotales);
     const csvContent = "data:text/csv;charset=utf-8," + ["sep=,", headers.join(','), ...rows.map(e => e.join(','))].join('\n');
@@ -327,7 +334,7 @@ const StatisticsCharts = ({
       {/* KPI Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
          <KpiCard title="Total Órdenes" value={metrics.total} icon={BarChart3} color="blue" subtitle="En rango seleccionado" />
-         <KpiCard title="Finalizadas" value={metrics.finalizedMonth} icon={TrendingUp} color="emerald" subtitle="En rango seleccionado" />
+         <KpiCard title="Finalizadas" value={metrics.finalizedMonth} icon={TrendingUp} color="emerald" subtitle={metrics.arrastre > 0 ? `Incluye ${metrics.arrastre} de crédito del mes anterior` : 'En rango seleccionado'} />
          <KpiCard title="Tiempo Promedio" value={`${metrics.avgDays} días`} icon={Calendar} color="orange" subtitle="Entrega vs Creación" />
          <KpiCard title="Archivadas" value={metrics.archived} icon={Filter} color="slate" subtitle="Total en rango" />
       </div>
@@ -342,9 +349,11 @@ const StatisticsCharts = ({
             {/* 🔧 NUEVO: explicación de qué significa % Efectividad, para que quede claro */}
             <p className="text-xs text-slate-500 mt-1.5 max-w-2xl">
                <span className="font-semibold text-slate-600">% Efectividad</span> = (ventas de órdenes ya <span className="font-semibold">Finalizadas</span>) ÷ (ventas totales del vendedor en el rango seleccionado). 
-               Las órdenes que todavía están en Ventas, Producción o Contabilidad cuentan en el total pero no como "finalizadas" porque aún no terminan su proceso — por eso este número sube solo, sin ninguna acción, a medida que las órdenes se van completando. No refleja un problema del vendedor.
+               Las órdenes que todavía están en Ventas, Producción, Por Cobrar o Verificación cuentan en el total pero no como "finalizadas" porque aún no terminan su proceso — por eso este número sube solo, sin ninguna acción, a medida que las órdenes se van completando. No refleja un problema del vendedor.
                <br className="hidden md:block"/>
-               <span className="font-semibold text-slate-600">Finalizadas</span> solo cuenta órdenes <span className="font-semibold">creadas en este mismo rango</span> que además ya se cerraron (se entregaron y se cobraron) — no incluye trabajo de meses anteriores. Se da un margen de <span className="font-semibold">{margenDias} día{margenDias !== 1 ? 's' : ''}</span> después del fin del rango para que una venta de fin de mes tenga tiempo de cerrarse sin quedar fuera del conteo{isAdmin ? ' (ajustable arriba)' : ''}.
+               <span className="font-semibold text-slate-600">Finalizadas</span> cuenta las órdenes <span className="font-semibold">creadas en este mismo rango</span> que ya se cerraron (se entregaron y se cobraron). Se da un margen de <span className="font-semibold">{margenDias} día{margenDias !== 1 ? 's' : ''}</span> después del fin del rango para que una venta de fin de mes tenga tiempo de cerrarse sin quedar fuera del conteo{isAdmin ? ' (ajustable arriba)' : ''}.
+               <br className="hidden md:block"/>
+               <span className="font-semibold text-slate-600">Ventas a crédito:</span> tienen un <span className="font-semibold">ciclo extra</span>. Una venta a crédito del mes anterior que no alcanzó a cobrarse antes de su corte suma en este reporte si se termina de cobrar hasta el corte de este mes (se muestra aparte como "crédito mes anterior"). Si tampoco se cobra en ese plazo, caduca y ya no cuenta para comisión en ningún mes. La efectividad se calcula solo con las ventas creadas en este rango.
             </p>
         </div>
         <div className="overflow-x-auto">
@@ -366,7 +375,7 @@ const StatisticsCharts = ({
               <tbody className="divide-y divide-slate-100">
                  {commissionsData.length > 0 ? <>
                         {commissionsData.map((row, idx) => {
-                const percentage = row.totalSales > 0 ? (row.finalizedSales / row.totalSales * 100).toFixed(1) : '0.0';
+                const percentage = row.totalSales > 0 ? ((row.finalizedSales - row.carrySales) / row.totalSales * 100).toFixed(1) : '0.0';
                 return <tr key={idx} className="hover:bg-slate-50 transition-colors">
                                 <td className="px-6 py-4 font-medium text-slate-800">
                                     {row.name}
@@ -382,13 +391,14 @@ const StatisticsCharts = ({
                                 </td>
                                 <td className="px-6 py-4 text-center text-emerald-600 font-bold">
                                     {formatCurrency(row.finalizedSales)}
+                                    {row.carrySales > 0 && <div className="text-[10px] font-semibold text-indigo-600 mt-0.5" title="Ventas a crédito del mes anterior que se terminaron de cobrar dentro del ciclo extra">incluye {formatCurrency(row.carrySales)} de crédito mes anterior ({row.carryOrderCount})</div>}
                                 </td>
                                 {isAdmin && <>
                                 <td className="px-6 py-4 text-center text-red-700 font-bold bg-red-50">
-                                    {row.orderCount - row.finalizedOrderCount}
+                                    {row.orderCount - (row.finalizedOrderCount - row.carryOrderCount)}
                                 </td>
                                 <td className="px-6 py-4 text-center text-red-700 font-bold bg-red-50">
-                                    {formatCurrency(row.totalSales - row.finalizedSales)}
+                                    {formatCurrency(row.totalSales - (row.finalizedSales - row.carrySales))}
                                 </td>
                                 </>}
                                 <td className="px-6 py-4 text-right">
@@ -414,13 +424,14 @@ const StatisticsCharts = ({
                            </td>
                            <td className="px-6 py-4 text-center text-emerald-700">
                               {formatCurrency(totals.finalizedSales)}
+                              {totals.carrySales > 0 && <div className="text-[10px] font-semibold text-indigo-600 mt-0.5">incluye {formatCurrency(totals.carrySales)} de crédito mes anterior ({totals.carryOrderCount})</div>}
                            </td>
                            {isAdmin && <>
                            <td className="px-6 py-4 text-center text-red-800 bg-red-50">
-                              {commissionsData.reduce((acc, d) => acc + (d.orderCount - d.finalizedOrderCount), 0)}
+                              {commissionsData.reduce((acc, d) => acc + (d.orderCount - (d.finalizedOrderCount - d.carryOrderCount)), 0)}
                            </td>
                            <td className="px-6 py-4 text-center text-red-800 bg-red-50">
-                              {formatCurrency(totals.totalSales - totals.finalizedSales)}
+                              {formatCurrency(totals.totalSales - (totals.finalizedSales - totals.carrySales))}
                            </td>
                            </>}
                            <td className="px-6 py-4 text-right">

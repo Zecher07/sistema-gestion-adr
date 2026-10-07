@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { supabase } from './supabaseClient';
 import { isUserInList } from '@/utils/userMatch';
-import { Menu, Settings, X, Loader2, PlusCircle, FileText, TrendingUp } from 'lucide-react'; 
+import { Menu, Settings, X, Loader2, PlusCircle, FileText } from 'lucide-react'; 
 import { Button } from '@/components/ui/button';
 import { Toaster } from '@/components/ui/toaster';
 import { useToast } from '@/components/ui/use-toast';
@@ -16,6 +16,7 @@ import Stats from '@/components/Stats';
 import Notifications from '@/components/Notifications';
 import DailyReport from '@/components/DailyReport';
 import StatisticsCharts from '@/components/StatisticsCharts';
+import ProgresoVentasMes from '@/components/ProgresoVentasMes';
 import OrdersPanel from '@/components/OrdersPanel';
 import OrderForm from '@/components/OrderForm';
 import OrderDetailsModal from '@/components/OrderDetailsModal';
@@ -769,31 +770,6 @@ function App() {
 
     switch (currentView) {
       case 'inicio': {
-        // 🔧 NUEVO: "Ventas Finalizadas del Mes" — para un Vendedor, es SU
-        // propio total de órdenes ya finalizadas/archivadas (entregadas y
-        // cobradas al 100%) dentro del mes en curso. Para Admin, es el total
-        // de toda la empresa. Mismo criterio que usamos en Estadísticas.
-        const ahora = new Date();
-        const ventasFinalizadasMes = orders.filter(o => {
-            // 🔧 FIX: igual que en Estadísticas, "Finalizadas" solo cuenta
-            // órdenes CREADAS este mismo mes (no basta con que se hayan
-            // finalizado este mes si vienen de un mes anterior).
-            const fechaCreacion = o.created_at || o.createdAt;
-            if (!fechaCreacion) return false;
-            const dCreacion = new Date(fechaCreacion);
-            if (dCreacion.getMonth() !== ahora.getMonth() || dCreacion.getFullYear() !== ahora.getFullYear()) return false;
-
-            if (o.status !== 'FINALIZADA' && o.status !== 'ARCHIVADA') return false;
-            const fechaFinal = o.fecha_pago_saldo || o.updated_at || o.updatedAt;
-            if (!fechaFinal) return false;
-            const d = new Date(fechaFinal);
-            if (d.getMonth() !== ahora.getMonth() || d.getFullYear() !== ahora.getFullYear()) return false;
-            if (user.role === 'Administrador') return true;
-            return isUserInList(o.vendedor_ids, o.vendedor, user);
-        }).reduce((acc, o) => acc + (parseFloat(o.financials?.total) || 0), 0);
-
-        const nombreMes = ahora.toLocaleDateString('es-ES', { month: 'long', year: 'numeric' });
-
         return (
           <div className="space-y-6 animate-in fade-in">
             <div className="bg-white p-8 rounded-xl shadow-sm border border-slate-200 flex flex-col md:flex-row justify-between items-start md:items-center gap-4">
@@ -819,18 +795,7 @@ function App() {
             {/* 🔧 FIX: la tarjeta de Ventas Finalizadas (tema de comisiones) tampoco
                 debe verse en el portal de Producción. */}
             {user.role !== 'Producción' && (
-                <div className="bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-xl p-6 flex items-center justify-between gap-4 flex-wrap">
-                    <div className="flex items-center gap-4">
-                        <div className="h-14 w-14 rounded-full bg-blue-100 flex items-center justify-center shrink-0">
-                            <TrendingUp className="h-7 w-7 text-blue-600" />
-                        </div>
-                        <div>
-                            <p className="text-xs font-bold text-blue-700 uppercase tracking-wide">Ventas Finalizadas ({nombreMes})</p>
-                            <p className="text-3xl font-black text-slate-800">${ventasFinalizadasMes.toFixed(2)} USD</p>
-                            <p className="text-xs text-slate-500 mt-0.5">Monto total acumulado de órdenes entregadas y cobradas al 100% en el mes</p>
-                        </div>
-                    </div>
-                </div>
+                <ProgresoVentasMes orders={orders} user={user} />
             )}
 
             <Stats orders={orders} user={user} />
